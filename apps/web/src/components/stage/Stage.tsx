@@ -6,7 +6,7 @@ import { computeLayout, edgePath, relatedTo, spring, type Layout } from '../../l
 import { useSim } from '../../store/useSim'
 import { Edges, type EdgeModel } from './Edges'
 import { Effects } from './Effects'
-import { DeploymentNode, PodNode, ReplicaSetNode, ServiceNode, SlotPlaceholder, type Probe } from './Nodes'
+import { DeploymentNode, JobNode, PodNode, ReplicaSetNode, ServiceNode, SlotPlaceholder, type Probe } from './Nodes'
 import { BootSkeleton, ConfigMapLane, HpaLane, EdgeTooltip, EmptyState, Legend, Narration, NodeLane, ReconcileHud } from './Overlays'
 import { Traffic } from './Traffic'
 
@@ -204,6 +204,12 @@ export function Stage() {
                   hovered={hovered === rs.uid}
                 />
               )
+            })}
+            {Object.values(cluster.jobs).map((j) => {
+              const b = layout.boxes[j.uid]
+              if (!b) return null
+              const active = Object.values(cluster.pods).filter((p) => p.ownerUid === j.uid && p.deletedAt === null && p.phase !== 'Succeeded' && p.phase !== 'Error').length
+              return <JobNode key={j.uid} job={j} geo={b} active={active} dim={dimmed(j.uid)} selected={selected === j.uid} hovered={hovered === j.uid} />
             })}
             {Object.values(cluster.pods).map((p) => {
               const b = layout.boxes[p.uid]

@@ -1,4 +1,5 @@
 import type {
+  Job,
   Secret,
   HorizontalPodAutoscaler,
   Resources,
@@ -40,6 +41,9 @@ export const TIMING = {
   backoffMax: 8000,
   terminate: 900,
   configRetry: 1600,
+  jobTask: 2600,
+  jobTaskJitter: 1400,
+  jobBackoff: 1500,
   hangAfter: 22000,
   hpaSync: 3000,
   hpaDownWindow: 24000,
@@ -72,6 +76,14 @@ export interface DeploymentManifest {
   secret?: string
 }
 
+export interface JobManifest {
+  name: string
+  image: string
+  completions: number
+  parallelism: number
+  backoffLimit: number
+}
+
 export interface ConfigMapManifest {
   name: string
   data: Record<string, string>
@@ -84,7 +96,7 @@ export interface ServiceManifest {
   targetPort: number
 }
 
-export type Manifest = ({ kind: 'Deployment' } & DeploymentManifest) | ({ kind: 'Service' } & ServiceManifest) | ({ kind: 'ConfigMap' } & ConfigMapManifest)
+export type Manifest = ({ kind: 'Deployment' } & DeploymentManifest) | ({ kind: 'Service' } & ServiceManifest) | ({ kind: 'ConfigMap' } & ConfigMapManifest) | ({ kind: 'Job' } & JobManifest)
 
 /** A cluster that already exists when a lesson starts. */
 export interface Setup {
@@ -111,6 +123,9 @@ export const GENERATOR_TRAFFIC = 600
 /** CPU an idle container uses, and what each request per second costs, in millicores. */
 const IDLE_CPU = 15
 const CPU_PER_RPS = 1
+
+/** The report job: 1.0 finishes fine; 1.1 can't find its input file and exits with code 1. */
+export const failingTask = (image: string) => /relatorio:1\.1$/.test(image)
 
 /** v1.6 starts fine, then freezes after a while: the process stays up but stops answering. */
 export const hangs = (image: string) => /:1\.6$/.test(image)
@@ -166,6 +181,7 @@ export class Simulation {
     configMaps: {},
     hpas: {},
     secrets: {},
+    jobs: {},
     nodes: [
       { kind: 'Node', name: 'node-1' },
       { kind: 'Node', name: 'node-2' },
@@ -331,6 +347,10 @@ export class Simulation {
 
   findSecret(name: string) {
     return Object.values(this.cluster.secrets).find((c) => c.name === name)
+  }
+
+  findJob(name: string) {
+    return Object.values(this.cluster.jobs).find((j) => j.name === name && !j.deletedAt)
   }
 
   findConfigMap(name: string) {
@@ -520,6 +540,8 @@ export class Simulation {
 
   apply(m: Manifest): 'created' | 'configured' | 'unchanged' {
     if (m.kind === 'ConfigMap') return this.putConfigMap(m.name, m.data, 'apply')
+    // a Job's spec can't change after it's created (the real API rejects it): applying again changes nothing
+    if (m.kind === 'Job') return this.findJob(m.name) ? 'unchanged' : (this.createJob(m, 'apply'), 'created')
     if (m.kind === 'Service') {
       const existing = this.findService(m.name)
       if (!existing) {
@@ -1069,6 +1091,154 @@ export class Simulation {
     return true
   }
 
+  // ── Jobs ─────────────────────────────────────────────────────────────────
+
+  createJob(m: JobManifest, via: 'apply' | 'create') {
+    if (this.findJob(m.name)) return 'exists' as const
+    this.act(() => {
+      const job: Job = {
+        kind: 'Job',
+        uid: `job-${++this.seq}`,
+        name: m.name,
+        image: m.image,
+        completions: m.completions,
+        parallelism: m.parallelism,
+        backoffLimit: m.backoffLimit,
+        succeeded: 0,
+        failed: 0,
+        status: 'Running',
+        createdAt: this.now,
+        completedAt: null,
+      }
+      this.cluster = { ...this.cluster, jobs: { ...this.cluster.jobs, [job.uid]: job } }
+      this.emit('you', 'user', 'JobCreated', `kubectl ${via} — job.batch/${job.name} created`, this.ref(job))
+      this.narrate({
+        tone: 'info',
+        title: 'Um Job, não um Deployment',
+        body: `${job.name} precisa terminar ${job.completions === 1 ? 'uma tarefa' : `${job.completions} tarefas`}, ${job.parallelism === 1 ? 'uma de cada vez' : `até ${job.parallelism} ao mesmo tempo`}. Pod que termina com sucesso não é substituído: o trabalho dele está feito.`,
+      })
+      this.schedule(TIMING.scaleNotice, `o Job controller começa ${job.name}`, () => this.syncJob(job.uid))
+    })
+    return 'created' as const
+  }
+
+  deleteJob(name: string) {
+    const job = this.findJob(name)
+    if (!job) return false
+    this.act(() => {
+      this.patchJob(job.uid, { deletedAt: this.now })
+      this.emit('you', 'user', 'Deleted', `kubectl delete job ${name}`, this.ref(job))
+      const pods = this.podsOf(job.uid)
+      // finished Pods have no container to stop: they go at once; running ones end gracefully
+      for (const p of pods) {
+        if (p.phase === 'Succeeded' || p.phase === 'Error') this.removePod(p.uid)
+        else if (p.deletedAt === null) this.terminate(p, 'gc')
+      }
+      if (!this.podsOf(job.uid).length) this.removeJob(job.uid)
+    })
+    return true
+  }
+
+  private patchJob(uid: string, patch: Partial<Job>) {
+    const j = this.cluster.jobs[uid]
+    if (j) this.cluster = { ...this.cluster, jobs: { ...this.cluster.jobs, [uid]: { ...j, ...patch } } }
+  }
+
+  private removeJob(uid: string) {
+    const { [uid]: _gone, ...rest } = this.cluster.jobs
+    this.cluster = { ...this.cluster, jobs: rest }
+  }
+
+  /** The Job controller: keep up to `parallelism` Pods working until `completions` succeed — or give up. */
+  private syncJob(uid: string) {
+    const job = this.cluster.jobs[uid]
+    if (!job || job.deletedAt || job.status !== 'Running') return
+    if (job.succeeded >= job.completions) {
+      this.patchJob(uid, { status: 'Complete', completedAt: this.now })
+      this.emit('job-controller', 'success', 'Completed', 'Job completed', this.ref(job))
+      this.fx({ kind: 'ping', uid: job.uid, tone: 'success' })
+      this.narrate({
+        tone: 'success',
+        title: 'Job concluído',
+        body: `${job.completions} de ${job.completions} tarefas terminaram com sucesso. Os Pods continuam lá, em Completed — com os logs — até alguém apagar o Job.`,
+        command: `kubectl logs job/${job.name}`,
+      })
+      return
+    }
+    const active = this.podsOf(uid).filter((p) => p.deletedAt === null && p.phase !== 'Succeeded' && p.phase !== 'Error')
+    if (job.failed > job.backoffLimit) {
+      this.patchJob(uid, { status: 'Failed', completedAt: this.now })
+      this.emit('job-controller', 'warning', 'BackoffLimitExceeded', 'Job has reached the specified backoff limit', this.ref(job), 'Warning')
+      this.fx({ kind: 'ping', uid: job.uid, tone: 'error' })
+      for (const p of active) this.terminate(p, 'controller')
+      this.narrate({
+        tone: 'error',
+        title: 'O Job desistiu',
+        body: `${job.failed} Pods falharam — mais que o backoffLimit de ${job.backoffLimit}. O Job para de tentar e fica Failed. Os Pods que falharam ficam para você ler os logs.`,
+        command: `kubectl describe job ${job.name}`,
+      })
+      return
+    }
+    // Pods already scheduled for creation count as active: a second sync must not create them twice
+    const busy = active.length + (this.inflight[uid] ?? 0)
+    const missing = Math.min(job.parallelism - busy, job.completions - job.succeeded - busy)
+    for (let i = 0; i < missing; i++) this.createJobPod(job, i)
+  }
+
+  private createJobPod(job: Job, i: number) {
+    // after failures, the controller waits longer and longer before trying again (exponential back-off)
+    const wait = job.failed ? Math.min(TIMING.jobBackoff * 2 ** (job.failed - 1), TIMING.backoffMax) : 0
+    this.inflight[job.uid] = (this.inflight[job.uid] ?? 0) + 1
+    this.schedule(wait + i * TIMING.createStagger, `o Job controller cria um Pod para ${job.name}`, () => {
+      this.inflight[job.uid] = Math.max(0, (this.inflight[job.uid] ?? 1) - 1)
+      const current = this.cluster.jobs[job.uid]
+      if (!current || current.deletedAt || current.status !== 'Running') return
+      const pod: Pod = {
+        kind: 'Pod',
+        uid: `pod-${++this.seq}`,
+        name: `${job.name}-${randomSuffix(5)}`,
+        ownerUid: job.uid,
+        labels: { 'job-name': job.name },
+        image: job.image,
+        phase: 'Pending',
+        ready: false,
+        nodeName: null,
+        ip: null,
+        slot: this.freeSlot(job.uid),
+        createdAt: this.now,
+        deletedAt: null,
+        restarts: 0,
+        job: true,
+      }
+      this.putPod(pod)
+      this.emit('job-controller', 'create', 'SuccessfulCreate', `Created pod: ${pod.name}`, this.ref(pod))
+      this.fx({ kind: 'pulse', chain: [job.uid, pod.uid], tone: 'create' })
+      this.schedule(TIMING.schedule, `o scheduler escolhe um node para ${short(pod.name)}`, () => this.bind(pod.uid))
+    })
+  }
+
+  /** The container's process exits: 0 is success, anything else is a failure (restartPolicy: Never). */
+  private finishTask(podUid: string) {
+    const pod = this.livePod(podUid)
+    if (!pod || pod.phase !== 'Running') return
+    const job = pod.ownerUid ? this.cluster.jobs[pod.ownerUid] : undefined
+    const ok = !failingTask(pod.image)
+    this.patchPod(podUid, { phase: ok ? 'Succeeded' : 'Error', ready: false })
+    if (ok) this.emit('kubelet', 'success', 'TaskSucceeded', `Container exited with code 0 (Completed)`, this.ref(pod))
+    else this.emit('kubelet', 'warning', 'TaskFailed', `Container exited with code 1 (Error)`, this.ref(pod), 'Warning')
+    this.fx({ kind: 'ping', uid: pod.uid, tone: ok ? 'success' : 'error' })
+    if (!job || job.deletedAt) return
+    this.patchJob(job.uid, ok ? { succeeded: job.succeeded + 1 } : { failed: job.failed + 1 })
+    if (!ok)
+      this.narrateOnce(`job-fail:${job.uid}`, {
+        tone: 'warn',
+        title: 'Uma tarefa falhou',
+        body: `O container de ${short(pod.name)} saiu com código 1. Num Job com restartPolicy Never, o Pod fica em Error e o controller cria outro — esperando mais a cada falha, até o backoffLimit (${job.backoffLimit}).`,
+        command: `kubectl logs ${pod.name}`,
+      })
+    this.schedule(TIMING.controllerNotice / 2, `o Job controller conta as tarefas de ${job.name}`, () => this.syncJob(job.uid))
+  }
+
   /** The kubelet can't build the container's environment: wait, report, try again. */
   private missingConfig(pod: Pod, kind: 'configmap' | 'secret' = 'configmap', ref = pod.configMap) {
     const first = pod.waiting !== 'CreateContainerConfigError'
@@ -1217,6 +1387,17 @@ export class Simulation {
         'main.mustConfig(...)',
         '\t/app/config.go:41 +0x1d4',
         'exit status 2',
+      ]
+    }
+    if (pod.job) {
+      if (pod.phase === 'Pending' || pod.phase === 'ContainerCreating') return []
+      if (failingTask(pod.image))
+        return ['level=info msg="gerando relatório de vendas"', 'level=error msg="arquivo de entrada não encontrado" path=/dados/vendas-2026-09.csv', 'exit status 1']
+      const lot = Math.max(1, Math.floor((this.now - pod.createdAt) / 900))
+      return [
+        'level=info msg="gerando relatório de vendas"',
+        ...Array.from({ length: Math.min(lot, 3) }, (_, i) => `level=info msg="lote processado" lote=${i + 1}/3`),
+        ...(pod.phase === 'Succeeded' ? [`level=info msg="relatório salvo" destino=s3://relatorios/${pod.name}.pdf`] : []),
       ]
     }
     if (pod.phase === 'Pending' || pod.phase === 'ContainerCreating') return []
@@ -1576,6 +1757,12 @@ export class Simulation {
       if (!secret) return this.missingConfig(pod, 'secret', pod.secret)
       env = { ...env, ...secret.data }
     }
+    if (pod.job) {
+      this.patchPod(podUid, { phase: 'Running', ready: true, ip: pod.ip ?? this.nextIp(pod.nodeName), waiting: undefined })
+      this.emit('kubelet', 'progress', 'Started', `Started container ${pod.name.split('-')[0]}`, this.ref(pod))
+      this.schedule(TIMING.jobTask + Math.random() * TIMING.jobTaskJitter, `${short(pod.name)} termina a tarefa`, () => this.finishTask(podUid))
+      return
+    }
     this.patchPod(podUid, { phase: 'Running', ip: pod.ip ?? this.nextIp(pod.nodeName), waiting: undefined, ...(env && { env }) })
     this.emit('kubelet', 'progress', 'Started', 'Started container backend', this.ref(pod))
     if (isBroken(pod.image) && !env?.DATABASE_URL) {
@@ -1655,6 +1842,17 @@ export class Simulation {
           body: `Pods em Terminating não contam mais para o ReplicaSet. O Actual acabou de cair para ${actual}, mas o desired continua ${rs.desired}.`,
           metrics: { desired: rs.desired, actual },
         })
+      } else if (pod.job) {
+        const job = pod.ownerUid ? this.cluster.jobs[pod.ownerUid] : undefined
+        this.narrate(
+          pod.phase === 'Succeeded'
+            ? { tone: 'info', title: 'Apagar não desfaz o trabalho', body: `${short(pod.name)} já tinha terminado. O Job guarda a contagem de sucessos no próprio status — apagar o Pod só leva os logs embora.` }
+            : {
+                tone: 'warn',
+                title: 'O Job ainda precisa dessa tarefa',
+                body: job?.status === 'Running' ? `${short(pod.name)} saiu antes de terminar. O Job controller vai criar outro Pod para fazer o trabalho.` : `${short(pod.name)} está saindo.`,
+              },
+        )
       } else {
         this.narrate({
           tone: 'warn',
@@ -1673,7 +1871,12 @@ export class Simulation {
         this.cluster = { ...this.cluster, vacancies: [...this.cluster.vacancies, { slot: current.slot, ownerUid: owner.uid, since: this.now, podName: pod.name }] }
       }
       this.emit('kubelet', 'delete', 'Removed', `Pod ${pod.name} removed from the API server`, this.ref(current))
-      if (!owner) this.compact(NO_OWNER)
+      const job = current.job && current.ownerUid ? this.cluster.jobs[current.ownerUid] : undefined
+      if (job) {
+        this.compact(job.uid)
+        if (job.deletedAt && !this.podsOf(job.uid).length) this.removeJob(job.uid)
+        else if (job.status === 'Running') this.schedule(TIMING.controllerNotice, `o Job controller confere ${job.name}`, () => this.syncJob(job.uid))
+      } else if (!owner) this.compact(NO_OWNER)
       else if (owner.deletedAt) {
         if (!this.podsOf(owner.uid).length) this.removeReplicaSet(owner.uid)
       } else {

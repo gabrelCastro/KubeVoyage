@@ -1,5 +1,5 @@
 import { rsSelector, type Simulation } from '../engine'
-import type { ConfigMap, Deployment, HorizontalPodAutoscaler, Resources, Secret, Pod, ReplicaSet, Service, WorkerNode } from '../types'
+import type { ConfigMap, Deployment, HorizontalPodAutoscaler, Job, Resources, Secret, Pod, ReplicaSet, Service, WorkerNode } from '../types'
 
 /**
  * The simulated objects as the API server would return them — what `-o yaml`, `-o json`
@@ -32,17 +32,21 @@ const container = (image: string, name = CONTAINER, configMap?: string, liveness
 })
 
 /** Phase as the API reports it: a crash-looping or terminating Pod is still "Running". */
-export const apiPhase = (p: Pod) => (p.phase === 'Pending' || p.phase === 'ContainerCreating' ? 'Pending' : 'Running')
+export const apiPhase = (p: Pod) =>
+  p.phase === 'Pending' || p.phase === 'ContainerCreating' ? 'Pending' : p.phase === 'Succeeded' ? 'Succeeded' : p.job && p.phase === 'Error' ? 'Failed' : 'Running'
 
 export function podObject(sim: Simulation, p: Pod): Obj {
   const rs = p.ownerUid ? sim.cluster.replicaSets[p.ownerUid] : undefined
+  const job = p.ownerUid ? sim.cluster.jobs[p.ownerUid] : undefined
   const scheduled = p.nodeName !== null
   const crashing = p.phase === 'Error' || p.phase === 'CrashLoopBackOff'
   const state: Obj =
     p.phase === 'Running' || p.phase === 'Terminating'
       ? { running: { startedAt: stamp(sim, p.createdAt) } }
-      : p.phase === 'Error'
-        ? { terminated: { exitCode: 2, reason: 'Error' } }
+      : p.phase === 'Succeeded'
+        ? { terminated: { exitCode: 0, reason: 'Completed' } }
+        : p.phase === 'Error'
+        ? { terminated: { exitCode: p.job ? 1 : 2, reason: 'Error' } }
         : p.phase === 'CrashLoopBackOff'
           ? { waiting: { reason: 'CrashLoopBackOff', message: `back-off restarting failed container ${CONTAINER} in pod ${p.name}` } }
           : p.waiting
@@ -59,12 +63,13 @@ export function podObject(sim: Simulation, p: Pod): Obj {
       creationTimestamp: stamp(sim, p.createdAt),
       labels: { ...p.labels },
       ...(rs && { generateName: `${rs.name}-`, ownerReferences: [owner('apps/v1', 'ReplicaSet', rs.name, rs.uid)] }),
+      ...(job && { generateName: `${job.name}-`, ownerReferences: [owner('batch/v1', 'Job', job.name, job.uid)] }),
       ...(p.deletedAt !== null && { deletionTimestamp: stamp(sim, p.deletedAt + 30_000), deletionGracePeriodSeconds: 30 }),
     },
     spec: {
       containers: [container(p.image, p.image.includes('kubelearn/backend') ? CONTAINER : p.name, p.configMap, p.liveness, p.resources, p.secret)],
       ...(p.nodeName && { nodeName: p.nodeName }),
-      restartPolicy: 'Always',
+      restartPolicy: p.job ? 'Never' : 'Always',
       terminationGracePeriodSeconds: 30,
     },
     status: {
@@ -341,5 +346,34 @@ export function secretObject(sim: Simulation, c: Secret): Obj {
     type: 'Opaque',
     metadata: { name: c.name, namespace: 'default', uid: c.uid, creationTimestamp: stamp(sim, c.createdAt) },
     data: Object.fromEntries(Object.entries(c.data).map(([k, v]) => [k, base64(v)])),
+  }
+}
+
+export function jobObject(sim: Simulation, j: Job): Obj {
+  const active = sim.podsOf(j.uid).filter((p) => p.deletedAt === null && p.phase !== 'Succeeded' && p.phase !== 'Error').length
+  return {
+    apiVersion: 'batch/v1',
+    kind: 'Job',
+    metadata: { name: j.name, namespace: 'default', uid: j.uid, creationTimestamp: stamp(sim, j.createdAt), labels: { 'job-name': j.name } },
+    spec: {
+      completions: j.completions,
+      parallelism: j.parallelism,
+      backoffLimit: j.backoffLimit,
+      template: { spec: { containers: [{ name: j.name, image: j.image }], restartPolicy: 'Never' } },
+    },
+    status: {
+      ...(active && { active }),
+      ...(j.succeeded && { succeeded: j.succeeded }),
+      ...(j.failed && { failed: j.failed }),
+      startTime: stamp(sim, j.createdAt),
+      ...(j.completedAt !== null && j.status === 'Complete' && { completionTime: stamp(sim, j.completedAt) }),
+      ...(j.status !== 'Running' && {
+        conditions: [
+          j.status === 'Complete'
+            ? { type: 'Complete', status: 'True' }
+            : { type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded', message: 'Job has reached the specified backoff limit' },
+        ],
+      }),
+    },
   }
 }

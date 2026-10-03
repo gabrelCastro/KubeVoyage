@@ -234,6 +234,25 @@ export const GLOSSARY: GlossaryEntry[] = [
     lessonId: 'secrets',
     anchor: 'base64',
   },
+  {
+    term: 'Job',
+    aliases: ['Jobs'],
+    definition: 'Roda uma tarefa até ela terminar. Pod que conclui com sucesso não é substituído — conta como feito.',
+    lessonId: 'jobs',
+    anchor: 'job',
+  },
+  {
+    term: 'backoffLimit',
+    definition: 'Quantas falhas um Job tolera antes de desistir (padrão: 6).',
+    lessonId: 'jobs',
+    anchor: 'backofflimit',
+  },
+  {
+    term: 'CronJob',
+    definition: 'Cria um Job novo a cada horário de uma agenda no formato cron.',
+    lessonId: 'jobs',
+    anchor: 'cronjob',
+  },
 ]
 
 export const GLOSSARY_MATCHES = GLOSSARY.flatMap((entry) => [entry.term, ...(entry.aliases ?? [])].map((alias) => ({ alias, entry }))).sort(

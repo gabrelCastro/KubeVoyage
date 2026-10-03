@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { ChevronRight, FileText, Minus, MousePointerClick, Plus, ScrollText, Trash2, Wrench, X } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { isBroken, matches, rsSelector, sameTemplate, short } from '../sim/engine'
-import type { ClusterEvent, ClusterState, Deployment, Labels, Pod, ReplicaSet, Service } from '../sim/types'
+import type { ClusterEvent, ClusterState, Deployment, Job, Labels, Pod, ReplicaSet, Service } from '../sim/types'
 import { cn, kindOf, podLabel, podVisual, VISUAL } from '../lib/visual'
 import { APP_EMOJIS, designForPod, LIMITS, useApp } from '../store/useApp'
 import { clockTime, useSim } from '../store/useSim'
@@ -49,6 +49,8 @@ export function Inspector() {
             <div className="min-h-0 overflow-auto px-4 pt-1 pb-4">
               {tab === 'yaml' ? (
                 <Yaml cluster={cluster} uid={selected} />
+              ) : kind === 'Job' ? (
+                <JobView job={cluster.jobs[selected]} />
               ) : kind === 'Pod' ? (
                 <PodView pod={cluster.pods[selected]} cluster={cluster} />
               ) : kind === 'ReplicaSet' ? (
@@ -69,7 +71,7 @@ export function Inspector() {
 function Header({ uid, cluster, tab, setTab }: { uid: string; cluster: ClusterState; tab: string; setTab: (t: 'overview' | 'yaml') => void }) {
   const select = useSim((s) => s.select)
   const kind = kindOf(cluster, uid)!
-  const r = cluster.pods[uid] ?? cluster.replicaSets[uid] ?? cluster.deployments[uid] ?? cluster.services[uid]
+  const r = cluster.pods[uid] ?? cluster.replicaSets[uid] ?? cluster.deployments[uid] ?? cluster.services[uid] ?? cluster.jobs[uid]
   return (
     <div className="px-4 pt-3">
       <div className="flex items-center justify-between">
@@ -100,10 +102,10 @@ function Breadcrumb({ uid, cluster }: { uid: string; cluster: ClusterState }) {
   const chain: { uid: string; label: string }[] = []
   let cur: string | null = uid
   while (cur) {
-    const r = (cluster.pods[cur] ?? cluster.replicaSets[cur] ?? cluster.deployments[cur]) as Deployment | ReplicaSet | Pod | undefined
+    const r = (cluster.pods[cur] ?? cluster.replicaSets[cur] ?? cluster.deployments[cur] ?? cluster.jobs[cur]) as Deployment | ReplicaSet | Pod | Job | undefined
     if (!r) break
-    chain.unshift({ uid: cur, label: r.kind === 'Pod' ? short(r.name) : r.kind === 'ReplicaSet' ? `rs/${r.hash}` : `deploy/${r.name}` })
-    cur = r.kind === 'Deployment' ? null : r.ownerUid
+    chain.unshift({ uid: cur, label: r.kind === 'Pod' ? short(r.name) : r.kind === 'ReplicaSet' ? `rs/${r.hash}` : r.kind === 'Job' ? `job/${r.name}` : `deploy/${r.name}` })
+    cur = r.kind === 'Deployment' || r.kind === 'Job' ? null : r.ownerUid
   }
   if (chain.length < 2) return null
   return (
@@ -522,8 +524,8 @@ function DeploymentView({ dep, cluster }: { dep: Deployment; cluster: ClusterSta
 function Yaml({ cluster, uid }: { cluster: ClusterState; uid: string }) {
   const setDraft = useSim((s) => s.setDraft)
   const lines = toYaml(cluster, uid)
-  const kind = cluster.pods[uid] ? 'pod' : cluster.replicaSets[uid] ? 'rs' : cluster.services[uid] ? 'svc' : 'deploy'
-  const name = (cluster.pods[uid] ?? cluster.replicaSets[uid] ?? cluster.services[uid] ?? cluster.deployments[uid])?.name
+  const kind = cluster.pods[uid] ? 'pod' : cluster.replicaSets[uid] ? 'rs' : cluster.services[uid] ? 'svc' : cluster.jobs[uid] ? 'job' : 'deploy'
+  const name = (cluster.pods[uid] ?? cluster.replicaSets[uid] ?? cluster.services[uid] ?? cluster.deployments[uid] ?? cluster.jobs[uid])?.name
   const command = `kubectl get ${kind} ${name} -o yaml`
   return (
     <>
@@ -729,5 +731,44 @@ function HandEdit({ pod }: { pod: Pod }) {
         </form>
       )}
     </Section>
+  )
+}
+
+function JobView({ job }: { job: Job }) {
+  const exec = useSim((s) => s.exec)
+  return (
+    <>
+      <p className="mt-3 text-[11.5px] leading-relaxed text-fg-muted">
+        {job.status === 'Complete'
+          ? 'Todas as tarefas terminaram com sucesso. Os Pods ficam em Completed, com os logs, até o Job ser apagado.'
+          : job.status === 'Failed'
+            ? `Mais de ${job.backoffLimit} Pods falharam: o Job desistiu. Os Pods que falharam ficam para você investigar.`
+            : 'O Job controller mantém Pods trabalhando até o número de conclusões ser atingido. Pod que termina bem não é substituído.'}
+      </p>
+      <Section title="Progresso">
+        <Props
+          rows={[
+            ['Concluídas', `${job.succeeded} de ${job.completions}`],
+            ['Em paralelo (máx.)', String(job.parallelism)],
+            ['Falhas', `${job.failed} (limite: ${job.backoffLimit})`],
+            ['Imagem', job.image.split('/').pop() ?? job.image],
+          ]}
+        />
+      </Section>
+      <div className="mt-4 flex gap-2">
+        <button
+          onClick={() => exec(`kubectl logs job/${job.name}`, 'ui')}
+          className="flex items-center gap-1.5 rounded-lg border border-line-strong px-2.5 py-1.5 text-[12px] text-fg-muted transition hover:text-fg"
+        >
+          <ScrollText size={13} /> Logs
+        </button>
+        <button
+          onClick={() => exec(`kubectl describe job ${job.name}`, 'ui')}
+          className="flex items-center gap-1.5 rounded-lg border border-line-strong px-2.5 py-1.5 text-[12px] text-fg-muted transition hover:text-fg"
+        >
+          <FileText size={13} /> Describe
+        </button>
+      </div>
+    </>
   )
 }

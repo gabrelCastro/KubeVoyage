@@ -333,7 +333,7 @@ export function HpaLane({ cluster }: { cluster: ClusterState }) {
 }
 
 export function Legend() {
-  const states: PodVisual[] = ['pending', 'creating', 'running', 'ready', 'crash', 'terminating']
+  const states: PodVisual[] = ['pending', 'creating', 'running', 'ready', 'crash', 'terminating', 'completed']
   return (
     <div className="flex flex-col gap-1">
       {states.map((s) => (

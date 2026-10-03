@@ -1,0 +1,175 @@
+import { Callout, QuickQuestion } from '../../components/apostila/ApostilaBlocks'
+
+# Jobs: trabalho que termina
+
+Esta apostila acompanha a lição 11. Até aqui, todo Pod que sumia era substituído — o self-healing da lição 1. Na atividade, você viu o contrário: Pods que terminaram e ficaram lá, em `Completed`, sem que ninguém os recriasse. E um Job que desistiu de propósito.
+
+<section id="o-que-voce-vai-entender">
+
+## O que você vai entender
+
+- O que é um **Job** e quando usá-lo em vez de um Deployment.
+- Como **completions** e **parallelism** dividem o trabalho.
+- O que acontece quando uma tarefa falha: **back-off** e **backoffLimit**.
+
+</section>
+
+<section id="conceitos">
+
+## Conceitos
+
+<h3 id="job">Job</h3>
+
+Um **Job** roda uma tarefa até ela terminar: um relatório, uma migração de banco, um processamento em lote. Ele cria Pods, espera que eles terminem com sucesso (o processo sai com código 0) e conta quantos terminaram.
+
+A diferença para um Deployment está no que cada controller quer:
+
+| | Deployment | Job |
+|---|---|---|
+| O objetivo | N Pods sempre rodando | N tarefas concluídas |
+| Pod que termina bem | é substituído | conta como feito |
+| Pod que falha | é reiniciado | outro é criado, até um limite |
+| `restartPolicy` | `Always` | `Never` ou `OnFailure` |
+
+<h3 id="completions-e-parallelism">completions e parallelism</h3>
+
+- **completions**: quantas tarefas precisam terminar com sucesso.
+- **parallelism**: quantos Pods podem trabalhar ao mesmo tempo.
+
+Com `completions: 5` e `parallelism: 2`, o Job mantém até 2 Pods rodando e, a cada um que termina, cria outro — até 5 terminarem bem. Foi o que você viu no palco.
+
+<h3 id="completed">Completed: o Pod fica</h3>
+
+Quando o Job termina, ele não cria mais Pods — e, pela documentação, os Pods normalmente **não são apagados**. Eles ficam em `Completed` (ou `Error`) para você ler os logs e investigar. O Job também guarda a contagem no próprio status: apagar um Pod concluído não “desfaz” o trabalho.
+
+<h3 id="backofflimit">Falhas, back-off e backoffLimit</h3>
+
+Quando uma tarefa falha, o Job controller cria outro Pod — esperando cada vez mais entre as tentativas (na documentação: 10 s, 20 s, 40 s… até 6 minutos). O **backoffLimit** diz quantas falhas o Job tolera; o padrão é 6. Passou disso, o Job desiste: fica `Failed` com o motivo `BackoffLimitExceeded`, e os Pods que falharam continuam lá, com os logs.
+
+</section>
+
+<section id="no-mundo-real">
+
+## No mundo real
+
+### Os comandos da atividade
+
+```bash
+kubectl apply -f relatorio.yaml
+kubectl get pods -w                        # Running → Completed, 2 de cada vez
+kubectl get jobs                           # relatorio  Complete  5/5
+kubectl logs job/relatorio                 # os logs de um dos Pods do Job
+kubectl apply -f relatorio-setembro.yaml
+kubectl describe job relatorio-setembro    # 3 Failed — BackoffLimitExceeded
+kubectl logs job/relatorio-setembro        # arquivo de entrada não encontrado
+```
+
+### Limpeza automática
+
+Jobs e Pods concluídos se acumulam. O campo `ttlSecondsAfterFinished` faz o Kubernetes apagar o Job (e seus Pods) um tempo depois de ele terminar — bom para tarefas frequentes, desde que os logs sejam coletados antes.
+
+<h3 id="cronjob">CronJob: Jobs com agenda</h3>
+
+Para rodar a mesma tarefa periodicamente, existe o **CronJob**: ele cria um Job novo a cada horário de uma agenda no formato cron.
+
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: relatorio-diario
+spec:
+  schedule: "0 3 * * *"        # todo dia às 3h
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: relatorio
+              image: ghcr.io/kubelearn/relatorio:1.0
+```
+
+<Callout title="Tarefas precisam aguentar repetição">
+  Um Job pode rodar a mesma tarefa mais de uma vez — depois de uma falha, de um node que caiu ou de um Pod apagado no meio do trabalho. Escreva tarefas que possam ser repetidas sem estragar nada (idempotentes): gravar o relatório com o mesmo nome, não somar de novo um valor já somado.
+</Callout>
+
+</section>
+
+<section id="o-que-simplificamos">
+
+## O que simplificamos
+
+- As esperas entre tentativas foram encurtadas: aqui, segundos; no cluster real, começam em 10 s e chegam a 6 minutos.
+- Só existe `restartPolicy: Never`. Com `OnFailure`, o kubelet reinicia o container no mesmo Pod em vez de o Job criar outro.
+- Não simulamos Jobs indexados, `activeDeadlineSeconds`, `ttlSecondsAfterFinished` nem CronJobs.
+- Apagar um Pod em execução aqui faz o Job criar outro sem contar como falha; no cluster real, isso depende da política de substituição de Pods.
+
+</section>
+
+<section id="erros-comuns">
+
+## Erros comuns
+
+### Usar Deployment para uma tarefa que termina
+
+O Pod termina, o Deployment entende que ele “morreu” e cria outro — que roda a tarefa de novo, e de novo. Tarefa que termina é Job.
+
+### Usar restartPolicy: Always num Job
+
+A API recusa: um Job só aceita `Never` ou `OnFailure`. `Always` é para quem nunca termina.
+
+### Apagar o Job antes de ler os logs
+
+Os logs moram nos Pods. `kubectl delete job` leva os Pods junto — e a explicação da falha vai embora com eles.
+
+### backoffLimit alto demais
+
+Uma tarefa com bug de verdade vai falhar sempre. Com um limite alto, o Job passa muito tempo tentando (com esperas que chegam a minutos) antes de avisar que não vai dar.
+
+</section>
+
+<section id="teste-rapido">
+
+## Teste rápido
+
+<QuickQuestion
+  question="Um Job com completions: 5 e parallelism: 2 já tem 2 Pods rodando. Um deles termina com sucesso. O que acontece?"
+  options={[
+    { label: 'Nada: o Pod concluído é substituído só se falhar.', explanation: 'Ele não é substituído — mas ainda faltam tarefas, então o Job cria outro Pod para a próxima.' },
+    { label: 'O Job cria um Pod novo para a próxima tarefa.', correct: true, explanation: 'Correto. Ainda faltam 4 tarefas e só 1 está rodando: o Job volta a ter 2 trabalhando.' },
+    { label: 'O Pod concluído é reiniciado.', explanation: 'Pod que termina bem conta como feito; ninguém o reinicia.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="O que significa um Job com a condição BackoffLimitExceeded?"
+  options={[
+    { label: 'Que ele demorou mais que o tempo máximo.', explanation: 'Esse seria o activeDeadlineSeconds.' },
+    { label: 'Que mais Pods falharam do que o backoffLimit permite, e ele desistiu.', correct: true, explanation: 'Correto. O Job para de tentar e fica Failed; os Pods que falharam ficam para investigar.' },
+    { label: 'Que o node ficou sem CPU.', explanation: 'Falta de espaço deixaria Pods Pending, sem contar como falha.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="Você precisa gerar um relatório toda madrugada. Qual recurso usar?"
+  options={[
+    { label: 'Um Deployment com 1 réplica.', explanation: 'O Pod terminaria e seria recriado na hora, gerando o relatório sem parar.' },
+    { label: 'Um CronJob.', correct: true, explanation: 'Correto. Ele cria um Job a cada horário da agenda.' },
+    { label: 'Um Job com completions: 365.', explanation: 'Isso rodaria 365 tarefas assim que possível, não uma por dia.' },
+  ]}
+/>
+
+</section>
+
+<section id="para-ir-alem">
+
+## Para ir além
+
+- **Jobs indexados** (`completionMode: Indexed`) dão a cada Pod um número, para dividir um conjunto de dados em pedaços.
+- **activeDeadlineSeconds** limita o tempo total de um Job, falhe ou não.
+- **DaemonSets** e **StatefulSets** são os outros controllers de carga de trabalho: um Pod por node, e Pods com identidade e armazenamento estáveis.
+- [Jobs — conceito](https://kubernetes.io/docs/concepts/workloads/controllers/job/)
+- [CronJob](https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/)
+- [Limpeza automática de Jobs (TTL)](https://kubernetes.io/docs/concepts/workloads/controllers/ttlafterfinished/)
+
+</section>

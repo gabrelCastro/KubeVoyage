@@ -10,6 +10,7 @@
     "configmaps": { "required": ["missing", "create", "change", "restart"], "optional": [] },
     "secrets": { "required": ["create", "reveal", "ship"], "optional": [] },
     "probes": { "required": ["ship", "notice", "liveness", "fix"], "optional": [] },
-    "autoscaling": { "required": ["measure", "autoscale", "requests", "load", "calm"], "optional": [] }
+    "autoscaling": { "required": ["measure", "autoscale", "requests", "load", "calm"], "optional": [] },
+    "jobs": { "required": ["run", "logs", "fail", "investigate"], "optional": [] }
   }
 }

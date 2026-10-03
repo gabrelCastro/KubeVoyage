@@ -162,6 +162,42 @@ spec:
             httpGet: { path: /healthz, port: 8080 }`,
 }
 
+// Lesson 11: work that ends
+FILES['relatorio.yaml'] = {
+  manifest: { kind: 'Job', name: 'relatorio', image: 'ghcr.io/kubelearn/relatorio:1.0', completions: 5, parallelism: 2, backoffLimit: 4 },
+  yaml: `apiVersion: batch/v1
+kind: Job
+metadata:
+  name: relatorio
+spec:
+  completions: 5       # 5 tarefas precisam terminar bem
+  parallelism: 2       # no máximo 2 Pods ao mesmo tempo
+  backoffLimit: 4      # desiste depois de 4 falhas
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: relatorio
+          image: ghcr.io/kubelearn/relatorio:1.0`,
+}
+
+FILES['relatorio-setembro.yaml'] = {
+  manifest: { kind: 'Job', name: 'relatorio-setembro', image: 'ghcr.io/kubelearn/relatorio:1.1', completions: 1, parallelism: 1, backoffLimit: 2 },
+  yaml: `apiVersion: batch/v1
+kind: Job
+metadata:
+  name: relatorio-setembro
+spec:
+  completions: 1
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: relatorio
+          image: ghcr.io/kubelearn/relatorio:1.1`,
+}
+
 /** Kept for the first lesson and tests. */
 export const MANIFEST = { file: 'backend.yaml', manifest: FILES['backend.yaml'].manifest }
 export const MANIFEST_YAML = FILES['backend.yaml'].yaml

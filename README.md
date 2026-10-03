@@ -35,6 +35,7 @@ npm run fixtures   # regenerate the cross-language merge fixtures after changing
 | 8 | Secrets | v1.5 from lesson 6 fixed forward with a Secret — and `-o jsonpath … \| base64 -d` shows it was never hidden |
 | 9 | Probes | v1.6 freezes after a while: readiness takes it out of the Service but only a liveness probe restarts it — and `rollout undo` would drop the probe |
 | 10 | Resources & autoscaling | Without requests the HPA reads `<unknown>`; with them, a load generator scales it up — and down only after the stabilization window |
+| 11 | Jobs | 5 report tasks, 2 at a time, end in `Completed` and are never replaced; a failing one retries with back-off until `BackoffLimitExceeded` |
 
 Lessons live in `src/lessons/` as data: a starting cluster (`setup`), manifests in the
 terminal's directory (`files`), objectives as predicates over the simulated state, and a

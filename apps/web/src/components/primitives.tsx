@@ -37,6 +37,12 @@ export function StatusGlyph({ state, size = 16 }: { state: PodVisual; size?: num
               </>
             )}
             {state === 'ready' && <circle cx="8" cy="8" r="5" fill={color} />}
+            {state === 'completed' && (
+              <>
+                <circle cx="8" cy="8" r="5.5" fill="none" stroke={color} strokeWidth="1.4" />
+                <path d="M5.4 8.2 L7.2 10 L10.8 6.2" fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              </>
+            )}
             {state === 'terminating' && <circle cx="8" cy="8" r="4.5" fill="none" stroke={color} strokeWidth="1.6" strokeDasharray="1 2.4" />}
             {state === 'crash' && (
               <>
@@ -158,13 +164,14 @@ export function LabelChip({ k, v, tone = 'neutral' }: { k: string; v: string; to
   )
 }
 
-export type Kind = 'Deployment' | 'ReplicaSet' | 'Pod' | 'Service'
+export type Kind = 'Deployment' | 'ReplicaSet' | 'Pod' | 'Service' | 'Job'
 
 export const KIND_COLOR: Record<Kind, string> = {
   Deployment: 'var(--color-deploy)',
   ReplicaSet: 'var(--color-rs)',
   Pod: 'var(--color-fg-muted)',
   Service: 'var(--color-svc)',
+  Job: 'var(--color-creating)',
 }
 
 export function KindBadge({ kind, className }: { kind: Kind; className?: string }) {
@@ -181,6 +188,12 @@ export function KindBadge({ kind, className }: { kind: Kind; className?: string 
 export function KindIcon({ kind, size = 14 }: { kind: Kind; size?: number }) {
   return (
     <svg viewBox="0 0 16 16" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round">
+      {kind === 'Job' && (
+        <>
+          <rect x="2.5" y="3" width="11" height="10" rx="2" />
+          <path d="M5.2 8.2 L7.1 10 L10.8 6.2" strokeLinecap="round" />
+        </>
+      )}
       {kind === 'Deployment' && (
         <>
           <path d="M8 1.8l5.4 3.1v6.2L8 14.2l-5.4-3.1V4.9z" />

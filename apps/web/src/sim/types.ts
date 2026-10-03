@@ -1,8 +1,8 @@
 export type Labels = Record<string, string>
 
-export type PodPhase = 'Pending' | 'ContainerCreating' | 'Running' | 'Terminating' | 'Error' | 'CrashLoopBackOff'
+export type PodPhase = 'Pending' | 'ContainerCreating' | 'Running' | 'Terminating' | 'Error' | 'CrashLoopBackOff' | 'Succeeded'
 
-export type ResourceKind = 'Deployment' | 'ReplicaSet' | 'Pod' | 'Service' | 'Node' | 'ConfigMap' | 'HorizontalPodAutoscaler' | 'Secret'
+export type ResourceKind = 'Deployment' | 'ReplicaSet' | 'Pod' | 'Service' | 'Node' | 'ConfigMap' | 'HorizontalPodAutoscaler' | 'Secret' | 'Job'
 
 export type RolloutState = 'complete' | 'progressing' | 'stalled'
 
@@ -20,6 +20,25 @@ export interface Template {
   resources?: Resources
   /** `envFrom: secretRef` — a Secret whose keys also become environment variables. */
   secret?: string
+}
+
+/** Work that ends: Pods run a task to completion, and the Job counts successes and failures. */
+export interface Job {
+  kind: 'Job'
+  uid: string
+  name: string
+  image: string
+  completions: number
+  parallelism: number
+  backoffLimit: number
+  /** Kept on the Job, like the real status: deleting a finished Pod doesn't undo the count. */
+  succeeded: number
+  failed: number
+  status: 'Running' | 'Complete' | 'Failed'
+  createdAt: number
+  completedAt: number | null
+  /** Set while `kubectl delete job` takes its Pods away. */
+  deletedAt?: number | null
 }
 
 /** Like a ConfigMap, for sensitive values. Kept here in clear text; the API shows them base64-encoded. */
@@ -136,6 +155,8 @@ export interface Pod {
   secret?: string
   /** A load generator: while it runs, it sends a stream of requests to this Service. */
   loadTarget?: string
+  /** Owned by a Job (ownerUid is the Job's uid): runs to completion instead of serving. */
+  job?: boolean
 }
 
 export interface Service {
@@ -172,6 +193,7 @@ export interface ClusterState {
   configMaps: Record<string, ConfigMap>
   hpas: Record<string, HorizontalPodAutoscaler>
   secrets: Record<string, Secret>
+  jobs: Record<string, Job>
   nodes: WorkerNode[]
   vacancies: Vacancy[]
 }
@@ -183,6 +205,7 @@ export type EventSource =
   | 'replicaset-controller'
   | 'garbage-collector'
   | 'horizontal-pod-autoscaler'
+  | 'job-controller'
   | 'endpoints-controller'
   | 'default-scheduler'
   | 'kubelet'

@@ -4,11 +4,13 @@ import type { ClusterState, Pod } from '../sim/types'
 
 export const cn = clsx
 
-export type PodVisual = 'pending' | 'creating' | 'running' | 'ready' | 'crash' | 'terminating'
+export type PodVisual = 'pending' | 'creating' | 'running' | 'ready' | 'crash' | 'terminating' | 'completed'
 
 export const podVisual = (p: Pod): PodVisual =>
   p.phase === 'Terminating'
     ? 'terminating'
+    : p.phase === 'Succeeded'
+      ? 'completed'
     : p.waiting || p.phase === 'Error' || p.phase === 'CrashLoopBackOff'
       ? 'crash'
       : p.phase === 'Pending'
@@ -26,6 +28,7 @@ export const VISUAL: Record<PodVisual, { label: string; color: string; step: num
   ready: { label: 'Ready', color: 'var(--color-ready)', step: 3, hint: 'Rodando e passando na readiness probe. Conta como disponível e recebe tráfego.' },
   crash: { label: 'CrashLoopBackOff', color: 'var(--color-crash)', step: 2, hint: 'O container fica encerrando. O kubelet o reinicia com esperas cada vez maiores. Ele nunca fica Ready.' },
   terminating: { label: 'Terminating', color: 'var(--color-terminating)', step: -1, hint: 'Marcado para remoção. Não conta mais para o ReplicaSet nem recebe tráfego.' },
+  completed: { label: 'Completed', color: 'var(--color-fg-muted)', step: 4, hint: 'A tarefa terminou com sucesso (código 0). O container não roda mais; o Pod fica para você ler os logs.' },
 }
 
 /** Text shown for a Pod's state: the real phase name for crashes (Error vs CrashLoopBackOff). */
@@ -42,6 +45,7 @@ export const SIZE = {
   ReplicaSetCompact: { w: 196, h: 66 },
   Pod: { w: 158, h: 104 },
   Service: { w: 256, h: 96 },
+  Job: { w: 252, h: 96 },
 } as const
 
 const SLOT_W = 178
@@ -50,7 +54,7 @@ const PAD_X = 40
 const GROUP_GAP = 36
 const DEPLOY_GAP = 90
 
-export type BoxKind = 'Deployment' | 'ReplicaSet' | 'Pod' | 'Service'
+export type BoxKind = 'Deployment' | 'ReplicaSet' | 'Pod' | 'Service' | 'Job'
 
 export interface Box {
   uid: string
@@ -129,6 +133,18 @@ export function computeLayout(c: ClusterState): Layout {
     cursor += DEPLOY_GAP
   }
 
+  // Jobs: their Pods hang right under them, like a ReplicaSet's
+  for (const job of Object.values(c.jobs).sort((a, b) => a.createdAt - b.createdAt)) {
+    const pods = Object.values(c.pods).filter((p) => p.ownerUid === job.uid)
+    const slotCount = Math.max(1, ...pods.map((p) => p.slot + 1))
+    const groupW = Math.max(slotCount * SLOT_W, SIZE.Job.w + 20)
+    const cx = cursor + groupW / 2
+    const rowLeft = cx - (slotCount * SLOT_W) / 2
+    boxes[job.uid] = { uid: job.uid, kind: 'Job', x: cx, y: ROW.ReplicaSet, ...SIZE.Job }
+    for (const p of pods) boxes[p.uid] = { uid: p.uid, kind: 'Pod', x: rowLeft + p.slot * SLOT_W + SLOT_W / 2, y: ROW.Pod, ...SIZE.Pod }
+    cursor += groupW + DEPLOY_GAP
+  }
+
   const loners = Object.values(c.pods).filter((p) => p.ownerUid === null)
   if (loners.length) {
     const count = Math.max(...loners.map((p) => p.slot + 1))
@@ -191,7 +207,7 @@ export function relatedTo(c: ClusterState, uid: string | null): Set<string> | nu
 }
 
 export const kindOf = (c: ClusterState, uid: string): BoxKind | null =>
-  c.deployments[uid] ? 'Deployment' : c.replicaSets[uid] ? 'ReplicaSet' : c.pods[uid] ? 'Pod' : c.services[uid] ? 'Service' : null
+  c.deployments[uid] ? 'Deployment' : c.replicaSets[uid] ? 'ReplicaSet' : c.pods[uid] ? 'Pod' : c.services[uid] ? 'Service' : c.jobs[uid] ? 'Job' : null
 
 export const spring = { type: 'spring', stiffness: 260, damping: 30, mass: 0.9 } as const
 export const softSpring = { type: 'spring', stiffness: 170, damping: 24 } as const

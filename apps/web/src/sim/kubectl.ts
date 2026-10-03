@@ -2,6 +2,7 @@ import { parseArgs, parseSelector, selects, suggest, TAKES_VALUE, tokenize, type
 import {
   apiPhase,
   configMapObject,
+  jobObject,
   secretObject,
   hpaObject,
   deploymentObject,
@@ -22,7 +23,7 @@ import {
 import { pipe } from './cli/pipe'
 import { isBroken, labelString, NODE_CPU, rsSelector, short, tag, type Simulation } from './engine'
 import { FILES, IMAGE } from './manifests'
-import type { ClusterEvent, ConfigMap, Deployment, HorizontalPodAutoscaler, Labels, Pod, ReplicaSet, Secret, Service, WorkerNode } from './types'
+import type { ClusterEvent, ConfigMap, Deployment, HorizontalPodAutoscaler, Job, Labels, Pod, ReplicaSet, Secret, Service, WorkerNode } from './types'
 
 export { FILES, IMAGE, MANIFEST, MANIFEST_YAML } from './manifests'
 
@@ -48,7 +49,7 @@ export interface RunPresentation {
   images?: string[]
 }
 
-export type WatchKind = 'pods' | 'deployments' | 'replicasets' | 'services' | 'endpoints' | 'endpointslices' | 'events' | 'nodes' | 'configmaps' | 'horizontalpodautoscalers' | 'secrets'
+export type WatchKind = 'pods' | 'deployments' | 'replicasets' | 'services' | 'endpoints' | 'endpointslices' | 'events' | 'nodes' | 'configmaps' | 'horizontalpodautoscalers' | 'secrets' | 'jobs'
 
 export interface WatchSpec {
   kind: WatchKind
@@ -98,7 +99,7 @@ export function podRow(sim: Simulation, p: Pod, wide = false, labels = false): S
   const row: Seg[] = [
     { t: p.name, c: 'strong', ref: p.uid },
     { t: p.ready ? '1/1' : '0/1' },
-    { t: p.waiting ?? p.phase, c: statusTone(p) },
+    { t: p.waiting ?? (p.phase === 'Succeeded' ? 'Completed' : p.phase), c: p.phase === 'Succeeded' ? 'muted' : statusTone(p) },
     { t: String(p.restarts), c: p.restarts ? 'warn' : undefined },
     { t: age(sim.now - p.createdAt) },
   ]
@@ -146,13 +147,14 @@ const KIND_ALIASES: Record<string, KindId | 'all'> = {
   ev: 'events', event: 'events', events: 'events',
   cm: 'configmaps', configmap: 'configmaps', configmaps: 'configmaps',
   secret: 'secrets', secrets: 'secrets',
+  job: 'jobs', jobs: 'jobs', 'job.batch': 'jobs', 'jobs.batch': 'jobs',
   hpa: 'horizontalpodautoscalers', horizontalpodautoscaler: 'horizontalpodautoscalers', horizontalpodautoscalers: 'horizontalpodautoscalers', 'horizontalpodautoscaler.autoscaling': 'horizontalpodautoscalers',
   no: 'nodes', node: 'nodes', nodes: 'nodes',
   all: 'all',
 }
 
 /** Real kinds this cluster doesn't simulate: say so instead of "no such type". */
-const UNSIMULATED_KINDS = ['namespaces', 'ns', 'ingress', 'ingresses', 'ing', 'statefulsets', 'sts', 'daemonsets', 'ds', 'jobs', 'job', 'cronjobs', 'cj', 'persistentvolumeclaims', 'pvc', 'persistentvolumes', 'pv', 'serviceaccounts', 'sa', 'namespace']
+const UNSIMULATED_KINDS = ['namespaces', 'ns', 'ingress', 'ingresses', 'ing', 'statefulsets', 'sts', 'daemonsets', 'ds', 'cronjobs', 'cj', 'persistentvolumeclaims', 'pvc', 'persistentvolumes', 'pv', 'serviceaccounts', 'sa', 'namespace']
 
 type Item = { name: string; uid?: string }
 
@@ -328,6 +330,22 @@ const SPECS: { [K in KindId]: Spec<any> } = {
       { t: age(sim.now - h.createdAt) },
     ],
   } satisfies Spec<HorizontalPodAutoscaler>,
+  jobs: {
+    resource: 'jobs.batch',
+    prefix: 'job.batch',
+    namespaced: true,
+    items: (sim) => Object.values(sim.cluster.jobs).filter((j) => !j.deletedAt).sort((a, b) => a.createdAt - b.createdAt),
+    labels: (_sim, j: Job) => ({ 'job-name': j.name }),
+    object: (sim, j: Job) => jobObject(sim, j),
+    header: () => ['NAME', 'STATUS', 'COMPLETIONS', 'DURATION', 'AGE'],
+    row: (sim, j: Job) => [
+      { t: j.name, c: 'strong' },
+      { t: j.status, c: j.status === 'Complete' ? 'success' : j.status === 'Failed' ? 'error' : 'info' },
+      { t: `${j.succeeded}/${j.completions}` },
+      { t: age((j.completedAt ?? sim.now) - j.createdAt) },
+      { t: age(sim.now - j.createdAt) },
+    ],
+  } satisfies Spec<Job>,
   secrets: {
     resource: 'secrets',
     prefix: 'secret',
@@ -376,7 +394,7 @@ function resolveKind(raw: string): KindId[] | { error: Line[] } {
     if (k === 'all') out.push(...ALL)
     else if (k) out.push(k)
     else if (UNSIMULATED_KINDS.includes(part.toLowerCase()))
-      return { error: [plain(`"${part}" existe no Kubernetes real, mas este cluster de treino só simula Pods, Deployments, ReplicaSets, Services, ConfigMaps, Secrets, HPAs, EndpointSlices, Events e Nodes.`, 'warn')] }
+      return { error: [plain(`"${part}" existe no Kubernetes real, mas este cluster de treino só simula Pods, Deployments, ReplicaSets, Jobs, Services, ConfigMaps, Secrets, HPAs, EndpointSlices, Events e Nodes.`, 'warn')] }
     else {
       const guess = suggest(part, Object.keys(KIND_ALIASES).filter((a) => !a.includes('.')))[0]
       return { error: [plain(`error: the server doesn't have a resource type "${part}"`, 'error'), ...(guess ? [note(`você quis dizer "${guess}"?`)] : [])] }
@@ -627,8 +645,8 @@ function runOne(sim: Simulation, tokens: string[], presentation: RunPresentation
       if (!sim.files.includes(file)) return err(`error: the path "${file}" does not exist`)
       const m = FILES[file].manifest
       const result = sim.apply(m)
-      const kind = m.kind === 'Service' ? 'service' : m.kind === 'ConfigMap' ? 'configmap' : 'deployment.apps'
-      const uid = m.kind === 'Service' ? sim.findService(m.name)?.uid : m.kind === 'ConfigMap' ? sim.findConfigMap(m.name)?.uid : sim.findDeployment(m.name)?.uid
+      const kind = m.kind === 'Service' ? 'service' : m.kind === 'ConfigMap' ? 'configmap' : m.kind === 'Job' ? 'job.batch' : 'deployment.apps'
+      const uid = m.kind === 'Service' ? sim.findService(m.name)?.uid : m.kind === 'ConfigMap' ? sim.findConfigMap(m.name)?.uid : m.kind === 'Job' ? sim.findJob(m.name)?.uid : sim.findDeployment(m.name)?.uid
       return { lines: [plain(`${kind}/${m.name} ${result}`, result === 'unchanged' ? 'muted' : 'success')], focusUid: uid }
     }
     case 'get':
@@ -701,6 +719,13 @@ function runOne(sim: Simulation, tokens: string[], presentation: RunPresentation
       const name = names[0]
       if (kind && KIND_ALIASES[kind] === 'configmaps') return createConfigMap(sim, name, more)
       if (kind === 'secret') return createSecret(sim, names, more)
+      if (kind && KIND_ALIASES[kind] === 'jobs') {
+        if (!name) return err('error: NAME is required')
+        if (typeof flags.image !== 'string') return err('error: required flag(s) "image" not set')
+        const r = sim.createJob({ name, image: flags.image, completions: 1, parallelism: 1, backoffLimit: 6 }, 'create')
+        if (r === 'exists') return err(`Error from server (AlreadyExists): jobs.batch "${name}" already exists`)
+        return ok(`job.batch/${name} created`, sim.findJob(name)?.uid)
+      }
       if (!kind || KIND_ALIASES[kind] !== 'deployments' || !name) return err('Usage: kubectl create deployment <name> --image=<image> [--replicas=N]')
       if (!/^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$/.test(name) || name.length > 253)
         return err(`error: failed to create deployment: Deployment.apps "${name}" is invalid: metadata.name: Invalid value`)
@@ -754,6 +779,16 @@ function logs(sim: Simulation, args: string[], flags: Flags): CommandResult {
     return { lines: [...lines.map(paint), ...follow] }
   }
 
+  if (args[0] && /^jobs?\//.test(args[0])) {
+    const jobName = args[0].split('/')[1]
+    const job = sim.findJob(jobName)
+    if (!job) return err(`Error from server (NotFound): jobs.batch "${jobName}" not found`)
+    const pods = sim.podsOf(job.uid).filter((p) => p.phase !== 'Pending' && p.phase !== 'ContainerCreating')
+    if (!pods.length) return err(`error: timed out waiting for the condition — os Pods de ${jobName} ainda não iniciaram`)
+    // like kubectl: one of the Job's Pods, with a note saying which
+    const pick = pods.at(-1)!
+    return logs(sim, [pick.name], flags)
+  }
   const name = args[0]?.replace(/^pods?\//, '')
   if (!name) return err('error: expected POD name. Usage: kubectl logs <pod>')
   const out = sim.logs(name, previous)
@@ -772,6 +807,11 @@ function remove(sim: Simulation, args: string[], flags: Flags): CommandResult {
     if (!names[0]) return err('error: resource(s) were provided, but no name was specified')
     if (sim.deleteHpa(names[0])) return { lines: [plain(`horizontalpodautoscaler.autoscaling "${names[0]}" deleted`, 'warn')] }
     return flags['ignore-not-found'] ? { lines: [] } : err(`Error from server (NotFound): horizontalpodautoscalers.autoscaling "${names[0]}" not found`)
+  }
+  if (k === 'jobs') {
+    if (!names[0]) return err('error: resource(s) were provided, but no name was specified')
+    if (sim.deleteJob(names[0])) return { lines: [plain(`job.batch "${names[0]}" deleted`, 'warn')] }
+    return flags['ignore-not-found'] ? { lines: [] } : err(`Error from server (NotFound): jobs.batch "${names[0]}" not found`)
   }
   if (k === 'secrets') {
     if (!names[0]) return err('error: resource(s) were provided, but no name was specified')
@@ -971,6 +1011,10 @@ const watchState = (sim: Simulation, kind: WatchKind, item: Item) => {
   }
   if (kind === 'events') return [(item as Item & ClusterEvent).id]
   if (kind === 'configmaps') return [(item as ConfigMap).data]
+  if (kind === 'jobs') {
+    const j = item as Job
+    return [j.status, j.succeeded, j.failed]
+  }
   if (kind === 'horizontalpodautoscalers') {
     const h = item as HorizontalPodAutoscaler
     return [h.current, h.min, h.max, h.cpuPercent, sim.findDeployment(h.target)?.replicas]
@@ -1155,7 +1199,7 @@ function describe(sim: Simulation, args: string[], flags: Flags): CommandResult 
   if ('error' in kinds) return { lines: kinds.error }
   if (kinds.length !== 1) return err('Usage: kubectl describe pod|deployment|rs|service|node <name>')
   const kind = kinds[0]
-  if (!['pods', 'deployments', 'replicasets', 'services', 'nodes', 'configmaps', 'horizontalpodautoscalers', 'secrets'].includes(kind)) return { lines: [plain(`describe de ${rawKind} ainda não está disponível aqui — tente kubectl get ${rawKind} -o yaml`, 'warn')] }
+  if (!['pods', 'deployments', 'replicasets', 'services', 'nodes', 'configmaps', 'horizontalpodautoscalers', 'secrets', 'jobs'].includes(kind)) return { lines: [plain(`describe de ${rawKind} ainda não está disponível aqui — tente kubectl get ${rawKind} -o yaml`, 'warn')] }
   const spec = SPECS[kind] as Spec<Item>
   let names = rawNames
   const sel = selectorFlag(flags)
@@ -1199,7 +1243,8 @@ function describeOne(sim: Simulation, kind: KindId, name: string): CommandResult
     const p = sim.findPod(name)
     if (!p) return err(`Error from server (NotFound): pods "${name}" not found`)
     const rs = p.ownerUid ? sim.cluster.replicaSets[p.ownerUid] : undefined
-    const crashing = p.phase === 'Error' || p.phase === 'CrashLoopBackOff'
+    const job = p.ownerUid ? sim.cluster.jobs[p.ownerUid] : undefined
+    const crashing = !p.job && (p.phase === 'Error' || p.phase === 'CrashLoopBackOff')
     return {
       focusUid: p.uid,
       lines: [
@@ -1209,7 +1254,8 @@ function describeOne(sim: Simulation, kind: KindId, name: string): CommandResult
         kv('Labels', labelString(p.labels) || '<none>', 'accent'),
         kv('Status', p.phase === 'Terminating' ? 'Terminating' : apiPhase(p), statusTone(p)),
         kv('IP', p.ip ?? '<none>'),
-        kv('Controlled By', rs ? `ReplicaSet/${rs.name}` : '<none>', rs ? 'info' : 'warn', rs?.uid),
+        kv('Controlled By', rs ? `ReplicaSet/${rs.name}` : job ? `Job/${job.name}` : '<none>', rs || job ? 'info' : 'warn', rs?.uid ?? job?.uid),
+        ...(p.job && (p.phase === 'Succeeded' || p.phase === 'Error') ? [kv('State', `Terminated (Reason: ${p.phase === 'Succeeded' ? 'Completed' : 'Error'}, Exit Code: ${p.phase === 'Succeeded' ? 0 : 1})`, p.phase === 'Succeeded' ? 'muted' : 'error')] : []),
         kv('Image', p.image, isBroken(p.image) ? 'error' : undefined),
         ...(crashing
           ? [kv('State', `Waiting (Reason: ${p.phase === 'Error' ? 'Error' : 'CrashLoopBackOff'})`, 'error'), kv('Last State', 'Terminated (Reason: Error, Exit Code: 2)', 'error')]
@@ -1311,6 +1357,25 @@ function describeOne(sim: Simulation, kind: KindId, name: string): CommandResult
       ],
     }
   }
+  if (kind === 'jobs') {
+    const j = sim.findJob(name)
+    if (!j) return err(`Error from server (NotFound): jobs.batch "${name}" not found`)
+    const active = sim.podsOf(j.uid).filter((p) => p.deletedAt === null && p.phase !== 'Succeeded' && p.phase !== 'Error').length
+    return {
+      focusUid: j.uid,
+      lines: [
+        kv('Name', j.name, 'strong', j.uid),
+        kv('Namespace', 'default'),
+        kv('Parallelism', String(j.parallelism)),
+        kv('Completions', String(j.completions)),
+        kv('Backoff Limit', String(j.backoffLimit)),
+        kv('Pods Statuses', `${active} Active / ${j.succeeded} Succeeded / ${j.failed} Failed`, j.failed ? 'warn' : undefined),
+        kv('Image', j.image),
+        ...(j.status !== 'Running' ? [kv('Condition', j.status === 'Complete' ? 'Complete' : 'Failed — BackoffLimitExceeded', j.status === 'Complete' ? 'success' : 'error')] : []),
+        ...eventsFor(j.uid),
+      ],
+    }
+  }
   if (kind === 'secrets') {
     const secret = sim.findSecret(name)
     if (!secret) return err(`Error from server (NotFound): secrets "${name}" not found`)
@@ -1399,7 +1464,7 @@ function help(): CommandResult {
 
 // ── completion ─────────────────────────────────────────────────────────────
 
-const KIND_WORDS = ['pods', 'deployments', 'replicasets', 'services', 'endpoints', 'endpointslices', 'events', 'nodes', 'configmaps', 'secrets', 'hpa', 'all', 'po', 'deploy', 'rs', 'svc', 'ep', 'no', 'cm']
+const KIND_WORDS = ['pods', 'deployments', 'replicasets', 'services', 'endpoints', 'endpointslices', 'events', 'nodes', 'configmaps', 'secrets', 'jobs', 'hpa', 'all', 'po', 'deploy', 'rs', 'svc', 'ep', 'no', 'cm']
 
 /** How each flag is offered: `=` means "a value follows, right here". */
 const FLAG_WORDS: Record<string, string> = {
@@ -1475,7 +1540,7 @@ function candidatesFor(sim: Simulation, words: string[], last: string, images: s
     case 'edit':
       return positional.length === 0 ? ['deployment', 'deploy'] : namesOf(sim, 'deployments')
     case 'create':
-      return positional.length === 0 ? ['deployment', 'configmap', 'secret'] : positional[0] === 'secret' && positional.length === 1 ? ['generic'] : []
+      return positional.length === 0 ? ['deployment', 'configmap', 'secret', 'job'] : positional[0] === 'secret' && positional.length === 1 ? ['generic'] : []
     case 'patch':
       return positional.length === 0 ? ['configmap'] : positional.length === 1 ? namesOf(sim, 'configmaps') : []
     case 'autoscale':
@@ -1539,6 +1604,7 @@ const KIND_DOCS: Record<KindId | 'all', string> = {
   nodes: 'Nodes — as máquinas do cluster',
   configmaps: 'ConfigMaps — configuração guardada fora da imagem',
   secrets: 'Secrets — valores sensíveis, guardados em base64 (não criptografados por padrão)',
+  jobs: 'Jobs — rodam uma tarefa até terminar',
   horizontalpodautoscalers: 'HorizontalPodAutoscalers — ajustam as réplicas pela CPU',
   all: 'os tipos principais: Pods, Services, Deployments e ReplicaSets',
 }

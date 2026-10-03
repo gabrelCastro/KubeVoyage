@@ -2,7 +2,7 @@ import { AnimatePresence, motion, useAnimate } from 'motion/react'
 import { RefreshCw, Check, Plus, X } from 'lucide-react'
 import { memo, useEffect, useRef, type ReactNode } from 'react'
 import { isBroken, short, tag } from '../../sim/engine'
-import type { ControllerPhase, Deployment, Pod, ReplicaSet, Service } from '../../sim/types'
+import type { ControllerPhase, Deployment, Job, Pod, ReplicaSet, Service } from '../../sim/types'
 import { cn, LIFECYCLE, podLabel, podVisual, spring, VISUAL } from '../../lib/visual'
 import { designForPod, useApp } from '../../store/useApp'
 import { useSim } from '../../store/useSim'
@@ -114,6 +114,40 @@ export const DeploymentNode = memo(function DeploymentNode({ dep, geo, ...e }: {
           <span className="font-mono text-[12px] text-fg-muted">
             replicas: <Rolling value={dep.replicas} className="font-semibold text-fg" />
           </span>
+        </div>
+      </Card>
+    </Positioned>
+  )
+})
+
+// ── Job ────────────────────────────────────────────────────────────────────
+
+const JOB_PILL: Record<Job['status'], { label: string; color: string }> = {
+  Running: { label: 'Em execução', color: 'var(--color-creating)' },
+  Complete: { label: 'Concluído', color: 'var(--color-ready)' },
+  Failed: { label: 'Falhou', color: 'var(--color-crash)' },
+}
+
+export const JobNode = memo(function JobNode({ job, geo, active, ...e }: { job: Job; geo: Geo; active: number } & Emphasis) {
+  const select = useSim((s) => s.select)
+  const pill = JOB_PILL[job.status]
+  return (
+    <Positioned {...geo}>
+      <Card emphasis={e} tint="var(--color-creating)" onClick={() => select(job.uid)} label={`Job ${job.name}, ${pill.label}`} className={cn('px-3.5 py-2.5', job.deletedAt && 'opacity-60')}>
+        <div className="flex items-center justify-between">
+          <KindBadge kind="Job" />
+          <span
+            className="rounded-full border px-2 py-[1px] text-[10.5px] font-medium"
+            style={{ color: pill.color, borderColor: `color-mix(in oklab, ${pill.color} 35%, transparent)`, background: `color-mix(in oklab, ${pill.color} 9%, transparent)` }}
+          >
+            {job.deletedAt ? 'Excluindo' : pill.label}
+          </span>
+        </div>
+        <div className="mt-1 truncate font-mono text-[12.5px] text-fg">{job.name}</div>
+        <div className="mt-2 flex gap-5">
+          <Metric label={`Feitas de ${job.completions}`} value={job.succeeded} tone={job.status === 'Complete' ? 'ok' : 'neutral'} />
+          <Metric label="Ativos" value={active} />
+          <Metric label="Falhas" value={job.failed} tone={job.failed ? 'warn' : 'neutral'} />
         </div>
       </Card>
     </Positioned>
