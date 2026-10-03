@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { Simulation, isBroken } from '../../sim/engine'
 import { run } from '../../sim/kubectl'
 import { settle } from '../../sim/__tests__/helpers'
-import { DEFAULT_DESIGN, designFor, imageOf, parseStoredApp, useApp, type AppDesign } from '../useApp'
+import { DEFAULT_DESIGN, designFor, designForPod, imageOf, parseStoredApp, useApp, type AppDesign } from '../useApp'
 
 describe('useApp', () => {
   beforeEach(() => {
-    useApp.setState({ design: DEFAULT_DESIGN, customized: false, releases: [], studioOpen: false, visits: [], served: 0, failed: 0 })
+    useApp.setState({ design: DEFAULT_DESIGN, customized: false, releases: [], studioOpen: false, visits: [], podEdits: {}, lostEdits: [], served: 0, failed: 0 })
   })
 
   it('falls back safely when stored data is missing, malformed or invalid', () => {
@@ -76,5 +76,26 @@ describe('useApp', () => {
     expect(crashing.length).toBeGreaterThan(0)
     expect(crashing.every((p) => !p.ready && p.restarts > 0)).toBe(true)
     expect(sim.findDeployment('backend')!.rollout).toBe('stalled')
+  })
+
+  it('a hand edit changes only its Pod, and is lost — and reported — when the Pod goes away', () => {
+    const edit = { podName: 'backend-abc-x7f2k', emoji: '🐙', message: 'mexi aqui' }
+    useApp.getState().editPod('pod-1', edit)
+    const s = useApp.getState()
+    expect(designForPod(s, 'pod-1', imageOf('1.4'))).toMatchObject({ emoji: '🐙', message: 'mexi aqui', name: DEFAULT_DESIGN.name })
+    expect(designForPod(s, 'pod-2', imageOf('1.4'))).toEqual(DEFAULT_DESIGN)
+    useApp.getState().forgetGone(new Set(['pod-1', 'pod-2']))
+    expect(useApp.getState().lostEdits).toEqual([])
+    useApp.getState().forgetGone(new Set(['pod-2']))
+    expect(useApp.getState().podEdits).toEqual({})
+    expect(useApp.getState().lostEdits).toEqual([edit])
+    useApp.getState().dismissLost()
+    expect(useApp.getState().lostEdits).toEqual([])
+  })
+
+  it('restarting the lesson drops edits without calling them lost', () => {
+    useApp.getState().editPod('pod-1', { podName: 'p', emoji: '🐙', message: 'm' })
+    useApp.getState().resetVisits()
+    expect(useApp.getState()).toMatchObject({ podEdits: {}, lostEdits: [] })
   })
 })

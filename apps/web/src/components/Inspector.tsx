@@ -1,9 +1,10 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { ChevronRight, FileText, Minus, MousePointerClick, Plus, ScrollText, Trash2, X } from 'lucide-react'
+import { ChevronRight, FileText, Minus, MousePointerClick, Plus, ScrollText, Trash2, Wrench, X } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { isBroken, matches, rsSelector, sameTemplate, short } from '../sim/engine'
 import type { ClusterEvent, ClusterState, Deployment, Labels, Pod, ReplicaSet, Service } from '../sim/types'
 import { cn, kindOf, podLabel, podVisual, VISUAL } from '../lib/visual'
+import { APP_EMOJIS, designForPod, LIMITS, useApp } from '../store/useApp'
 import { clockTime, useSim } from '../store/useSim'
 import { KindBadge, LabelChip, StatusGlyph } from './primitives'
 import { PhasePill } from './stage/Nodes'
@@ -232,6 +233,8 @@ function PodView({ pod, cluster }: { pod: Pod; cluster: ClusterState }) {
           ]}
         />
       </Section>
+
+      <HandEdit pod={pod} />
 
       <Section title="Labels">
         <EditableLabels
@@ -624,4 +627,98 @@ function toYaml(c: ClusterState, uid: string): { t: string; hl?: boolean }[] {
     L('        - name: backend'),
     L(`          image: ${dep.template.image}`),
   ]
+}
+
+/**
+ * "Editar direto no container": the shortcut everyone tries once — and the lesson of why
+ * not. The change is real but lives only in this Pod; no Kubernetes object records it.
+ */
+function HandEdit({ pod }: { pod: Pod }) {
+  const edit = useApp((s) => s.podEdits[pod.uid])
+  // select stable pieces of state; building the design here keeps the selector referentially stable
+  const design = useApp((s) => s.design)
+  const releases = useApp((s) => s.releases)
+  const current = designForPod({ design, releases, podEdits: edit ? { [pod.uid]: edit } : {} }, pod.uid, pod.image)
+  const [open, setOpen] = useState(false)
+  const [message, setMessage] = useState('')
+  const [emoji, setEmoji] = useState('')
+  const editable = pod.image.includes('kubelearn/backend') && !isBroken(pod.image) && pod.deletedAt === null && (pod.phase === 'Running' || !!edit)
+  if (!editable) return null
+
+  if (edit)
+    return (
+      <Section title="Mexido à mão">
+        <div className="rounded-lg border border-warn/35 bg-warn/[0.06] px-3 py-2.5 text-[12px] leading-relaxed text-fg-muted">
+          <div className="text-fg">
+            <span aria-hidden>{edit.emoji}</span> “{edit.message}”
+          </div>
+          <p className="mt-1">
+            Só este Pod responde assim. Nada no Deployment, no ReplicaSet ou no <code className="font-mono">-o yaml</code> do Pod registra a mudança. Agora apague este Pod — ou
+            faça um rollout — e veja o que acontece com ela.
+          </p>
+        </div>
+      </Section>
+    )
+
+  return (
+    <Section title="Dentro do container">
+      {!open ? (
+        <>
+          <button
+            onClick={() => {
+              setMessage(current.message)
+              setEmoji(current.emoji)
+              setOpen(true)
+            }}
+            className="flex items-center gap-1.5 rounded-lg border border-line-strong px-2.5 py-1.5 text-[12px] text-fg-muted transition hover:border-warn/50 hover:text-fg"
+          >
+            <Wrench size={13} /> Editar direto no container…
+          </button>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-fg-faint">Como entrar com kubectl exec e trocar um arquivo do app lá dentro.</p>
+        </>
+      ) : (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            useApp.getState().editPod(pod.uid, { podName: pod.name, emoji, message: message.trim().slice(0, LIMITS.message) || current.message })
+            setOpen(false)
+          }}
+          className="rounded-lg border border-line-strong px-3 py-2.5"
+        >
+          <label className="block text-[11px] font-medium text-fg-muted">
+            Mensagem nova
+            <input
+              value={message}
+              maxLength={LIMITS.message}
+              onChange={(e) => setMessage(e.target.value)}
+              autoFocus
+              className="mt-1 w-full rounded-md border border-line-strong bg-bg px-2 py-1.5 text-[12.5px] text-fg outline-none focus:border-warn/60"
+            />
+          </label>
+          <div className="mt-2 flex flex-wrap gap-1" role="group" aria-label="Ícone">
+            {APP_EMOJIS.slice(0, 8).map((e) => (
+              <button
+                key={e}
+                type="button"
+                aria-pressed={emoji === e}
+                onClick={() => setEmoji(e)}
+                className={cn('grid size-7 place-items-center rounded-md border text-[14px]', emoji === e ? 'border-warn bg-warn/10' : 'border-line')}
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-fg-faint">Vale só para este Pod, e só enquanto ele existir.</p>
+          <div className="mt-2 flex justify-end gap-2">
+            <button type="button" onClick={() => setOpen(false)} className="px-2 py-1 text-[12px] text-fg-muted hover:text-fg">
+              Cancelar
+            </button>
+            <button type="submit" className="rounded-md bg-warn/15 px-2.5 py-1 text-[12px] font-medium text-warn hover:bg-warn/25">
+              Aplicar só neste Pod
+            </button>
+          </div>
+        </form>
+      )}
+    </Section>
+  )
 }

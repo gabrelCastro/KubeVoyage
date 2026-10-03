@@ -39,7 +39,7 @@ export interface CommandResult {
 export interface RunPresentation {
   app?: { name: string; message: string }
   /** The app as a given image serves it — each published version answers with its own face. */
-  appFor?: (image: string) => { name: string; message: string }
+  appFor?: (image: string, podUid?: string) => { name: string; message: string }
   /** Images published in the app studio (offered by Tab completion). */
   images?: string[]
 }
@@ -1582,7 +1582,7 @@ function fromInside(sim: Simulation, command: string[], presentation: RunPresent
     const pod = sim.cluster.pods[svc.endpoints[Math.floor(Math.random() * svc.endpoints.length)]]
     const path = '/' + pathParts.join('/')
     return [
-      plain(JSON.stringify({ status: 'ok', app: (presentation.appFor?.(pod.image) ?? presentation.app)?.name, message: (presentation.appFor?.(pod.image) ?? presentation.app)?.message, path, servedBy: pod.name, version: tag(pod.image) }), 'success'),
+      plain(JSON.stringify({ status: 'ok', app: (presentation.appFor?.(pod.image, pod.uid) ?? presentation.app)?.name, message: (presentation.appFor?.(pod.image, pod.uid) ?? presentation.app)?.message, path, servedBy: pod.name, version: tag(pod.image) }), 'success'),
       [{ t: '# atendido por ', c: 'muted' }, { t: pod.name, c: 'muted', ref: pod.uid }, { t: ' — rode de novo e o kube-proxy pode escolher outro Pod', c: 'muted' }],
     ]
   }

@@ -55,6 +55,23 @@ export function designFor(state: { design: AppDesign; releases: Release[] }, ima
   return state.releases.find((r) => r.tag === tag)?.design ?? state.design
 }
 
+/**
+ * A change made by hand inside one running container — what `kubectl exec` and editing a
+ * file would do. No Kubernetes object knows about it, so it dies with the Pod.
+ */
+export interface PodEdit {
+  podName: string
+  emoji: string
+  message: string
+}
+
+/** The app as one particular Pod serves it: its image's version, plus any edit made inside it. */
+export function designForPod(state: { design: AppDesign; releases: Release[]; podEdits: Record<string, PodEdit> }, uid: string, image: string): AppDesign {
+  const base = designFor(state, image)
+  const edit = state.podEdits[uid]
+  return edit ? { ...base, emoji: edit.emoji, message: edit.message } : base
+}
+
 /** One visitor's request, as the Service routed it (recorded when the request arrives). */
 export interface Visit {
   id: number
@@ -63,6 +80,8 @@ export interface Visit {
   podName?: string
   /** The image of the Pod that answered — which version of the app the visitor saw. */
   image?: string
+  /** The hand edit that Pod carried when it answered, if any. */
+  edited?: PodEdit
 }
 
 const KEY = 'kubelearn.app.v1'
@@ -118,6 +137,9 @@ interface AppState {
   customized: boolean
   studioOpen: boolean
   visits: Visit[]
+  podEdits: Record<string, PodEdit>
+  /** Edits whose Pod is gone — shown once, to explain where they went. */
+  lostEdits: PodEdit[]
   served: number
   failed: number
   setDesign: (d: AppDesign) => void
@@ -125,6 +147,10 @@ interface AppState {
   publish: (d: AppDesign, broken: boolean) => string | null
   openStudio: (open: boolean) => void
   visit: (v: Omit<Visit, 'id'>) => void
+  editPod: (uid: string, edit: PodEdit) => void
+  /** Pods that no longer exist take their edits with them. */
+  forgetGone: (liveUids: Set<string>) => void
+  dismissLost: () => void
   resetVisits: () => void
 }
 
@@ -148,6 +174,8 @@ export const useApp = create<AppState>((set, get) => ({
   ...stored,
   studioOpen: false,
   visits: [],
+  podEdits: {},
+  lostEdits: [],
   served: 0,
   failed: 0,
   setDesign: (design) => {
@@ -170,5 +198,15 @@ export const useApp = create<AppState>((set, get) => ({
       served: s.served + (v.ok ? 1 : 0),
       failed: s.failed + (v.ok ? 0 : 1),
     })),
-  resetVisits: () => set({ visits: [], served: 0, failed: 0 }),
+  editPod: (uid, edit) => set((s) => ({ podEdits: { ...s.podEdits, [uid]: edit } })),
+  forgetGone: (live) => {
+    const { podEdits, lostEdits } = get()
+    const gone = Object.keys(podEdits).filter((uid) => !live.has(uid))
+    if (!gone.length) return
+    const kept = Object.fromEntries(Object.entries(podEdits).filter(([uid]) => live.has(uid)))
+    set({ podEdits: kept, lostEdits: [...lostEdits, ...gone.map((uid) => podEdits[uid])] })
+  },
+  dismissLost: () => set({ lostEdits: [] }),
+  // a restarted lesson is a new cluster: nothing was "lost", it simply never existed there
+  resetVisits: () => set({ visits: [], served: 0, failed: 0, podEdits: {}, lostEdits: [] }),
 }))

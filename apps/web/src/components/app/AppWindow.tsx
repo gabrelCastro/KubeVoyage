@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { ChevronDown, Palette } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { cn } from '../../lib/visual'
 import { short, tag } from '../../sim/engine'
 import { APP_COLORS, designFor, useApp, type AppDesign } from '../../store/useApp'
@@ -50,6 +50,8 @@ export function AppPage({ design, compact, version }: { design: AppDesign; compa
 export function AppWindow() {
   const design = useApp((s) => s.design)
   const releases = useApp((s) => s.releases)
+  const podEdits = useApp((s) => s.podEdits)
+  const lostEdits = useApp((s) => s.lostEdits)
   const customized = useApp((s) => s.customized)
   const visits = useApp((s) => s.visits)
   const served = useApp((s) => s.served)
@@ -66,7 +68,17 @@ export function AppWindow() {
   const down = !!svc && !!last && !last.ok
   const look = (image?: string) => (image ? designFor({ design, releases }, image) : design)
   const lastOk = [...visits].reverse().find((v) => v.ok)
-  const showing = look(lastOk?.image)
+  const lookOf = (v: { image?: string; edited?: { emoji: string; message: string } }) => {
+    const d = look(v.image)
+    return v.edited ? { ...d, emoji: v.edited.emoji, message: v.edited.message } : d
+  }
+  const showing = lastOk ? lookOf(lastOk) : design
+  const editedLive = (svc?.endpoints ?? []).filter((uid) => podEdits[uid]).length
+
+  // a Pod that's gone takes its hand edit with it
+  useEffect(() => {
+    useApp.getState().forgetGone(new Set(Object.keys(pods)))
+  }, [pods])
   // which versions are answering right now: the Ready endpoints, grouped by image tag
   const live = new Map<string, number>()
   for (const uid of svc?.endpoints ?? []) {
@@ -113,6 +125,31 @@ export function AppWindow() {
         {!collapsed && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
             <div className="px-4 pb-3.5">
+              <AnimatePresence>
+                {lostEdits.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="mb-2.5 overflow-hidden rounded-lg border border-warn/40 bg-warn/[0.07] px-3 py-2.5 text-[12px] leading-relaxed text-fg-muted"
+                    role="status"
+                  >
+                    <div className="font-semibold text-warn">Cadê a sua mudança?</div>
+                    <p className="mt-0.5">
+                      “{lostEdits.at(-1)!.message}” foi feita dentro de {short(lostEdits.at(-1)!.podName)}, e sumiu com ele. O substituto nasceu do template do Deployment — que nunca
+                      soube dela. Para mudar o app de verdade, publique uma versão e faça o rollout.
+                    </p>
+                    <div className="mt-2 flex gap-2">
+                      <button onClick={() => openStudio(true)} className="rounded-md bg-warn/15 px-2 py-1 text-[11.5px] font-medium text-warn hover:bg-warn/25">
+                        Publicar uma versão
+                      </button>
+                      <button onClick={() => useApp.getState().dismissLost()} className="rounded-md px-2 py-1 text-[11.5px] text-fg-muted hover:text-fg">
+                        Entendi
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
               {!svc ? (
                 <p className="rounded-lg border border-dashed border-line-strong px-3 py-3 text-[12px] leading-relaxed text-fg-muted">
                   {running
@@ -133,7 +170,7 @@ export function AppWindow() {
                     {Array.from({ length: CELLS }, (_, i) => {
                       const v = visits[visits.length - CELLS + i]
                       if (!v) return <span key={`e${i}`} className="h-8 rounded-md border border-dashed border-line" />
-                      const d = look(v.image)
+                      const d = lookOf(v)
                       return (
                         <motion.span
                           key={v.id}
@@ -142,8 +179,12 @@ export function AppWindow() {
                           animate={{ scale: 1, opacity: 1 }}
                           onMouseEnter={() => v.podUid && pods[v.podUid] && hover(v.podUid)}
                           onMouseLeave={() => hover(null)}
-                          title={v.ok ? `Atendido por ${v.podName}${v.image ? ` (versão ${tag(v.image)})` : ''}` : 'Recusado: o Service não tinha para quem mandar'}
-                          className={cn('flex h-8 flex-col items-center justify-center rounded-md leading-none', !v.ok && 'bg-crash/15 text-crash')}
+                          title={
+                            v.ok
+                              ? `Atendido por ${v.podName}${v.image ? ` (versão ${tag(v.image)})` : ''}${v.edited ? ' — editado à mão' : ''}`
+                              : 'Recusado: o Service não tinha para quem mandar'
+                          }
+                          className={cn('flex h-8 flex-col items-center justify-center rounded-md leading-none', !v.ok && 'bg-crash/15 text-crash', v.ok && v.edited && 'ring-1 ring-warn/70')}
                           style={v.ok ? { background: `color-mix(in oklab, ${APP_COLORS[d.color]} 18%, transparent)` } : undefined}
                         >
                           {v.ok ? (
@@ -160,6 +201,11 @@ export function AppWindow() {
                       )
                     })}
                   </div>
+                  {editedLive > 0 && (
+                    <p className="mt-2 text-[11px] leading-relaxed text-warn">
+                      ✎ {editedLive === 1 ? '1 Pod responde' : `${editedLive} Pods respondem`} com uma mudança feita à mão — os outros não. Visitantes diferentes veem apps diferentes.
+                    </p>
+                  )}
                   {live.size > 1 && (
                     <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-fg-muted" aria-live="polite">
                       <span className="text-fg-faint">no ar agora:</span>
