@@ -355,6 +355,7 @@ export function EmptyState() {
       </p>
       <div className="mt-5 flex items-center gap-2">
         <button
+          data-tour="aplicar"
           onClick={() => exec('kubectl apply -f backend.yaml', 'ui')}
           className="group flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-[13px] font-semibold text-[#0b1020] shadow-[0_6px_20px_-8px_var(--color-accent)] transition hover:brightness-110 active:scale-[0.98]"
         >

@@ -45,6 +45,7 @@ function Card({
   children,
   className,
   label,
+  tour,
 }: {
   emphasis: Emphasis
   tint: string
@@ -52,12 +53,15 @@ function Card({
   children: ReactNode
   className?: string
   label: string
+  /** Marks the card for the onboarding tour. */
+  tour?: string
 }) {
   return (
     <motion.button
       type="button"
       aria-label={label}
       aria-pressed={emphasis.selected}
+      data-tour={tour}
       onClick={(e) => (e.stopPropagation(), onClick())}
       animate={{ opacity: emphasis.dim ? 0.26 : 1 }}
       whileHover={{ y: -2 }}
@@ -256,6 +260,7 @@ export const PodNode = memo(function PodNode({ pod, geo, probe, ...e }: { pod: P
         transition={{ type: 'spring', stiffness: 260, damping: 24 }}
       >
         <Card
+          tour="pod"
           emphasis={e}
           tint={meta.color}
           onClick={() => select(pod.uid)}

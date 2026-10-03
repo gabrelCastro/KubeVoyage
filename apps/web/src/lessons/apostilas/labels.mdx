@@ -1,0 +1,198 @@
+import { Callout, QuickQuestion } from '../../components/apostila/ApostilaBlocks'
+import { SelectorDiagram } from '../../components/apostila/LessonDiagrams'
+
+# Labels e selectors: a cola do Kubernetes
+
+Esta apostila acompanha a lição 4. Na atividade, um Pod sem dono entrou num Service por causa de uma label, e um Pod do backend saiu do Service e do ReplicaSet por causa de outra. Nada disso foi feito “ligando” recursos — só mudando etiquetas.
+
+<section id="o-que-voce-vai-entender">
+
+## O que você vai entender
+
+- O que são **labels** e **selectors**, e quem usa selectors para encontrar Pods.
+- Por que o Service e o ReplicaSet podem discordar sobre o mesmo Pod.
+- Como um Pod é liberado (fica **órfão**) e depois **adotado** — e como usar isso para depurar.
+
+</section>
+
+<section id="conceitos">
+
+## Conceitos
+
+<h3 id="labels">Labels</h3>
+
+Uma **label** é um par chave-valor gravado nos metadados de um recurso: `app=backend`, `tier=api`, `track=canary`. Elas não mudam o comportamento do Pod em si; servem para **identificar e agrupar**.
+
+- A chave pode ter um prefixo de domínio, como `app.kubernetes.io/name`. Sem prefixo, ela é considerada do usuário.
+- Chave e valor têm limite de 63 caracteres e usam letras, números, `-`, `_` e `.`.
+- Um recurso pode ter várias labels, e várias labels podem ter o mesmo valor em recursos diferentes.
+
+Para informações que **não** servem para selecionar (quem é o responsável, um link, uma versão de build), existem as **annotations**.
+
+<h3 id="selectors">Selectors</h3>
+
+Um **selector** é uma consulta sobre labels. Há dois estilos:
+
+- **por igualdade:** `app=backend`, `tier!=frontend`;
+- **por conjunto:** `app in (backend, worker)`, `track notin (canary)`, ou só a existência da chave (`track`).
+
+Várias condições juntas funcionam como **E**: o recurso precisa satisfazer todas. O selector de um Service aceita só o estilo por igualdade; Deployments e ReplicaSets aceitam os dois (`matchLabels` e `matchExpressions`).
+
+<h3 id="quem-usa-selectors">Quem usa selectors</h3>
+
+- **Service:** decide quais Pods viram endpoints (se também estiverem Ready).
+- **ReplicaSet:** decide quais Pods conta como seus para chegar ao número desired.
+- **Você:** `kubectl get pods -l app=backend` filtra com o mesmo mecanismo.
+
+Cada um faz a **própria consulta**. Não há vínculo fixo entre o Service e os Pods, nem entre o ReplicaSet e os Pods: a cada mudança de label, as respostas mudam.
+
+<SelectorDiagram />
+
+<h3 id="pod-template-hash">O pod-template-hash</h3>
+
+O Deployment acrescenta, a cada ReplicaSet que cria, uma label extra: `pod-template-hash`, derivada do template daquela revisão. Ela vai para o selector do ReplicaSet e para todos os Pods que ele cria.
+
+É isso que permite duas revisões do mesmo app conviverem durante um rollout (lição 6) sem que um ReplicaSet conte os Pods do outro. E é por isso que, na lição, o Pod `frontend` com `app=backend` entrou no **Service** mas **não** foi adotado pelo ReplicaSet: faltava o hash.
+
+<h3 id="orfaos-e-adocao">Órfãos e adoção</h3>
+
+Quando um Pod gerenciado deixa de combinar com o selector do seu ReplicaSet:
+
+1. o ReplicaSet o **libera**: remove a referência de dono (`ownerReferences`) e para de contá-lo;
+2. o Actual cai, e o ReplicaSet **cria um substituto**;
+3. o Pod liberado **continua rodando**, agora sem dono.
+
+Se as labels voltarem a combinar, o ReplicaSet **adota** o Pod de novo. Como agora sobra um, ele encerra o excedente pelas regras de redução da lição 2.
+
+<Callout>Essa é uma técnica real de depuração, descrita na documentação oficial: troque a label de um Pod problemático. Ele sai do Service (para de receber tráfego), o ReplicaSet coloca outro no lugar, e o Pod original fica vivo para você investigar com calma.</Callout>
+
+<h3 id="selector-imutavel">O selector do Deployment não muda</h3>
+
+No `apps/v1`, o `spec.selector` de um Deployment é **imutável** depois de criado. Tentar alterá-lo com `apply`, `edit` ou `patch` resulta em erro. Se for realmente necessário, o caminho é criar outro Deployment — por isso vale pensar no selector antes.
+
+O selector e as labels do template também precisam combinar: um Deployment cujo template não satisfaz o próprio selector é recusado pela API.
+
+</section>
+
+<section id="no-mundo-real">
+
+## No mundo real
+
+### Vendo e filtrando labels
+
+```console
+kubectl get pods --show-labels
+kubectl get pods -L app
+kubectl get pods -l app=backend
+kubectl get pods -l 'app in (backend, frontend)'
+```
+
+`--show-labels` mostra todas; `-L app` vira uma coluna; `-l` filtra pelo selector.
+
+### Mudando labels
+
+```console
+kubectl label pod frontend app=backend --overwrite
+kubectl label pod backend-7c9f-q8ft5 app=debug --overwrite
+kubectl label pod backend-7c9f-q8ft5 app-
+```
+
+Sem `--overwrite`, o kubectl recusa trocar o valor de uma chave que já existe. O sufixo `-` remove a label.
+
+### No manifesto
+
+```yaml
+spec:
+  # quais Pods este Deployment gerencia (imutável)
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      # precisam satisfazer o selector acima
+      labels:
+        app: backend
+        app.kubernetes.io/name: backend
+        app.kubernetes.io/component: api
+```
+
+As labels `app.kubernetes.io/*` são as **recomendadas** pela comunidade; ferramentas como dashboards e Helm sabem interpretá-las.
+
+</section>
+
+<section id="o-que-simplificamos">
+
+## O que simplificamos
+
+- Os Services da simulação usam um selector de uma chave só, e o palco mostra apenas essa chave em cada Pod.
+- Não há namespaces: num cluster real, Services e ReplicaSets só selecionam Pods do **mesmo namespace**.
+- O `pod-template-hash` é um texto aleatório; no Kubernetes ele é calculado a partir do template.
+- Annotations não aparecem na simulação.
+
+</section>
+
+<section id="erros-comuns">
+
+## Erros comuns
+
+### Selectors largos demais
+
+Dois Deployments com o mesmo `app: web` no selector de um Service fazem o Service mandar tráfego para os dois. Use labels que identifiquem a aplicação de forma única.
+
+### Trocar a label de Pods gerenciados “para consertar” um Service
+
+Se o selector do Service está errado e você muda as labels dos Pods, o ReplicaSet os libera e cria substitutos — com as labels **antigas**, do template. O conserto dura até o próximo Pod nascer. Corrija quem está errado (o Service, ou o template).
+
+### Esquecer o --overwrite
+
+`kubectl label pod x app=debug` falha se `app` já existe. A mensagem pede o `--overwrite`.
+
+### Tentar mudar o selector de um Deployment
+
+Não é permitido no `apps/v1`. Planeje as labels antes de criar.
+
+</section>
+
+<section id="teste-rapido">
+
+## Teste rápido
+
+<QuickQuestion
+  question="Um Pod criado à mão recebe a label app=backend. O Service com selector app=backend passa a mandar tráfego para ele (se estiver Ready)?"
+  options={[
+    { label: 'Não, porque ele não foi criado pelo Deployment.', explanation: 'O Service não se importa com quem criou o Pod: só com labels e prontidão.' },
+    { label: 'Sim: o Service só olha labels e prontidão.', correct: true, explanation: 'Correto. Foi o que aconteceu com o Pod frontend na lição.' },
+    { label: 'Só depois que o ReplicaSet o adotar.', explanation: 'Adoção é assunto do ReplicaSet, e ele nem adotaria: falta o pod-template-hash.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="Você muda a label de um Pod gerenciado de app=backend para app=debug. O que acontece?"
+  options={[
+    { label: 'O Pod é apagado pelo ReplicaSet.', explanation: 'Não. O ReplicaSet só o libera; o Pod continua rodando, sem dono.' },
+    { label: 'Nada, porque o ReplicaSet lembra quais Pods são seus.', explanation: 'O ReplicaSet decide pelo selector a cada passagem. Sem a label, o Pod deixa de ser dele.' },
+    { label: 'O Pod sai do Service e do ReplicaSet, que cria um substituto.', correct: true, explanation: 'Correto. É a técnica de isolar um Pod para depuração.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="Para que serve a label pod-template-hash?"
+  options={[
+    { label: 'Separar os Pods de cada revisão de um Deployment.', correct: true, explanation: 'Correto. Ela evita que o ReplicaSet de uma revisão conte os Pods de outra durante um rollout.' },
+    { label: 'Verificar se a imagem do container foi alterada.', explanation: 'Ela identifica o template da revisão, mas não é uma verificação de integridade da imagem.' },
+    { label: 'Escolher o node onde o Pod vai rodar.', explanation: 'Quem escolhe o node é o scheduler; essa label não participa disso.' },
+  ]}
+/>
+
+</section>
+
+<section id="para-ir-alem">
+
+## Para ir além
+
+- [Labels e selectors — documentação oficial](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/)
+- [Labels recomendadas — documentação oficial](https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/)
+- [Annotations — documentação oficial](https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/)
+- [ReplicaSet: isolar Pods trocando labels — documentação oficial](https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/)
+
+</section>

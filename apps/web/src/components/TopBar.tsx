@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { Pause, Play, RotateCcw, Search, StepForward, Waves } from 'lucide-react'
 import { getLesson } from '../lessons'
+import { HelpMenu } from '../tour/HelpMenu'
 import { AccountButton } from './account/AccountButton'
 import { cn } from '../lib/visual'
 import { useSim, type Speed } from '../store/useSim'
@@ -32,7 +33,7 @@ export function TopBar() {
         </AnimatePresence>
       </nav>
 
-      <div className="ml-auto flex items-center gap-1 rounded-lg border border-line bg-bg/50 p-0.5 md:absolute md:left-1/2 md:ml-0 md:-translate-x-1/2">
+      <div data-tour="playback" className="ml-auto flex items-center gap-1 rounded-lg border border-line bg-bg/50 p-0.5 md:absolute md:left-1/2 md:ml-0 md:-translate-x-1/2">
         <Tooltip label={<>{paused ? 'Continuar' : 'Pausar'} simulação <Kbd className="ml-1">Espaço</Kbd></>}>
           <button onClick={togglePause} className={cn('grid size-7 place-items-center rounded-md transition', paused ? 'bg-warn/15 text-warn' : 'text-fg-muted hover:bg-raised hover:text-fg')} aria-label={paused ? 'Continuar' : 'Pausar'}>
             <motion.span key={String(paused)} initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
@@ -96,6 +97,7 @@ export function TopBar() {
       </div>
 
       <div className="flex items-center gap-2 md:ml-auto">
+        <HelpMenu />
         <AccountButton />
         <Tooltip label={reduced ? 'Movimento reduzido: ligado' : 'Movimento reduzido: desligado'}>
           <button
@@ -108,6 +110,7 @@ export function TopBar() {
           </button>
         </Tooltip>
         <button
+          data-tour="paleta"
           onClick={() => setPalette(true)}
           className="hidden h-8 items-center gap-2 rounded-lg border border-line bg-bg/50 pr-1.5 pl-2.5 text-[12px] text-fg-faint transition hover:border-line-strong hover:text-fg-muted lg:flex"
         >

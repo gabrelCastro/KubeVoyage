@@ -1,0 +1,225 @@
+import { Callout, QuickQuestion } from '../../components/apostila/ApostilaBlocks'
+import { RolloutDiagram } from '../../components/apostila/LessonDiagrams'
+
+# Falhas e rollbacks: errar sem derrubar ninguém
+
+Esta apostila acompanha a lição 6. Na atividade você publicou uma versão que quebrava ao iniciar, e os usuários nem perceberam. Aqui está o mecanismo que garantiu isso, como investigar o erro e as duas saídas possíveis: voltar ou corrigir.
+
+<section id="o-que-voce-vai-entender">
+
+## O que você vai entender
+
+- Como um **rolling update** troca os Pods de versão, e por que a **readiness** o torna seguro.
+- O que significa **CrashLoopBackOff** e como descobrir a causa.
+- Quando fazer **rollback** e quando **corrigir para frente**.
+
+</section>
+
+<section id="conceitos">
+
+## Conceitos
+
+<h3 id="rolling-update">Rolling update</h3>
+
+Toda mudança no **template** de Pods de um Deployment (a imagem, por exemplo) gera uma nova **revisão** e um **ReplicaSet novo**. O Deployment então move as réplicas aos poucos, do ReplicaSet antigo para o novo, respeitando dois limites:
+
+- **maxSurge**: quantos Pods **a mais** que o desejado podem existir durante a troca (padrão 25%, arredondado para cima);
+- **maxUnavailable**: quantos Pods **a menos** que o desejado podem estar indisponíveis (padrão 25%, arredondado para baixo).
+
+Com 3 réplicas: 25% de 3 é 0,75. Para cima, o surge vira **1**; para baixo, o unavailable vira **0**. Ou seja: pode haver 1 Pod extra, e **nenhum** Pod pronto pode faltar.
+
+<RolloutDiagram />
+
+<h3 id="readiness-e-o-portao">A readiness é o portão</h3>
+
+O Deployment só encerra um Pod antigo quando um novo fica **Ready**. Um Pod novo que nunca fica Ready nunca “libera” a saída de um antigo. Por isso a v1.5 não derrubou nada: ela travou no primeiro Pod extra, e os três Pods da v1.4 continuaram atendendo.
+
+Sem uma readiness probe, “Ready” significaria apenas “o container iniciou” — e uma versão que inicia mas não funciona poderia, sim, substituir todos os Pods bons.
+
+<h3 id="crashloopbackoff">CrashLoopBackOff</h3>
+
+Quando o container encerra com erro, o kubelet o reinicia — dentro do mesmo Pod, no mesmo node. Para não ficar reiniciando sem parar, ele espera cada vez mais entre as tentativas: 10 s, 20 s, 40 s… até o limite de **5 minutos**. Se o container ficar 10 minutos rodando sem problemas, essa espera volta ao início.
+
+No `kubectl get pods`, você vê o ciclo:
+
+- `STATUS` alterna entre **Error** (acabou de cair) e **CrashLoopBackOff** (esperando para tentar de novo);
+- `RESTARTS` só cresce.
+
+CrashLoopBackOff não é um problema do cluster: é o cluster avisando que **o seu container não para de pé**. A causa quase sempre está nos logs.
+
+<h3 id="rollout-travado">Rollout travado</h3>
+
+O Deployment não desiste sozinho. Depois de `progressDeadlineSeconds` (600 segundos por padrão) sem progresso, ele marca a condição `Progressing=False` com o motivo **ProgressDeadlineExceeded**, mas **continua tentando**. Não há rollback automático: decidir o que fazer é com você.
+
+<h3 id="rollback">Rollback</h3>
+
+O ReplicaSet antigo não foi apagado: ficou guardado com 0 réplicas (o Deployment guarda até 10 revisões antigas, por padrão). Um **rollback** devolve o template anterior ao Deployment, que reaproveita aquele ReplicaSet — escalando-o de volta e o quebrado para zero. Por isso é rápido.
+
+O rollback gera uma **revisão nova** (no histórico, a v1.4 reaparece com um número maior) e devolve **apenas o template de Pods**. Ele não desfaz migrações de banco, mudanças em ConfigMaps nem nada fora do Deployment.
+
+<h3 id="corrigir-para-frente">Corrigir para frente</h3>
+
+O rollback tira os usuários do perigo, mas a v1.5 continua quebrada. Os logs da lição mostravam o motivo:
+
+```text
+panic: config: required environment variable DATABASE_URL is not set
+```
+
+A correção é entregar essa configuração ao container e publicar de novo. Com a variável presente, a v1.5 ficaria Ready e o rolling update concluiria normalmente.
+
+<Callout>Rollback é para **parar o estrago**; a correção é o que resolve. Em produção, geralmente se faz os dois: rollback primeiro, correção com calma depois.</Callout>
+
+</section>
+
+<section id="no-mundo-real">
+
+## No mundo real
+
+### Os comandos da atividade
+
+```console
+kubectl set image deployment/backend backend=ghcr.io/kubelearn/backend:1.5
+```
+
+Troca a imagem do container `backend`. É uma mudança de template, então começa um rollout.
+
+```console
+kubectl rollout status deployment/backend
+```
+
+Acompanha o rollout e espera ele terminar — ou mostra onde parou.
+
+```console
+kubectl logs backend-…
+kubectl logs backend-… --previous
+```
+
+Mostram a saída do container. Com `--previous`, a do container **anterior**, que acabou de cair — muitas vezes é ali que está a mensagem de erro.
+
+```console
+kubectl describe pod backend-…
+```
+
+Em `Last State`, mostra `Terminated`, o motivo e o **código de saída**; em `Restart Count`, quantas vezes já reiniciou; em `Events`, os avisos de back-off.
+
+```console
+kubectl rollout undo deployment/backend
+kubectl rollout history deployment/backend
+kubectl rollout undo deployment/backend --to-revision=1
+```
+
+Desfaz para a revisão anterior, lista o histórico e volta a uma revisão específica.
+
+### Corrigindo para frente
+
+Um ConfigMap guarda a configuração:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+data:
+  DATABASE_URL: postgres://db:5432/app
+```
+
+E o container lê dele:
+
+```yaml
+containers:
+  - name: backend
+    image: ghcr.io/kubelearn/backend:1.5
+    env:
+      # a variável que faltava, vinda do ConfigMap
+      - name: DATABASE_URL
+        valueFrom:
+          configMapKeyRef:
+            name: backend-config
+            key: DATABASE_URL
+```
+
+Se o valor tiver senha, use um **Secret** (`secretKeyRef`) no lugar do ConfigMap.
+
+</section>
+
+<section id="o-que-simplificamos">
+
+## O que simplificamos
+
+- O back-off da simulação vai de 1,5 s a 8 s; no cluster real, de 10 s a 5 minutos.
+- O rollout é marcado como “travado” logo no primeiro crash. No real, isso só aparece no status depois do `progressDeadlineSeconds`.
+- Os logs são fixos e ilustrativos.
+- Não há ConfigMaps na simulação, então a correção para frente fica só nesta apostila.
+
+</section>
+
+<section id="erros-comuns">
+
+## Erros comuns
+
+### Achar que CrashLoopBackOff é problema do Kubernetes
+
+O cluster está fazendo o trabalho dele: reiniciar. A falha é do container — configuração, dependência ou bug.
+
+### Ler os logs do container errado
+
+Logo depois de um reinício, `kubectl logs` pode mostrar só o início do container novo. A mensagem do erro está no anterior: use `--previous`.
+
+### Achar que o rollback desfaz tudo
+
+Ele só volta o template de Pods. Dados, migrações e configurações externas continuam como estão.
+
+### Fazer rollback e esquecer o arquivo
+
+Se o manifesto no Git ainda aponta para a v1.5, o próximo deploy quebra de novo. Leve a decisão para o arquivo.
+
+### Liveness probe agressiva demais
+
+Uma liveness probe que falha durante um início lento faz o kubelet matar o container repetidamente — e gera um CrashLoopBackOff que não existiria sem ela.
+
+</section>
+
+<section id="teste-rapido">
+
+## Teste rápido
+
+<QuickQuestion
+  question="Com 3 réplicas e os valores padrão, por que a v1.5 quebrada não derrubou nenhum Pod da v1.4?"
+  options={[
+    { label: 'Porque o Deployment detectou o erro e fez rollback sozinho.', explanation: 'Não existe rollback automático: o Deployment só marca o progresso como travado e continua tentando.' },
+    { label: 'Porque maxUnavailable arredonda para 0, e o Pod novo nunca ficou Ready.', correct: true, explanation: 'Correto. Nenhum Pod pronto pode faltar, e só um Pod novo Ready libera a saída de um antigo.' },
+    { label: 'Porque o kubelet bloqueou a imagem nova.', explanation: 'O kubelet baixou e iniciou a imagem; o container é que encerrava com erro.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="Um Pod mostra RESTARTS 7 e alterna entre Error e CrashLoopBackOff. Qual é o primeiro comando a rodar?"
+  options={[
+    { label: 'kubectl logs <pod> --previous', correct: true, explanation: 'Correto. A mensagem de erro costuma estar no container que acabou de cair.' },
+    { label: 'kubectl delete pod <pod>', explanation: 'O Pod novo vai cair do mesmo jeito, e você perde a evidência.' },
+    { label: 'kubectl scale deployment backend --replicas=0', explanation: 'Isso derruba a aplicação inteira, sem explicar nada.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="O que o kubectl rollout undo NÃO desfaz?"
+  options={[
+    { label: 'A imagem usada pelos Pods.', explanation: 'A imagem faz parte do template; o rollback a desfaz.' },
+    { label: 'As variáveis de ambiente definidas no template.', explanation: 'Elas também fazem parte do template e voltam junto.' },
+    { label: 'Uma migração de banco que a versão nova já executou.', correct: true, explanation: 'Correto. O rollback só mexe no template de Pods do Deployment.' },
+  ]}
+/>
+
+</section>
+
+<section id="para-ir-alem">
+
+## Para ir além
+
+- [Deployments: rolling update e rollback — documentação oficial](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)
+- [Ciclo de vida do Pod e reinícios de containers — documentação oficial](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/)
+- [kubectl rollout — referência](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_rollout/)
+- [Configurar um Pod com ConfigMap — documentação oficial](https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/)
+- [Depurando Pods em execução — documentação oficial](https://kubernetes.io/docs/tasks/debug/debug-application/debug-running-pod/)
+
+</section>

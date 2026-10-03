@@ -1,0 +1,185 @@
+import { Callout, QuickQuestion } from '../../components/apostila/ApostilaBlocks'
+import { DebugPathDiagram } from '../../components/apostila/LessonDiagrams'
+
+# Depuração: quando tudo roda e nada funciona
+
+Esta apostila acompanha a lição 5. Ela ensina um **método** para investigar Services, e não só a resposta daquele exercício. Se ainda não terminou a atividade, leia os conceitos e o checklist; a solução aparece só em “No mundo real”.
+
+<section id="o-que-voce-vai-entender">
+
+## O que você vai entender
+
+- Como investigar com método — sintoma, hipótese, evidência, correção — em vez de sair tentando coisas.
+- O caminho de uma requisição até um Pod, e em que ponto cada problema comum aparece.
+- Quais comandos respondem a cada pergunta, e como corrigir sem criar um problema novo.
+
+</section>
+
+<section id="conceitos">
+
+## Conceitos
+
+<h3 id="metodo">Um método, não um palpite</h3>
+
+1. **Sintoma:** o que exatamente falha? (“as requisições ao backend falham; os Pods estão Running e Ready”.)
+2. **Hipótese:** qual parte do caminho pode explicar isso?
+3. **Evidência:** que comando confirma ou derruba a hipótese?
+4. **Correção:** mude **uma** coisa, na fonte certa, e verifique de novo.
+
+Reiniciar Pods “para ver se resolve” pula os passos 2 e 3. Quando funciona, você não sabe por quê; quando não funciona, perdeu o estado que ajudaria a entender.
+
+<h3 id="caminho-da-requisicao">O caminho de uma requisição</h3>
+
+Uma requisição a `http://backend` passa por várias etapas, e cada uma pode falhar:
+
+1. o nome `backend` é resolvido pelo DNS do cluster para o IP do Service;
+2. o kube-proxy encaminha a conexão para um dos **endpoints**;
+3. os endpoints são os Pods que **combinam com o selector** e estão **Ready**;
+4. a conexão chega ao Pod no **targetPort**, onde o container precisa estar escutando.
+
+Siga esse caminho na ordem. O primeiro elo quebrado é onde o problema está.
+
+<DebugPathDiagram />
+
+<h3 id="sintomas">Lendo os sintomas</h3>
+
+| O que você vê | Causa mais provável |
+|---|---|
+| Endpoints vazios e Pods **Ready** | o selector do Service não combina com as labels dos Pods |
+| Endpoints vazios e Pods **não Ready** | a readiness probe está falhando |
+| Endpoints preenchidos, conexão recusada | `targetPort` errado, ou o app não escuta nessa porta |
+| Funciona por IP do Service, não pelo nome | DNS, ou namespace diferente |
+
+Sem endpoints, a conexão ao Service costuma falhar na hora. Se houver um Ingress ou um gateway na frente, ele normalmente responde **503 Service Unavailable** — o mesmo sintoma da lição.
+
+<Callout>Um Service sem endpoints é um dos problemas mais comuns em clusters novos. A documentação oficial tem um guia inteiro só sobre isso, seguindo exatamente esse caminho.</Callout>
+
+</section>
+
+<section id="no-mundo-real">
+
+## No mundo real
+
+### A investigação da lição, comando a comando
+
+```console
+kubectl describe service backend
+```
+
+Mostra `Selector: app=api` e `Endpoints: <none>`. O Service existe, mas não encontra ninguém.
+
+```console
+kubectl get pods -l app=api
+```
+
+Usa o **mesmo selector** do Service. Resposta: `No resources found`. Nenhum Pod tem essa label.
+
+```console
+kubectl get pods --show-labels
+```
+
+Os Pods estão Running, Ready e têm `app=backend`. Hipótese confirmada: o selector e as labels discordam.
+
+### Corrigindo no lugar certo
+
+Os Pods estão certos: o template do Deployment diz `app: backend`. Quem está errado é o Service.
+
+```console
+kubectl set selector service backend app=backend
+```
+
+Substitui o selector do Service inteiro. Os endpoints aparecem na hora, sem reiniciar nada.
+
+Num time de verdade, a correção definitiva vai para o **arquivo versionado** do Service. Sem isso, o próximo `kubectl apply` traz o `app=api` de volta.
+
+### Outras ferramentas úteis
+
+```console
+kubectl port-forward service/backend 8080:80
+```
+
+Abre um túnel do seu computador até o Service: `http://localhost:8080` passa a chegar nele. Bom para testar sem expor nada.
+
+```console
+kubectl run teste --rm -it --image=busybox:1.36 --restart=Never -- wget -qO- http://backend
+```
+
+Testa de dentro do cluster, passando pelo DNS e pelo kube-proxy como qualquer outro Pod faria.
+
+</section>
+
+<section id="o-que-simplificamos">
+
+## O que simplificamos
+
+- O exercício tem uma única causa. Na prática, NetworkPolicies, DNS, namespaces e o próprio app também entram na lista de suspeitos.
+- O “503” aparece no próprio Service, para o sintoma ficar visível. Sem um Ingress na frente, um cliente real normalmente veria a conexão falhar.
+- Os comandos de teste por dentro do cluster (`kubectl run`, `port-forward`) não existem no terminal da simulação.
+
+</section>
+
+<section id="erros-comuns">
+
+## Erros comuns
+
+### Trocar as labels dos Pods em vez do selector
+
+Parece resolver, mas os Pods são gerenciados: o ReplicaSet os libera e cria substitutos com as labels do template, que continuam sem combinar (lição 4). Corrija quem está errado.
+
+### Reiniciar Pods para “ver se volta”
+
+Nada no Pod estava errado. Reiniciar não muda o selector do Service, e ainda gera ruído na investigação.
+
+### Corrigir só no cluster
+
+Uma correção feita com `kubectl set` ou `kubectl edit` some no próximo deploy se o arquivo continuar errado.
+
+### Procurar no namespace errado
+
+`kubectl get pods` lista só o namespace atual. Se o Service está em `prod` e você olha `default`, tudo parece vazio. Use `-n prod`.
+
+</section>
+
+<section id="teste-rapido">
+
+## Teste rápido
+
+<QuickQuestion
+  question="O Service está sem endpoints e todos os Pods estão Running e Ready. Qual é a hipótese mais provável?"
+  options={[
+    { label: 'O selector do Service não combina com as labels dos Pods.', correct: true, explanation: 'Correto. Se estão Ready e mesmo assim não viram endpoints, o selector não os encontra.' },
+    { label: 'A readiness probe está falhando.', explanation: 'Os Pods estão Ready, então a probe está passando.' },
+    { label: 'O targetPort está errado.', explanation: 'targetPort errado não esvazia os endpoints: as conexões chegam, mas falham no Pod.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="Qual comando confirma, de forma direta, se o selector do Service encontra algum Pod?"
+  options={[
+    { label: 'kubectl get pods -o wide', explanation: 'Mostra IP e node dos Pods, mas não testa o selector.' },
+    { label: 'kubectl logs backend-…', explanation: 'Os logs mostram o que o container faz, não se o selector o encontra.' },
+    { label: 'kubectl get pods -l <o selector do Service>', correct: true, explanation: 'Correto. É a mesma consulta que o Service faz; se a resposta vier vazia, achou o problema.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="Os endpoints estão preenchidos, mas toda conexão é recusada. Onde olhar?"
+  options={[
+    { label: 'No selector do Service.', explanation: 'Se há endpoints, o selector está encontrando Pods.' },
+    { label: 'No targetPort, e se o app realmente escuta nessa porta.', correct: true, explanation: 'Correto. A conexão chega ao Pod, mas na porta errada ou sem ninguém escutando.' },
+    { label: 'No número de réplicas do Deployment.', explanation: 'Mais ou menos réplicas não muda uma porta errada.' },
+  ]}
+/>
+
+</section>
+
+<section id="para-ir-alem">
+
+## Para ir além
+
+- [Depurando Services — documentação oficial](https://kubernetes.io/docs/tasks/debug/debug-application/debug-service/)
+- [Depurando Pods — documentação oficial](https://kubernetes.io/docs/tasks/debug/debug-application/debug-pods/)
+- [kubectl set selector — referência](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_set/kubectl_set_selector/)
+- [Service — documentação oficial](https://kubernetes.io/docs/concepts/services-networking/service/)
+
+</section>

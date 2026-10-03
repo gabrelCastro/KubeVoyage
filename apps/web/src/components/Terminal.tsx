@@ -129,7 +129,7 @@ export function Terminal() {
   }
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-panel" aria-label="Terminal" onClick={() => input.current?.focus()}>
+    <section className="flex h-full min-h-0 flex-col bg-panel" aria-label="Terminal" data-tour="terminal" onClick={() => input.current?.focus()}>
       <header className="flex h-9 shrink-0 items-center gap-3 border-b border-line px-3">
         <span className="flex shrink-0 items-center gap-1.5 text-[12px] font-medium text-fg-muted">
           <SquareTerminal size={14} /> Terminal

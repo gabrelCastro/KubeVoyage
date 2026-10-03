@@ -134,7 +134,19 @@ export interface QuizOption {
   explanation: string
 }
 
-export function QuickQuestion({ question, options }: { question: string; options: QuizOption[] }) {
+/** Fisher–Yates on a copy. */
+function shuffled<T>(items: T[]): T[] {
+  const out = [...items]
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[out[i], out[j]] = [out[j], out[i]]
+  }
+  return out
+}
+
+export function QuickQuestion({ question, options: authored }: { question: string; options: QuizOption[] }) {
+  // a new order on every visit: where the right answer sits is never the giveaway
+  const [options] = useState(() => shuffled(authored))
   const [selected, setSelected] = useState<number | null>(null)
   const id = useId()
   const answer = selected === null ? null : options[selected]
@@ -163,5 +175,5 @@ export function QuickQuestion({ question, options }: { question: string; options
 }
 
 export function Callout({ children }: { children: ReactNode }) {
-  return <div className="rounded-xl border border-accent/25 bg-accent/[0.06] px-4 py-3 text-[12px] leading-relaxed text-fg-muted">{children}</div>
+  return <div className="apostila-callout rounded-xl border border-accent/25 bg-accent/[0.06] px-4 py-3 text-[12px] leading-relaxed text-fg-muted">{children}</div>
 }

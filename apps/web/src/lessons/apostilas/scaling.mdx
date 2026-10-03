@@ -1,0 +1,196 @@
+import { Callout, QuickQuestion } from '../../components/apostila/ApostilaBlocks'
+import { ScaleDiagram } from '../../components/apostila/LessonDiagrams'
+
+# Scaling: você muda um número, o cluster faz a conta
+
+Esta apostila acompanha a lição 2. Na atividade você arrastou um controle e só depois viu o comando — aqui está o que aconteceu por baixo, e como isso funciona num cluster de verdade.
+
+<section id="o-que-voce-vai-entender">
+
+## O que você vai entender
+
+- Por que escalar é editar o **desired state** (`spec.replicas`), e não criar ou apagar Pods à mão.
+- Como o ReplicaSet decide **quais** Pods remover quando a quantidade diminui.
+- Por que escalar para zero não apaga a aplicação — e quem mais pode mudar o número de réplicas por você.
+
+</section>
+
+<section id="conceitos">
+
+## Conceitos
+
+<h3 id="replicas-e-desired-state">replicas é o desired state</h3>
+
+O campo `spec.replicas` do Deployment diz **quantos Pods equivalentes você quer**. Quando ele muda, nenhum Pod é criado “pelo comando”. O que acontece é uma cadeia de controllers:
+
+1. Você altera `spec.replicas` do Deployment (pelo controle da lição, pelo `kubectl scale` ou editando o YAML).
+2. O Deployment controller repassa o novo número para o `spec.replicas` do seu ReplicaSet.
+3. O ReplicaSet compara o desired com o actual e cria ou encerra a diferença.
+
+É o mesmo loop de reconciliação da lição 1. A diferença é que, desta vez, quem mudou foi o lado **desired**, e não o **actual**.
+
+<ScaleDiagram />
+
+<h3 id="escalar-para-cima">Escalar para cima</h3>
+
+Cada Pod novo passa pelo ciclo completo: Pending, ContainerCreating, Running e, por fim, Ready. **A capacidade só aumenta de verdade quando o Pod fica Ready** — antes disso ele existe, mas não conta como disponível e não recebe tráfego de um Service.
+
+Por isso o `kubectl get deployment` mostra colunas diferentes:
+
+- `READY` — quantos estão prontos, do total desejado (`3/5`);
+- `UP-TO-DATE` — quantos já seguem o template atual;
+- `AVAILABLE` — quantos estão disponíveis para os usuários.
+
+Num cluster real, há mais um limite: os nodes precisam ter CPU e memória sobrando. Se não tiverem, os Pods novos ficam em **Pending** até surgir espaço.
+
+<h3 id="escalar-para-baixo">Escalar para baixo: quem sai primeiro</h3>
+
+Quando sobra Pod, o ReplicaSet escolhe quem encerrar. A documentação oficial descreve a ordem geral:
+
+1. Pods **Pending** (ainda não agendados) saem primeiro;
+2. se a anotação `controller.kubernetes.io/pod-deletion-cost` existir, sai antes o de **menor custo**;
+3. Pods em nodes com **mais réplicas** saem antes, para manter a distribuição;
+4. entre Pods de idades diferentes, sai antes o **mais novo**;
+5. empatou em tudo, a escolha é aleatória.
+
+A lógica é preservar o que já está estável e espalhado, e descartar o que ainda está chegando.
+
+Encerrar também não é instantâneo. O Pod entra em **Terminating**, o container recebe o sinal para parar e tem um prazo de encerramento gracioso (30 segundos por padrão) para concluir o que estava fazendo. Desde o primeiro instante, porém, ele **deixa de contar** para o ReplicaSet.
+
+<Callout>Escalar para baixo não “desliga” Pods específicos que você escolheu. Se você precisa tirar um Pod em particular, isso é outro assunto — a lição 4 mostra como isolar um Pod trocando a label dele.</Callout>
+
+<h3 id="escalar-para-zero">Escalar para zero</h3>
+
+Com `replicas: 0`, todos os Pods são encerrados, mas o **Deployment e o ReplicaSet continuam existindo**, com o template guardado. Escalar de volta para 3 recria os Pods a partir desse template, sem precisar aplicar nada de novo.
+
+É útil para desligar um ambiente sem perder a configuração. Só lembre que, sem Pods, qualquer Service apontando para eles fica **sem endpoints** — as requisições falham até a aplicação voltar.
+
+<h3 id="autoscaling">Quem mais muda replicas: o autoscaler</h3>
+
+O **Horizontal Pod Autoscaler** (HPA) faz exatamente o que você fez na lição, só que sozinho: observa métricas, como uso de CPU ou memória, e ajusta `spec.replicas` dentro de um mínimo e um máximo definidos por você.
+
+O HPA não muda o mecanismo: ele só mexe no número. Quem cria e encerra os Pods continua sendo o ReplicaSet.
+
+</section>
+
+<section id="no-mundo-real">
+
+## No mundo real
+
+### Os comandos da atividade
+
+```console
+kubectl scale deployment backend --replicas=5
+```
+
+Muda o desired state do Deployment para 5 réplicas. É um comando **imperativo**: vale até alguém mudar de novo.
+
+```console
+kubectl get deployment backend
+kubectl get rs
+```
+
+Mostram a convergência. No ReplicaSet, compare `DESIRED`, `CURRENT` e `READY` enquanto os Pods sobem ou descem.
+
+### O jeito declarativo
+
+Em times de verdade, o número de réplicas costuma morar no YAML, versionado no Git:
+
+```yaml
+spec:
+  # o desired state: mude aqui e aplique de novo
+  replicas: 5
+```
+
+```console
+kubectl apply -f backend.yaml
+```
+
+Os dois caminhos funcionam, mas **não misture sem cuidado**: se você escalar com `kubectl scale` e depois aplicar um arquivo que diz `replicas: 3`, o cluster volta para 3. O último a escrever vence.
+
+### Autoscaling
+
+```console
+kubectl autoscale deployment backend --min=2 --max=8 --cpu=70%
+```
+
+Cria um HPA que mantém o Deployment entre 2 e 8 réplicas, mirando 70% de uso médio de CPU. Para funcionar, o cluster precisa coletar métricas (normalmente com o metrics-server) e os containers precisam declarar `resources.requests` de CPU.
+
+</section>
+
+<section id="o-que-simplificamos">
+
+## O que simplificamos
+
+- O playground aceita no máximo 8 réplicas, e os nodes têm capacidade infinita: no mundo real, Pods podem ficar Pending por falta de CPU ou memória.
+- A ordem de remoção da simulação é uma versão curta da real: saem primeiro os que não estão Ready e, entre os prontos, os mais novos.
+- O encerramento leva cerca de um segundo, não os até 30 segundos do prazo gracioso padrão.
+- Não existe autoscaler na simulação; quem escala é sempre você.
+
+</section>
+
+<section id="erros-comuns">
+
+## Erros comuns
+
+### Apagar Pods para “diminuir” a aplicação
+
+O ReplicaSet recria tudo o que você apagar, porque o desired state não mudou. Para ter menos Pods, diminua `replicas`.
+
+### Escalar no terminal e esquecer o arquivo
+
+`kubectl scale` não altera o YAML que está no Git. No próximo `kubectl apply` — ou no próximo deploy automático — o número volta ao que está no arquivo.
+
+### Fixar replicas no YAML e usar HPA ao mesmo tempo
+
+Se o manifesto diz `replicas: 3` e o HPA decidiu por 6, cada `apply` derruba o número para 3 e o HPA sobe de novo. Com HPA, deixe o autoscaler dono do número e tire `replicas` do arquivo.
+
+### Achar que mais réplicas resolvem na hora
+
+A capacidade só aumenta quando os Pods novos ficam Ready. Se a imagem demora para baixar ou a aplicação demora para iniciar, a escala leva esse tempo todo.
+
+</section>
+
+<section id="teste-rapido">
+
+## Teste rápido
+
+<QuickQuestion
+  question="O que acontece, em ordem, quando você muda replicas de 3 para 5?"
+  options={[
+    { label: 'O Deployment repassa o número ao ReplicaSet, que cria 2 Pods novos.', correct: true, explanation: 'Correto. O Deployment muda o desired do ReplicaSet; o ReplicaSet reconcilia criando a diferença.' },
+    { label: 'O comando kubectl cria 2 Pods diretamente.', explanation: 'Não. O kubectl só altera o desired state. Quem cria os Pods é o ReplicaSet.' },
+    { label: 'O Deployment cria 2 Pods sem passar pelo ReplicaSet.', explanation: 'Não. O Deployment gerencia ReplicaSets; os Pods são sempre criados por um ReplicaSet.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="Ao reduzir de 5 para 2, qual Pod tende a sair primeiro?"
+  options={[
+    { label: 'O mais antigo, porque já trabalhou mais.', explanation: 'É o contrário: entre Pods prontos, os mais novos saem antes, para preservar os que já estão estáveis.' },
+    { label: 'Um que ainda está Pending.', correct: true, explanation: 'Correto. Pods que nem foram agendados não atendem ninguém, então são os primeiros descartados.' },
+    { label: 'Sempre um escolhido ao acaso.', explanation: 'O acaso só desempata no fim. Antes vêm vários critérios, como estado, custo e idade.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="Você escalou com kubectl scale para 6. No dia seguinte, o pipeline aplica o backend.yaml com replicas: 3. O que acontece?"
+  options={[
+    { label: 'O cluster fica com 6, porque o comando foi depois.', explanation: 'Não. O apply veio depois e grava replicas: 3. O último a escrever vence.' },
+    { label: 'O apply falha por conflito.', explanation: 'Não há conflito a reportar: o apply simplesmente define o valor do arquivo.' },
+    { label: 'O cluster volta para 3 réplicas.', correct: true, explanation: 'Correto. Por isso mudanças feitas no terminal precisam ser levadas também para o arquivo versionado.' },
+  ]}
+/>
+
+</section>
+
+<section id="para-ir-alem">
+
+## Para ir além
+
+- [Deployments — documentação oficial](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)
+- [ReplicaSet e a ordem de remoção ao reduzir — documentação oficial](https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/)
+- [Horizontal Pod Autoscaling — documentação oficial](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)
+- [kubectl scale — referência](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_scale/)
+
+</section>

@@ -73,30 +73,42 @@ Ao apagar um Pod, você altera o actual state, não o desired state. O ReplicaSe
 
 ### O manifesto `backend.yaml`
 
-Este é o mesmo arquivo disponível no terminal da lição, comentado linha por linha:
+Este é o mesmo arquivo disponível no terminal da lição, com um comentário antes de cada parte:
 
 ```yaml
-apiVersion: apps/v1                         # Usa a API estável para workloads.
-kind: Deployment                            # Declara um Deployment.
-metadata:                                   # Inicia os metadados do recurso.
-  name: backend                             # Define o nome do Deployment.
-spec:                                       # Descreve o estado desejado.
-  replicas: 3                               # Pede três Pods equivalentes.
-  selector:                                 # Diz quais Pods pertencem ao Deployment.
-    matchLabels:                            # Exige igualdade entre labels.
-      app: backend                          # Seleciona Pods com app=backend.
-  template:                                 # Modelo usado para criar cada Pod.
-    metadata:                               # Metadados aplicados aos novos Pods.
-      labels:                               # Labels gravadas em cada Pod.
-        app: backend                        # Precisa combinar com o selector acima.
-    spec:                                   # Configuração dos containers do Pod.
-      containers:                           # Lista de containers do Pod.
-        - name: backend                     # Nome do container principal.
-          image: ghcr.io/kubelearn/backend:1.4 # Imagem e versão executadas.
-          readinessProbe:                   # Verifica quando o container está pronto.
-            httpGet:                        # Faz uma requisição HTTP de verificação.
-              path: /healthz                # Caminho que deve responder com sucesso.
-              port: 8080                    # Porta consultada pela probe.
+# Usa a API estável para workloads.
+apiVersion: apps/v1
+# Declara um Deployment.
+kind: Deployment
+metadata:
+  # Nome do Deployment (e prefixo dos ReplicaSets e Pods).
+  name: backend
+# Daqui para baixo, o estado desejado.
+spec:
+  # Quantos Pods equivalentes você quer.
+  replicas: 3
+  # Pods com app=backend pertencem a este Deployment.
+  selector:
+    matchLabels:
+      app: backend
+  # O modelo usado para criar cada Pod.
+  template:
+    metadata:
+      # Labels de cada Pod novo — precisam combinar
+      # com o selector acima.
+      labels:
+        app: backend
+    spec:
+      containers:
+        # Container principal e a imagem (com versão).
+        - name: backend
+          image: ghcr.io/kubelearn/backend:1.4
+          # Pronto só quando GET /healthz na porta
+          # 8080 responder com sucesso.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
 ```
 
 O selector e as labels do template precisam combinar. Caso contrário, o Deployment criaria Pods que seu ReplicaSet não consegue reconhecer como próprios.

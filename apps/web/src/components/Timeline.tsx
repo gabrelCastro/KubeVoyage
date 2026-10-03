@@ -165,7 +165,7 @@ export function Timeline() {
   const exists = (uid: string) => !!(cluster.pods[uid] || cluster.replicaSets[uid] || cluster.deployments[uid] || cluster.services[uid])
 
   return (
-    <section className="relative flex min-h-0 flex-1 flex-col" aria-label="Histórico do cluster">
+    <section className="relative flex min-h-0 flex-1 flex-col" aria-label="Histórico do cluster" data-tour="timeline">
       <header className="flex h-10 shrink-0 items-center gap-2 px-4">
         <History size={14} className="text-fg-faint" />
         <h2 className="text-[12px] font-semibold tracking-tight">Histórico do cluster</h2>

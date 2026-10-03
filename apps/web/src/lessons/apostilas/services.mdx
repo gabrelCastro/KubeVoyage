@@ -1,0 +1,209 @@
+import { Callout, QuickQuestion } from '../../components/apostila/ApostilaBlocks'
+import { ServiceDiagram } from '../../components/apostila/LessonDiagrams'
+
+# Services: um endereço que fica enquanto os Pods vêm e vão
+
+Esta apostila acompanha a lição 3. Na atividade você viu requisições indo só para Pods prontos e um Pod saindo do tráfego no instante em que começou a encerrar. Aqui está o porquê.
+
+<section id="o-que-voce-vai-entender">
+
+## O que você vai entender
+
+- Por que nenhuma aplicação deve falar com um Pod pelo IP dele.
+- Como um **Service** encontra seus Pods, e o que são **endpoints**.
+- Por que só Pods **Ready** recebem tráfego, e como o tráfego é distribuído entre eles.
+
+</section>
+
+<section id="conceitos">
+
+## Conceitos
+
+<h3 id="pods-sao-descartaveis">O problema: Pods são descartáveis</h3>
+
+Nas lições anteriores, Pods foram apagados, substituídos e escalados à vontade. Cada Pod novo nasce com **outro nome e outro IP**. Se o frontend guardasse o IP de um Pod do backend, deixaria de funcionar na primeira substituição.
+
+É preciso um endereço que não mude, mesmo que os Pods por trás dele mudem o tempo todo.
+
+<h3 id="o-que-e-um-service">O que é um Service</h3>
+
+Um **Service** dá a um grupo de Pods:
+
+- um **IP virtual estável** (o ClusterIP, como `10.96.0.12`), que existe enquanto o Service existir;
+- um **nome DNS** dentro do cluster: no mesmo namespace basta `backend`; o nome completo é `backend.default.svc.cluster.local`.
+
+O Service não aponta para Pods por nome. Ele tem um **selector** (`app: backend`) e considera todo Pod com essa label. Se amanhã surgirem dez Pods com `app=backend`, o Service passa a usar os dez, sem você mudar nada.
+
+Duas portas aparecem na definição:
+
+- `port` — a porta do Service, a que os clientes usam (80);
+- `targetPort` — a porta em que o container realmente escuta (8080).
+
+<h3 id="endpoints">Endpoints: a lista viva</h3>
+
+Um controller do cluster mantém, para cada Service, a lista atualizada dos Pods que ele deve usar: os **endpoints**. Para entrar na lista, o Pod precisa ter as labels do selector **e** estar **Ready**.
+
+<ServiceDiagram />
+
+Essa lista muda sozinha:
+
+- um Pod que começa a encerrar (**Terminating**) é marcado como não pronto na hora e deixa de receber conexões novas, antes mesmo de parar;
+- um Pod novo só entra quando a **readiness probe** passa;
+- um Pod que deixa de passar na probe sai, mesmo continuando em Running.
+
+Hoje essa lista é guardada em objetos chamados **EndpointSlice**. A API antiga, **Endpoints**, ainda responde ao `kubectl get endpoints`, mas é considerada obsoleta desde o Kubernetes 1.33.
+
+<h3 id="balanceamento">Como o tráfego é distribuído</h3>
+
+Em cada node roda o **kube-proxy**, que transforma os endpoints em regras de rede. No modo mais comum (iptables), cada **conexão** nova é enviada a um endpoint escolhido **aleatoriamente**. Existem outros modos, como o IPVS, com algoritmos próprios.
+
+<Callout>O balanceamento é por **conexão**, não por requisição. Se o cliente mantém uma conexão aberta (HTTP keep-alive, gRPC), todas as requisições dela vão para o mesmo Pod. É comum ver um Pod sobrecarregado enquanto outros ficam ociosos por causa disso.</Callout>
+
+<h3 id="tipos-de-service">Tipos de Service</h3>
+
+- **ClusterIP** (padrão): acessível só de dentro do cluster. É o da lição.
+- **NodePort**: abre a mesma porta em todos os nodes, para acesso de fora.
+- **LoadBalancer**: pede ao provedor de nuvem um balanceador externo que aponta para o Service.
+
+Para expor várias aplicações HTTP num único endereço, com rotas por caminho ou domínio, usa-se um **Ingress** ou a **Gateway API** na frente dos Services.
+
+</section>
+
+<section id="no-mundo-real">
+
+## No mundo real
+
+### O manifesto `service.yaml`
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  # também é o nome DNS: http://backend
+  name: backend
+spec:
+  # todo Pod com app=backend (e Ready) recebe tráfego
+  selector:
+    app: backend
+  ports:
+    # clientes falam com a porta 80 do Service...
+    - port: 80
+      # ...que encaminha para a 8080 do container
+      targetPort: 8080
+```
+
+Sem `type`, o Service é ClusterIP.
+
+### Os comandos da atividade
+
+```console
+kubectl apply -f service.yaml
+```
+
+Cria o Service a partir do arquivo.
+
+```console
+kubectl expose deployment backend --port=80 --target-port=8080
+```
+
+Cria um Service equivalente sem escrever YAML, copiando o selector do Deployment. Atenção: sem `--target-port`, o `targetPort` fica **igual ao `port`** (80) — e o container, que escuta na 8080, nunca recebe nada.
+
+```console
+kubectl get endpointslices -l kubernetes.io/service-name=backend
+kubectl get endpoints backend
+```
+
+Mostram os endereços que estão recebendo tráfego agora. O segundo usa a API antiga, mas continua útil para uma olhada rápida.
+
+```console
+kubectl describe service backend
+```
+
+Mostra selector, portas e endpoints num lugar só.
+
+### Testando de dentro do cluster
+
+```console
+kubectl run teste --rm -it --image=busybox:1.36 --restart=Never -- wget -qO- http://backend
+```
+
+Sobe um Pod temporário, faz uma requisição pelo nome do Service e se apaga ao terminar.
+
+</section>
+
+<section id="o-que-simplificamos">
+
+## O que simplificamos
+
+- As requisições são distribuídas em **rodízio** para o balanceamento ficar visível. O kube-proxy real escolhe aleatoriamente e distribui conexões, não requisições.
+- Não há rede de verdade: as bolinhas são uma ilustração, não pacotes.
+- Na simulação, `kubectl expose` usa a porta 8080 como `targetPort` por padrão. No kubectl real, o padrão é o mesmo valor de `--port`.
+- A simulação guarda os endpoints como uma lista simples, à moda da API antiga; não há EndpointSlices nem namespaces.
+
+</section>
+
+<section id="erros-comuns">
+
+## Erros comuns
+
+### Guardar o IP de um Pod
+
+Funciona até o Pod ser substituído. Use sempre o nome do Service.
+
+### Confundir port e targetPort
+
+`port` é para quem chama; `targetPort` é onde o container escuta. Errar o `targetPort` é a causa clássica de “o Service tem endpoints, mas a conexão é recusada”.
+
+### Achar que Running basta
+
+Um Pod Running que não passa na readiness probe **não** está nos endpoints. Se nenhum Pod está Ready, o Service não tem para onde mandar nada.
+
+### Esperar equilíbrio perfeito com conexões persistentes
+
+Com keep-alive ou gRPC, um Pod pode receber quase tudo. Isso não é defeito do Service: o balanceamento é por conexão.
+
+</section>
+
+<section id="teste-rapido">
+
+## Teste rápido
+
+<QuickQuestion
+  question="Um Pod com app=backend está Running, mas a readiness probe ainda não passou. Ele recebe tráfego do Service?"
+  options={[
+    { label: 'Sim, porque tem a label certa.', explanation: 'A label é necessária, mas não suficiente: o Pod também precisa estar Ready.' },
+    { label: 'Não: só entra nos endpoints quando ficar Ready.', correct: true, explanation: 'Correto. A readiness probe é o portão de entrada dos endpoints.' },
+    { label: 'Recebe metade do tráfego até ficar Ready.', explanation: 'Não existe meio-termo: ou o Pod está nos endpoints, ou não está.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="Você criou o Service com kubectl expose deployment backend --port=80 e o container escuta na 8080. O que acontece?"
+  options={[
+    { label: 'Funciona: o kubectl descobre a porta do container.', explanation: 'Sem --target-port, o targetPort recebe o mesmo valor de --port (80), não a porta do container.' },
+    { label: 'O Service fica sem endpoints.', explanation: 'Os endpoints existem (os Pods são Ready e combinam com o selector); o problema está na porta.' },
+    { label: 'As conexões chegam aos Pods na porta 80 e são recusadas.', correct: true, explanation: 'Correto. Por isso vale sempre informar --target-port, ou escrever o targetPort no YAML.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="Um Pod começa a encerrar (Terminating). Quando ele deixa de receber tráfego novo?"
+  options={[
+    { label: 'Imediatamente: assim que começa a encerrar, deixa de ser um endpoint pronto.', correct: true, explanation: 'Correto. Por isso, na lição, as requisições pararam de ir para ele antes mesmo de ele sumir do palco.' },
+    { label: 'Só quando o container terminar de parar.', explanation: 'Não. O Pod sai da lista no início do encerramento, justamente para não receber tráfego enquanto para.' },
+    { label: 'Quando o substituto ficar Ready.', explanation: 'O substituto entra quando fica Ready, mas a saída do Pod antigo não depende disso.' },
+  ]}
+/>
+
+</section>
+
+<section id="para-ir-alem">
+
+## Para ir além
+
+- [Service — documentação oficial](https://kubernetes.io/docs/concepts/services-networking/service/)
+- [EndpointSlices — documentação oficial](https://kubernetes.io/docs/concepts/services-networking/endpoint-slices/)
+- [DNS para Services e Pods — documentação oficial](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/)
+- [IPs virtuais e o kube-proxy — documentação oficial](https://kubernetes.io/docs/reference/networking/virtual-ips/)
+
+</section>

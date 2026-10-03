@@ -126,7 +126,7 @@ export function Stage() {
   const podsBySlot = new Map(Object.values(cluster.pods).map((p) => [`${p.ownerUid ?? NO_OWNER}:${p.slot}`, p]))
 
   return (
-    <div ref={ref} className="relative h-full w-full overflow-hidden" onClick={() => select(null)}>
+    <div ref={ref} data-tour="palco" className="relative h-full w-full overflow-hidden" onClick={() => select(null)}>
       <div className="stage-grid pointer-events-none absolute inset-0" />
       {/* frozen time: a quiet amber frame instead of a modal */}
       <motion.div

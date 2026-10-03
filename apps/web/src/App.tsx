@@ -13,6 +13,9 @@ import { useAuth } from './auth/auth'
 import { SignInDialog } from './components/account/SignInDialog'
 import { VerifyDialog } from './components/account/VerifyDialog'
 import { Toaster } from './components/ui/Toaster'
+import { ShortcutsDialog, useHelp } from './tour/HelpMenu'
+import { Tips } from './tour/Tips'
+import { Tour } from './tour/Tour'
 import { ApostilaPanel } from './components/apostila/ApostilaPanel'
 import { LessonTracker } from './lessons/useLesson'
 import { useSim } from './store/useSim'
@@ -28,7 +31,10 @@ function useGlobalKeys() {
       }
       const t = e.target as HTMLElement
       if (s.paletteOpen || t.closest('input, textarea, [contenteditable]') || document.querySelector('[aria-modal="true"]')) return
-      if (e.key === ' ') {
+      if (e.key === '?') {
+        e.preventDefault()
+        useHelp.getState().setShortcuts(true)
+      } else if (e.key === ' ') {
         e.preventDefault()
         s.togglePause()
       } else if (e.key === '.') {
@@ -85,6 +91,9 @@ export default function App() {
       <SignInDialog />
       <VerifyDialog />
       <ApostilaPanel />
+      <Tour />
+      <Tips />
+      <ShortcutsDialog />
       <Toaster />
     </MotionConfig>
   )

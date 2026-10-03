@@ -7,7 +7,7 @@ import { useProgress } from '../progress/browser'
 import { useLesson } from '../lessons/useLesson'
 import { useSim } from '../store/useSim'
 import { GlossaryText } from './GlossaryText'
-import { hasApostila } from '../lessons/apostilas'
+import { hasApostila, READING_MINUTES } from '../lessons/apostilas'
 import { useApostila } from '../lessons/apostilas/store'
 
 export function LessonPanel() {
@@ -21,7 +21,7 @@ export function LessonPanel() {
   const doneCount = required.filter((s) => s.isDone).length
 
   return (
-    <aside className="flex min-h-0 flex-col overflow-auto lg:h-full">
+    <aside data-tour="licao" className="flex min-h-0 flex-col overflow-auto lg:h-full">
       <AnimatePresence mode="wait" initial={false}>
         <motion.div
           key={lesson.id}
@@ -36,7 +36,7 @@ export function LessonPanel() {
                 {lesson.track} · Lição {lesson.number}
               </div>
               {apostilaId && (
-                <button onClick={() => openApostila(apostilaId)} className="flex items-center gap-1.5 rounded-md border border-line-strong px-2 py-1 text-[11px] font-medium text-fg-muted transition hover:border-accent/50 hover:text-accent">
+                <button data-tour="apostila" onClick={() => openApostila(apostilaId)} className="flex items-center gap-1.5 rounded-md border border-line-strong px-2 py-1 text-[11px] font-medium text-fg-muted transition hover:border-accent/50 hover:text-accent">
                   <BookOpen size={12} /> Apostila
                 </button>
               )}
@@ -45,7 +45,7 @@ export function LessonPanel() {
             <p className="mt-1 text-[13px] leading-relaxed text-fg-muted">{lesson.tagline}</p>
             {apostilaId && (
               <button onClick={() => openApostila(apostilaId)} className="mt-2 text-[11.5px] text-fg-faint transition hover:text-accent hover:underline">
-                Apostila · leitura de ~5 min
+                Apostila · leitura de ~{READING_MINUTES[apostilaId]} min
               </button>
             )}
 

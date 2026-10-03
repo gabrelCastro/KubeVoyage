@@ -31,7 +31,9 @@ function ModalBody({ onClose, children, label, className, dismissible }: { onClo
 
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null
-    const first = panel.current?.querySelector<HTMLElement>('[autofocus], input, button:not([data-close])')
+    // an explicit choice wins; a selector list would just return the first match in document order
+    const first =
+      panel.current?.querySelector<HTMLElement>('[data-autofocus]') ?? panel.current?.querySelector<HTMLElement>('[autofocus], input, button:not([data-close])')
     first?.focus()
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && dismissible) {

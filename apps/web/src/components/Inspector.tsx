@@ -16,7 +16,7 @@ export function Inspector() {
   const [tab, setTab] = useState<'overview' | 'yaml'>('overview')
 
   return (
-    <section className="flex max-h-[58%] min-h-0 shrink-0 flex-col border-b border-line" aria-label="Inspetor">
+    <section className="flex max-h-[58%] min-h-0 shrink-0 flex-col border-b border-line" aria-label="Inspetor" data-tour="inspetor">
       <AnimatePresence mode="wait" initial={false}>
         {!selected || !kind ? (
           <motion.div
