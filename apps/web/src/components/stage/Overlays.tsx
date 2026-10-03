@@ -9,6 +9,7 @@ import { useSim } from '../../store/useSim'
 import { StatusGlyph } from '../primitives'
 import { PhasePill } from './Nodes'
 import type { EdgeModel } from './Edges'
+import { GlossaryText } from '../GlossaryText'
 
 const panel = 'rounded-xl border border-line bg-panel/90 shadow-[0_12px_40px_-16px_rgb(0_0_0/0.8)] backdrop-blur-[6px]'
 
@@ -35,7 +36,7 @@ export function ReconcileHud({ cluster, layout, replicaControl }: { cluster: Clu
         <span className="pb-1 text-fg-faint">{active.length === dep.replicas ? '=' : '≠'}</span>
         <Count label="Actual" value={active.length} warn={active.length !== dep.replicas} />
       </div>
-      <div className="mt-2.5 flex min-h-[18px] flex-wrap gap-1.5" aria-label="Replica slots">
+      <div className="mt-2.5 flex min-h-[18px] flex-wrap gap-1.5" aria-label="Slots de réplicas">
         {slots.map((s) => {
           const pod = pods.find((p) => p.ownerUid === s.ownerUid && p.slot === s.slot)
           return (
@@ -52,7 +53,7 @@ export function ReconcileHud({ cluster, layout, replicaControl }: { cluster: Clu
             </span>
           )
         })}
-        {!slots.length && <span className="text-[11px] text-fg-faint">no Pods</span>}
+        {!slots.length && <span className="text-[11px] text-fg-faint">nenhum Pod</span>}
       </div>
       {replicaControl && <ReplicaControl name={dep.name} replicas={dep.replicas} />}
     </motion.div>
@@ -74,7 +75,7 @@ function ReplicaControl({ name, replicas }: { name: string; replicas: number }) 
     <div className="mt-3 border-t border-line pt-2.5">
       <div className="flex items-baseline justify-between">
         <label htmlFor="replica-control" className="text-[10px] font-semibold tracking-[0.08em] text-deploy uppercase">
-          Drag replicas
+          Arraste as réplicas
         </label>
         <span className="font-mono text-[11px] text-fg-muted">
           {draft !== null && draft !== replicas ? (
@@ -105,7 +106,7 @@ function ReplicaControl({ name, replicas }: { name: string; replicas: number }) 
         onBlur={commit}
         className="kl-range mt-1.5 w-full"
         style={{ '--fill': `${(value / 8) * 100}%` } as React.CSSProperties}
-        aria-valuetext={`${value} replicas`}
+        aria-valuetext={`${value} réplicas`}
       />
       <div className="mt-0.5 flex justify-between font-mono text-[9.5px] text-fg-faint">
         <span>0</span>
@@ -123,7 +124,7 @@ function RolloutPill({ stalled }: { stalled: boolean }) {
       style={{ color, borderColor: `color-mix(in oklab, ${color} 35%, transparent)`, background: `color-mix(in oklab, ${color} 9%, transparent)` }}
     >
       {stalled ? <span className="size-1.5 rounded-full bg-current" /> : <RefreshCw size={10.5} strokeWidth={2.5} className="anim-spin" />}
-      {stalled ? 'Rollout stalled' : 'Rolling out'}
+      {stalled ? 'Rollout travado' : 'Rollout em andamento'}
     </span>
   )
 }
@@ -183,7 +184,7 @@ export function Narration() {
               </span>
             )}
           </div>
-          <p className="mt-1 text-[12px] leading-[1.55] text-fg-muted">{latest.body}</p>
+          <p className="mt-1 text-[12px] leading-[1.55] text-fg-muted"><GlossaryText>{latest.body}</GlossaryText></p>
           {latest.command && <NarrationCommand command={latest.command} />}
           {/* a thin timer bar, so it's clear this note belongs to *this* moment */}
           <motion.span
@@ -206,9 +207,9 @@ function NarrationCommand({ command }: { command: string }) {
     <button
       onClick={() => setDraft(command)}
       className="group mt-2 flex w-full items-center gap-2 rounded-md border border-line bg-bg/50 px-2 py-1 text-left transition hover:border-accent/40"
-      title="Put this command in the terminal"
+      title="Colocar este comando no terminal"
     >
-      <span className="shrink-0 text-[10.5px] text-fg-faint">in kubectl</span>
+      <span className="shrink-0 text-[10.5px] text-fg-faint">em kubectl</span>
       <code className="min-w-0 truncate font-mono text-[11px] text-fg-muted group-hover:text-fg">{command}</code>
     </button>
   )
@@ -261,7 +262,7 @@ export function Legend() {
       {states.map((s) => (
         <span key={s} className="flex cursor-help items-center gap-1.5 text-[10.5px] text-fg-faint transition-colors hover:text-fg-muted" title={VISUAL[s].hint}>
           <StatusGlyph state={s} size={11} />
-          {s === 'creating' ? 'Creating' : s === 'crash' ? 'Crashing' : VISUAL[s].label}
+          {s === 'creating' ? 'Creating' : s === 'crash' ? 'Crash' : VISUAL[s].label}
         </span>
       ))}
     </div>
@@ -279,11 +280,11 @@ export function EdgeTooltip({ edge, cluster }: { edge: EdgeModel | null; cluster
       return (
         <>
           <div className="text-fg">
-            <span className="text-svc">Service</span> selects <span className="font-mono">{name(e.to)}</span>
+            <span className="text-svc">Service</span> seleciona <span className="font-mono">{name(e.to)}</span>
           </div>
-          <div className="mt-0.5 font-mono text-[10.5px] text-fg-faint">selector {svc ? labelString(svc.selector) : ''} matches its labels</div>
+          <div className="mt-0.5 font-mono text-[10.5px] text-fg-faint">o selector {svc ? labelString(svc.selector) : ''} combina com as labels dele</div>
           <div className="mt-1 text-[11px] text-fg-muted">
-            {e.state === 'stable' ? 'It is Ready, so it is an endpoint and receives requests.' : 'It matches, but it is not Ready — so it gets no traffic yet.'}
+            {e.state === 'stable' ? 'Ele está Ready, então é um endpoint e recebe requisições.' : 'Ele combina, mas não está Ready — por isso ainda não recebe tráfego.'}
           </div>
         </>
       )
@@ -292,13 +293,13 @@ export function EdgeTooltip({ edge, cluster }: { edge: EdgeModel | null; cluster
     return (
       <>
         <div className="text-fg">
-          <span style={{ color: e.kind === 'dep-rs' ? 'var(--color-deploy)' : 'var(--color-rs)' }}>{owner}</span> owns <span className="font-mono">{name(e.to)}</span>
+          <span style={{ color: e.kind === 'dep-rs' ? 'var(--color-deploy)' : 'var(--color-rs)' }}>{owner}</span> é dono de <span className="font-mono">{name(e.to)}</span>
         </div>
         <div className="mt-0.5 font-mono text-[10.5px] text-fg-faint">
           ownerReferences → {owner}/{name(e.from)}
         </div>
         <div className="mt-1 text-[11px] text-fg-muted">
-          {e.kind === 'dep-rs' ? 'The Deployment manages Pods through this ReplicaSet.' : 'If this Pod disappears, its owner notices and replaces it.'}
+          {e.kind === 'dep-rs' ? 'O Deployment gerencia os Pods por meio deste ReplicaSet.' : 'Se este Pod sumir, o dono percebe e o substitui.'}
         </div>
       </>
     )
@@ -348,26 +349,26 @@ export function EmptyState() {
           </motion.div>
         ))}
       </div>
-      <h2 className="text-[17px] font-semibold tracking-tight">The cluster is running — and empty.</h2>
+      <h2 className="text-[17px] font-semibold tracking-tight">O cluster está rodando — e vazio.</h2>
       <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">
-        Three nodes are waiting for work. Describe what you want — a Deployment with 3 replicas — and watch the controllers make it real.
+        Três nodes esperando trabalho. Descreva o que você quer — um Deployment com 3 réplicas — e veja os controllers tornarem isso real.
       </p>
       <div className="mt-5 flex items-center gap-2">
         <button
           onClick={() => exec('kubectl apply -f backend.yaml', 'ui')}
           className="group flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-[13px] font-semibold text-[#0b1020] shadow-[0_6px_20px_-8px_var(--color-accent)] transition hover:brightness-110 active:scale-[0.98]"
         >
-          <Play size={14} fill="currentColor" /> Apply backend.yaml
+          <Play size={14} fill="currentColor" /> Aplicar backend.yaml
         </button>
         <button
           onClick={() => setShowYaml((v) => !v)}
           className="flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-2 text-[13px] text-fg-muted transition hover:border-fg-faint hover:text-fg"
         >
-          <FileCode2 size={14} /> {showYaml ? 'Hide' : 'View'} manifest
+          <FileCode2 size={14} /> {showYaml ? 'Esconder' : 'Ver'} manifesto
         </button>
       </div>
       <p className="mt-3 text-[11.5px] text-fg-faint">
-        or type <code className="font-mono text-fg-muted">kubectl apply -f backend.yaml</code> in the terminal
+        ou digite <code className="font-mono text-fg-muted">kubectl apply -f backend.yaml</code> no terminal
       </p>
       <AnimatePresence>
         {showYaml && (
@@ -401,7 +402,7 @@ export function BootSkeleton() {
       </div>
       <div className="skeleton h-3 w-56 rounded" />
       <div className="skeleton h-3 w-40 rounded" />
-      <span className="mt-1 text-[11.5px] text-fg-faint">Provisioning sandbox cluster…</span>
+      <span className="mt-1 text-[11.5px] text-fg-faint">Preparando o cluster de treino…</span>
     </motion.div>
   )
 }

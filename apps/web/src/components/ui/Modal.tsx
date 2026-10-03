@@ -72,10 +72,10 @@ function ModalBody({ onClose, children, label, className, dismissible }: { onClo
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 8, scale: 0.98, transition: { duration: 0.12 } }}
           transition={{ type: 'spring', stiffness: 380, damping: 32 }}
-          className={cn('relative w-[min(420px,100%)] rounded-2xl border border-line-strong bg-panel shadow-[0_30px_80px_-20px_rgb(0_0_0/0.85)]', className)}
+          className={cn('relative rounded-2xl border border-line-strong bg-panel shadow-[0_30px_80px_-20px_rgb(0_0_0/0.85)]', className ?? 'w-[min(420px,100%)]')}
         >
           {dismissible && (
-            <button data-close onClick={onClose} className="absolute top-3.5 right-3.5 rounded-md p-1 text-fg-faint transition hover:bg-raised hover:text-fg" aria-label="Close">
+            <button data-close onClick={onClose} className="absolute top-3.5 right-3.5 rounded-md p-1 text-fg-faint transition hover:bg-raised hover:text-fg" aria-label="Fechar">
               <X size={15} />
             </button>
           )}

@@ -106,7 +106,7 @@ export const Traffic = memo(function Traffic({ layout, services }: { layout: Lay
           >
             <span className="h-[30px] w-px" style={{ background: `linear-gradient(to top, transparent, ${none ? 'var(--color-crash)' : 'var(--color-svc)'})`, opacity: 0.6 }} />
             <span className="mt-0.5 flex items-center gap-1.5 font-mono text-[10px] whitespace-nowrap text-fg-faint">
-              requests
+              requisições
               <AnimatePresence>
                 {none && (failed[svc.uid] ?? 0) > 0 && (
                   <motion.span key="fail" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-crash">
@@ -131,7 +131,7 @@ export const Traffic = memo(function Traffic({ layout, services }: { layout: Lay
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: receiving ? 1 : 0.4, scale: 1, left: b.x + b.w / 2, top: b.y + b.h / 2 + 4 }}
             style={{ x: '-100%' }}
-            title="Requests this Pod has received"
+            title="Requisições que este Pod recebeu"
           >
             <motion.span key={n} initial={{ scale: 1.6 }} animate={{ scale: 1 }} className="inline-block">
               ↑

@@ -42,7 +42,7 @@ function Entry({ entry }: { entry: TermEntry }) {
           <span className="text-fg">{entry.input}</span>
           {entry.origin && (
             <span className="rounded border border-line-strong px-1 font-sans text-[9.5px] tracking-wide text-fg-faint uppercase">
-              via {entry.origin === 'ui' ? 'stage' : 'palette'}
+              via {entry.origin === 'ui' ? 'palco' : 'paleta'}
             </span>
           )}
         </div>
@@ -143,7 +143,7 @@ export function Terminal() {
               exit={{ opacity: 0 }}
               className="flex shrink-0 items-center gap-1.5 rounded-full bg-creating/10 px-2 py-0.5 text-[11px] whitespace-nowrap text-creating"
             >
-              <Eye size={12} /> watching pods <Kbd className="h-4 border-creating/30 bg-transparent text-creating">esc</Kbd>
+              <Eye size={12} /> acompanhando pods <Kbd className="h-4 border-creating/30 bg-transparent text-creating">esc</Kbd>
             </motion.span>
           )}
         </AnimatePresence>
@@ -161,9 +161,9 @@ export function Terminal() {
                   input.current?.focus()
                 }}
                 className="group flex max-w-[460px] min-w-0 items-center gap-2 rounded-md border border-line-strong bg-panel-2 py-0.5 pr-1 pl-2 text-[11.5px] transition hover:border-accent/50"
-                title="Put this command in the prompt"
+                title="Colocar este comando no prompt"
               >
-                <span className="text-fg-faint">try</span>
+                <span className="text-fg-faint">tente</span>
                 <code className="truncate font-mono text-fg-muted group-hover:text-fg">{suggestion}</code>
                 <Kbd className="shrink-0">
                   <CornerDownLeft size={10} />
@@ -201,7 +201,7 @@ export function Terminal() {
             spellCheck={false}
             autoComplete="off"
             autoCapitalize="off"
-            aria-label="kubectl command"
+            aria-label="Comando kubectl"
             placeholder={watching || term.length > 1 ? '' : (suggestion ?? '')}
             className="min-w-0 flex-1 bg-transparent text-fg caret-accent outline-none placeholder:text-fg-faint/60 focus-visible:outline-none"
             data-terminal-input

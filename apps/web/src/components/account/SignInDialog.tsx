@@ -16,7 +16,7 @@ export function SignInDialog() {
   const open = useAuth((s) => s.dialogOpen)
   const close = useAuth((s) => s.closeSignIn)
   return (
-    <Modal open={open} onClose={close} label="Sign in to KubeLearn">
+    <Modal open={open} onClose={close} label="Entrar no KubeLearn">
       <SignInFlow />
     </Modal>
   )
@@ -37,7 +37,7 @@ function SignInFlow() {
 
   const send = async (address: string) => {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address.trim())) {
-      setStep({ kind: 'form', error: 'That doesn’t look like an email address.' })
+      setStep({ kind: 'form', error: 'Esse endereço de e-mail não parece válido.' })
       return
     }
     setStep({ kind: 'sending' })
@@ -63,32 +63,32 @@ function SignInFlow() {
             >
               <Mail size={20} />
             </motion.div>
-            <h2 className="mt-4 text-[19px] font-semibold tracking-tight">Check your inbox</h2>
+            <h2 className="mt-4 text-[19px] font-semibold tracking-tight">Confira sua caixa de entrada</h2>
             <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">
-              We sent a sign-in link to <span className="font-medium text-fg">{step.email}</span>. It works once and expires in {step.minutes} minutes. You can open it on any device.
+              Enviamos um link de acesso para <span className="font-medium text-fg">{step.email}</span>. Ele funciona uma vez e expira em {step.minutes} minutos. Você pode abri-lo em qualquer dispositivo.
             </p>
             {import.meta.env.DEV && (
               <a href="http://localhost:8025" target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-dashed border-line-strong px-2 py-1 font-mono text-[11px] text-fg-faint transition hover:text-fg">
-                dev · open Mailpit (localhost:8025) ↗
+                dev · abrir Mailpit (localhost:8025) ↗
               </a>
             )}
             <div className="mt-6 flex items-center justify-between gap-2">
               <button onClick={() => setStep({ kind: 'form' })} className="flex items-center gap-1.5 text-[12.5px] text-fg-muted transition hover:text-fg">
-                <ArrowLeft size={13} /> Use a different email
+                <ArrowLeft size={13} /> Usar outro e-mail
               </button>
               <button
                 disabled={cooldown > 0}
                 onClick={() => send(step.email)}
                 className="rounded-lg border border-line-strong px-3 py-1.5 text-[12.5px] text-fg-muted transition hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend link'}
+                {cooldown > 0 ? `Reenviar em ${cooldown}s` : 'Reenviar link'}
               </button>
             </div>
           </motion.div>
         ) : (
           <motion.div key="form" initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 12 }} transition={{ duration: 0.18 }}>
-            <h2 className="text-[19px] font-semibold tracking-tight">Keep your progress</h2>
-            <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">Sign in to save what you’ve learned and pick up where you left off, on any device.</p>
+            <h2 className="text-[19px] font-semibold tracking-tight">Guarde seu progresso</h2>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">Entre para salvar o que aprendeu e continuar de onde parou em qualquer dispositivo.</p>
 
             {providers.github && (
               <>
@@ -96,10 +96,10 @@ function SignInFlow() {
                   onClick={signInWithGithub}
                   className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg border border-line-strong bg-raised px-3 py-2.5 text-[13px] font-medium text-fg transition hover:border-fg-faint active:scale-[0.99]"
                 >
-                  <GithubMark /> Continue with GitHub
+                  <GithubMark /> Continuar com o GitHub
                 </button>
                 <div className="my-4 flex items-center gap-3 text-[11px] text-fg-faint">
-                  <span className="h-px flex-1 bg-line" /> or <span className="h-px flex-1 bg-line" />
+                  <span className="h-px flex-1 bg-line" /> ou <span className="h-px flex-1 bg-line" />
                 </div>
               </>
             )}
@@ -113,7 +113,7 @@ function SignInFlow() {
               noValidate
             >
               <label htmlFor="signin-email" className="text-[12px] font-medium text-fg-muted">
-                Email
+                E-mail
               </label>
               <input
                 id="signin-email"
@@ -127,7 +127,7 @@ function SignInFlow() {
                   setEmail(e.target.value)
                   if (step.kind === 'form' && step.error) setStep({ kind: 'form' })
                 }}
-                placeholder="you@example.com"
+                placeholder="voce@exemplo.com"
                 aria-invalid={step.kind === 'form' && !!step.error}
                 aria-describedby={step.kind === 'form' && step.error ? 'signin-error' : undefined}
                 className={cn(
@@ -148,14 +148,14 @@ function SignInFlow() {
                 className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-3 py-2.5 text-[13px] font-semibold text-[#0b1020] transition hover:brightness-110 active:scale-[0.99] disabled:opacity-70"
               >
                 {step.kind === 'sending' ? <Loader2 size={15} className="anim-spin" /> : null}
-                {step.kind === 'sending' ? 'Sending…' : 'Email me a sign-in link'}
+                {step.kind === 'sending' ? 'Enviando…' : 'Enviar um link de acesso por e-mail'}
               </button>
             </form>
 
-            <p className="mt-4 text-[11.5px] leading-relaxed text-fg-faint">No password. The link works once and expires in 10 minutes.</p>
+            <p className="mt-4 text-[11.5px] leading-relaxed text-fg-faint">Sem senha. O link funciona uma vez e expira em 10 minutos.</p>
             {done > 0 && (
               <p className="mt-2 flex items-center gap-1.5 text-[11.5px] text-fg-muted">
-                <Check size={12} className="text-ready" /> The {done} lesson{done === 1 ? '' : 's'} you finished on this device come{done === 1 ? 's' : ''} with you.
+                <Check size={12} className="text-ready" /> {done === 1 ? 'A lição que você concluiu neste dispositivo vai com você.' : `As ${done} lições que você concluiu neste dispositivo vão com você.`}
               </p>
             )}
           </motion.div>
@@ -167,15 +167,15 @@ function SignInFlow() {
 
 export function explain(e: unknown): string {
   if (e instanceof ApiError) {
-    if (e.network) return 'Can’t reach the server right now. Your progress is safe on this device — try again in a moment.'
+    if (e.network) return 'Não foi possível acessar o servidor agora. Seu progresso está seguro neste dispositivo — tente novamente em instantes.'
     if (e.code === 'rate_limited') {
       const m = Math.ceil((e.retryAfterSeconds ?? 60) / 60)
-      return `Too many links requested. Try again in ${m} minute${m === 1 ? '' : 's'}.`
+      return `Muitos links foram solicitados. Tente novamente ${m === 1 ? 'em 1 minuto' : `em ${m} minutos`}.`
     }
-    if (e.code === 'invalid_request') return 'That doesn’t look like an email address.'
+    if (e.code === 'invalid_request') return 'Esse endereço de e-mail não parece válido.'
     return e.message
   }
-  return 'Something went wrong. Please try again.'
+  return 'Algo deu errado. Tente novamente.'
 }
 
 export function GithubMark({ size = 16 }: { size?: number }) {

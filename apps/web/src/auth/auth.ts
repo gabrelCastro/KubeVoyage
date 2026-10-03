@@ -58,7 +58,7 @@ function resumeIfIdle() {
   const sim = useSim.getState()
   if (!last || last === sim.lessonId || sim.events.some((e) => e.source === 'you')) return
   sim.openLesson(last)
-  toast({ tone: 'info', title: 'Picked up where you left off', body: `Back to ${getLesson(last).title}.` })
+  toast({ tone: 'info', title: 'Continuamos de onde você parou', body: `De volta a ${getLesson(last).title}.` })
 }
 
 function becameAnonymous(set: (s: Partial<AuthStore>) => void) {
@@ -87,14 +87,14 @@ export const useAuth = create<AuthStore>((set, get) => ({
       becameAnonymous(set)
       if (e instanceof ApiError && e.network) {
         // the app works fully offline; account features just wait
-        console.info('KubeLearn: API unreachable, progress stays on this device for now.')
+        console.info('KubeLearn: a API está inacessível; por enquanto, o progresso fica neste dispositivo.')
       }
     }
     if (flags.error) {
       toast({
         tone: 'error',
-        title: "Couldn't sign in with GitHub",
-        body: flags.error === 'no_verified_email' ? 'Your GitHub account has no verified email address. Verify one on GitHub, or use an email link.' : 'Please try again.',
+        title: 'Não foi possível entrar com o GitHub',
+        body: flags.error === 'no_verified_email' ? 'Sua conta do GitHub não tem um e-mail verificado. Verifique um e-mail no GitHub ou use um link por e-mail.' : 'Tente novamente.',
       })
     }
   },
@@ -106,7 +106,7 @@ export const useAuth = create<AuthStore>((set, get) => ({
 
   async confirmLink() {
     const token = get().pendingToken
-    if (!token) throw new ApiError(401, 'invalid_link', 'No sign-in link to confirm.')
+    if (!token) throw new ApiError(401, 'invalid_link', 'Não há link de acesso para confirmar.')
     const had = completedCount(progressSync.progress)
     const user = await api<User>('/api/auth/magic-link/verify', { method: 'POST', body: { token } })
     signedIn(set, user)
@@ -131,35 +131,35 @@ export const useAuth = create<AuthStore>((set, get) => ({
     becameAnonymous(set)
     // the account keeps the progress; this (possibly shared) device forgets it
     progressSync.clearLocal()
-    toast({ tone: 'info', title: 'Signed out', body: 'Your progress is saved in your account.' })
+    toast({ tone: 'info', title: 'Você saiu', body: 'Seu progresso está salvo na sua conta.' })
   },
 
   async deleteAccount() {
     await api('/api/me', { method: 'DELETE' })
     becameAnonymous(set)
     progressSync.clearLocal()
-    toast({ tone: 'info', title: 'Account deleted', body: 'Your account and its progress are gone for good.' })
+    toast({ tone: 'info', title: 'Conta apagada', body: 'Sua conta e todo o progresso foram apagados permanentemente.' })
   },
 
   async resetProgress() {
     if (get().status === 'signed-in') await api('/api/progress', { method: 'DELETE' })
     progressSync.clearLocal()
     if (get().status === 'signed-in') progressSync.setSignedIn(true)
-    toast({ tone: 'info', title: 'Progress reset', body: 'Every lesson is back to the start.' })
+    toast({ tone: 'info', title: 'Progresso reiniciado', body: 'Todas as lições voltaram ao início.' })
   },
 }))
 
 setUnauthorizedHandler(() => {
   if (useAuth.getState().status !== 'signed-in') return
   useAuth.setState({ status: 'anonymous', user: null })
-  toast({ tone: 'info', title: 'You were signed out', body: 'Your progress is safe on this device. Sign in again to keep syncing.' }, 7000)
+  toast({ tone: 'info', title: 'Sua sessão terminou', body: 'Seu progresso está seguro neste dispositivo. Entre novamente para continuar sincronizando.' }, 7000)
 })
 
 function welcome(user: User, hadOnDevice: number) {
   toast({
     tone: 'success',
-    title: `Signed in as ${user.name ?? user.email}`,
-    body: hadOnDevice ? 'Progress from this device was added to your account.' : 'Your progress now follows you to every device.',
+    title: `Você entrou como ${user.name ?? user.email}`,
+    body: hadOnDevice ? 'O progresso deste dispositivo foi adicionado à sua conta.' : 'Agora seu progresso acompanha você em todos os dispositivos.',
   })
 }
 

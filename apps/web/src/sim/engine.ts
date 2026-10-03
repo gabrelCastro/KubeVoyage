@@ -446,10 +446,10 @@ export class Simulation {
       this.emit('you', 'user', 'Applied', `kubectl apply — deployment.apps/${dep.name} created`, this.ref(dep))
       this.narrate({
         tone: 'info',
-        title: 'Desired state recorded',
-        body: `You described what you want: ${dep.replicas} replicas of ${dep.name}. Nothing runs yet — controllers will make it real.`,
+        title: 'Desired state registrado',
+        body: `Você descreveu o que quer: ${dep.replicas} réplicas de ${dep.name}. Nada está rodando ainda — os controllers é que vão tornar isso real.`,
       })
-      this.schedule(TIMING.rsCreate, 'Deployment controller creates a ReplicaSet', () => this.syncDeployment(dep.uid))
+      this.schedule(TIMING.rsCreate, 'o Deployment controller cria um ReplicaSet', () => this.syncDeployment(dep.uid))
       return 'created' as const
     })
   }
@@ -464,14 +464,14 @@ export class Simulation {
       this.emit('you', 'user', 'Scaled', `${via === 'apply' ? 'kubectl apply' : 'kubectl scale'} — replicas ${from} → ${replicas}`, this.ref(dep))
       this.narrate({
         tone: 'info',
-        title: 'You changed the desired state',
+        title: 'Você mudou o desired state',
         body:
           replicas === 0
-            ? `${name} now wants 0 replicas. The Deployment and ReplicaSet stay — only the Pods go away.`
-            : `${name} now wants ${replicas} replicas instead of ${from}. Watch the controllers converge.`,
+            ? `${name} agora quer 0 réplicas. O Deployment e o ReplicaSet continuam existindo — só os Pods vão embora.`
+            : `${name} agora quer ${replicas} réplicas em vez de ${from}. Veja os controllers convergirem.`,
         command: via === 'ui' ? `kubectl scale deployment ${name} --replicas=${replicas}` : undefined,
       })
-      this.schedule(TIMING.scaleNotice, 'Deployment controller updates the ReplicaSet', () => this.syncDeployment(dep.uid))
+      this.schedule(TIMING.scaleNotice, 'o Deployment controller atualiza o ReplicaSet', () => this.syncDeployment(dep.uid))
     })
     return true
   }
@@ -492,10 +492,10 @@ export class Simulation {
       this.emit('you', 'user', 'ImageChanged', `${via === 'apply' ? 'kubectl apply' : 'kubectl set image'} — ${tag(from)} → ${tag(image)}`, this.ref(dep))
       this.narrate({
         tone: 'info',
-        title: 'New version requested',
-        body: `A new template means a new ReplicaSet. The Deployment rolls Pods over one at a time — old ones keep serving until new ones are Ready.`,
+        title: 'Nova versão solicitada',
+        body: `Template novo significa ReplicaSet novo. O Deployment troca os Pods um de cada vez — os antigos continuam atendendo até os novos ficarem Ready.`,
       })
-      this.schedule(TIMING.scaleNotice, 'Deployment controller starts the rollout', () => this.syncDeployment(dep.uid))
+      this.schedule(TIMING.scaleNotice, 'o Deployment controller inicia o rollout', () => this.syncDeployment(dep.uid))
     })
     return 'updated' as const
   }
@@ -515,10 +515,10 @@ export class Simulation {
       this.emit('you', 'user', 'RolledBack', `kubectl rollout undo — back to ${tag(previous)}`, this.ref(dep))
       this.narrate({
         tone: 'info',
-        title: 'Rolling back',
-        body: `The template goes back to ${tag(previous)}. Its old ReplicaSet still exists, so the Deployment simply scales it back up and the broken one down.`,
+        title: 'Fazendo rollback',
+        body: `O template volta para ${tag(previous)}. O ReplicaSet antigo ainda existe, então o Deployment só precisa escalá-lo de volta e escalar o quebrado para zero.`,
       })
-      this.schedule(TIMING.scaleNotice, 'Deployment controller starts the rollback', () => this.syncDeployment(dep.uid))
+      this.schedule(TIMING.scaleNotice, 'o Deployment controller inicia o rollback', () => this.syncDeployment(dep.uid))
     })
     return 'rolledback' as const
   }
@@ -576,10 +576,10 @@ export class Simulation {
         const matched = this.selectedBy(updated).length
         this.narrate({
           tone: 'error',
-          title: 'Still no endpoints',
+          title: 'Ainda sem endpoints',
           body: matched
-            ? `${matched} Pod${matched === 1 ? '' : 's'} match ${labelString(selector)}, but none is Ready yet.`
-            : `No Pod carries ${labelString(selector)}. The Service has nothing to send traffic to.`,
+            ? `${matched} Pod${matched === 1 ? '' : 's'} ${matched === 1 ? 'tem' : 'têm'} ${labelString(selector)}, mas nenhum está Ready ainda.`
+            : `Nenhum Pod tem ${labelString(selector)}. O Service não tem para onde mandar o tráfego.`,
         })
       }
     })
@@ -640,7 +640,7 @@ export class Simulation {
     const dep = rs && this.cluster.deployments[rs.ownerUid]
     if (!dep) return
     const busy = dep.rollout !== 'complete' || this.replicaSetsOf(dep).filter((r) => r.desired > 0).length > 1
-    if (busy) this.once(`dep:${dep.uid}`, TIMING.rolloutCheck, 'Deployment controller checks rollout progress', () => this.syncDeployment(dep.uid))
+    if (busy) this.once(`dep:${dep.uid}`, TIMING.rolloutCheck, 'o Deployment controller verifica o andamento do rollout', () => this.syncDeployment(dep.uid))
   }
 
   private syncDeployment(depUid: string) {
@@ -703,8 +703,8 @@ export class Simulation {
     this.fx({ kind: 'ping', uid: dep.uid, tone: 'success' })
     this.narrate({
       tone: 'success',
-      title: 'Rollout complete',
-      body: `Every Pod now runs ${tag(dep.template.image)}. The previous ReplicaSet stays around at 0 replicas — that's what makes a rollback instant.`,
+      title: 'Rollout concluído',
+      body: `Todos os Pods agora rodam ${tag(dep.template.image)}. O ReplicaSet anterior fica guardado com 0 réplicas — é isso que torna um rollback instantâneo.`,
     })
   }
 
@@ -729,8 +729,8 @@ export class Simulation {
       this.emit('deployment-controller', 'create', 'ScalingReplicaSet', `Scaled up replica set ${rs.name} to ${desired}`, this.ref(rs))
       this.narrate({
         tone: 'info',
-        title: 'ReplicaSet created',
-        body: `The Deployment doesn't create Pods directly. It creates a ReplicaSet, whose only job is keeping ${desired} Pods alive.`,
+        title: 'ReplicaSet criado',
+        body: `O Deployment não cria Pods diretamente. Ele cria um ReplicaSet, cuja única função é manter ${desired} Pods vivos.`,
         metrics: { desired, actual: 0 },
       })
     } else {
@@ -767,7 +767,7 @@ export class Simulation {
       this.patchRS(rsUid, { phase: 'diverged' })
       this.divergedSince[rsUid] ??= this.now
     }
-    this.once(`rs:${rsUid}`, delay, 'ReplicaSet controller notices Desired ≠ Actual', () => this.syncReplicaSet(rsUid))
+    this.once(`rs:${rsUid}`, delay, 'o ReplicaSet controller percebe que Desired ≠ Actual', () => this.syncReplicaSet(rsUid))
   }
 
   private syncReplicaSet(rsUid: string) {
@@ -790,24 +790,24 @@ export class Simulation {
     )
     this.narrate({
       tone: 'warn',
-      title: 'Reconciling',
+      title: 'Reconciliando',
       body:
         diff > 0
-          ? `The ReplicaSet wants ${rs.desired} Pods but only ${active.length} exist. It creates ${diff === 1 ? 'a replacement' : `${diff} new Pods`}.`
-          : `The ReplicaSet wants ${rs.desired} Pod${rs.desired === 1 ? '' : 's'} but ${active.length} exist. It terminates ${-diff}.`,
+          ? `O ReplicaSet quer ${rs.desired} Pods, mas só existem ${active.length}. Ele cria ${diff === 1 ? 'um substituto' : `${diff} Pods novos`}.`
+          : `O ReplicaSet quer ${rs.desired} Pod${rs.desired === 1 ? '' : 's'}, mas existem ${active.length}. Ele encerra ${-diff}.`,
       metrics: { desired: rs.desired, actual: active.length },
     })
 
     if (diff > 0) {
       this.inflight[rsUid] = inflight + diff
       for (let i = 0; i < diff; i++) {
-        this.schedule(TIMING.createAfterSync + i * TIMING.createStagger, `ReplicaSet creates a Pod (${i + 1}/${diff})`, () => this.createPod(rsUid))
+        this.schedule(TIMING.createAfterSync + i * TIMING.createStagger, `o ReplicaSet cria um Pod (${i + 1}/${diff})`, () => this.createPod(rsUid))
       }
     } else {
       // Like the real controller: sacrifice the least valuable Pods first (not ready, then newest).
       const victims = [...active].sort((a, b) => Number(a.ready) - Number(b.ready) || b.createdAt - a.createdAt).slice(0, -diff)
       victims.forEach((pod, i) =>
-        this.schedule(TIMING.createAfterSync / 2 + i * TIMING.scaleDownStagger, `ReplicaSet terminates ${short(pod.name)}`, () => {
+        this.schedule(TIMING.createAfterSync / 2 + i * TIMING.scaleDownStagger, `o ReplicaSet encerra ${short(pod.name)}`, () => {
           const live = this.livePod(pod.uid)
           if (live) this.terminate(live, 'controller')
         }),
@@ -824,8 +824,8 @@ export class Simulation {
     this.fx({ kind: 'pulse', chain: [rs.uid, pod.uid], tone: 'create' })
     this.narrate({
       tone: 'info',
-      title: 'Adopted',
-      body: `${short(pod.name)} matches the ReplicaSet's selector again, so it counts once more. That makes ${this.activePods(rs.uid).length} for ${rs.desired} desired.`,
+      title: 'Adotado',
+      body: `${short(pod.name)} voltou a combinar com o selector do ReplicaSet, então volta a contar. Agora são ${this.activePods(rs.uid).length} para ${rs.desired} desejados.`,
       metrics: { desired: rs.desired, actual: this.activePods(rs.uid).length },
     })
   }
@@ -841,8 +841,8 @@ export class Simulation {
     this.emit('replicaset-controller', 'delete', 'Orphaned', `Released pod ${pod.name}: it no longer matches ${labelString(rs.selector)}`, this.ref(pod))
     this.narrate({
       tone: 'warn',
-      title: 'Released by its ReplicaSet',
-      body: `${short(pod.name)} no longer matches ${labelString(rs.selector)}, so the ReplicaSet stops counting it — Actual drops to ${actual}. The Pod keeps running, owned by nobody.`,
+      title: 'Liberado pelo ReplicaSet',
+      body: `${short(pod.name)} não combina mais com ${labelString(rs.selector)}, então o ReplicaSet para de contá-lo — o Actual cai para ${actual}. O Pod continua rodando, sem dono.`,
       metrics: { desired: rs.desired, actual },
     })
     this.kick(rs.uid)
@@ -893,7 +893,7 @@ export class Simulation {
     this.dropVacancy(rsUid, slot)
     this.emit('replicaset-controller', 'create', 'SuccessfulCreate', `Created pod: ${pod.name}`, this.ref(pod))
     this.fx({ kind: 'pulse', chain: [rs.uid, pod.uid], tone: 'create' })
-    this.schedule(TIMING.schedule, `Scheduler picks a node for ${short(pod.name)}`, () => this.bind(pod.uid))
+    this.schedule(TIMING.schedule, `o scheduler escolhe um node para ${short(pod.name)}`, () => this.bind(pod.uid))
   }
 
   // ── scheduler & kubelet ──────────────────────────────────────────────────
@@ -905,11 +905,11 @@ export class Simulation {
     const node = [...this.cluster.nodes].sort((a, b) => load(a.name) - load(b.name))[0]
     this.patchPod(podUid, { nodeName: node.name, phase: 'ContainerCreating' })
     this.emit('default-scheduler', 'schedule', 'Scheduled', `Successfully assigned default/${pod.name} to ${node.name}`, this.ref(pod))
-    this.schedule(TIMING.pull, `kubelet pulls the image for ${short(pod.name)}`, () => {
+    this.schedule(TIMING.pull, `o kubelet baixa a imagem de ${short(pod.name)}`, () => {
       const p = this.livePod(podUid)
       if (!p) return
       this.emit('kubelet', 'progress', 'Pulled', `Container image "${p.image}" already present on machine`, this.ref(p))
-      this.schedule(TIMING.start, `kubelet starts the container in ${short(pod.name)}`, () => this.start(podUid))
+      this.schedule(TIMING.start, `o kubelet inicia o container de ${short(pod.name)}`, () => this.start(podUid))
     })
   }
 
@@ -919,10 +919,10 @@ export class Simulation {
     this.patchPod(podUid, { phase: 'Running', ip: pod.ip ?? this.nextIp(pod.nodeName) })
     this.emit('kubelet', 'progress', 'Started', 'Started container backend', this.ref(pod))
     if (isBroken(pod.image)) {
-      this.schedule(TIMING.crash, `Container in ${short(pod.name)} exits with an error`, () => this.crash(podUid))
+      this.schedule(TIMING.crash, `o container de ${short(pod.name)} encerra com erro`, () => this.crash(podUid))
       return
     }
-    this.schedule(TIMING.ready, `Readiness probe passes for ${short(pod.name)}`, () => {
+    this.schedule(TIMING.ready, `a readiness probe de ${short(pod.name)} passa`, () => {
       const p = this.livePod(podUid)
       if (!p) return
       this.patchPod(podUid, { ready: true })
@@ -944,7 +944,7 @@ export class Simulation {
     this.narrateOnce(`crash:${pod.ownerUid ?? pod.uid}`, {
       tone: 'error',
       title: 'CrashLoopBackOff',
-      body: `The container in ${short(pod.name)} exits right after starting. The kubelet keeps restarting it, waiting longer each time. It never becomes Ready, so it never gets traffic.`,
+      body: `O container de ${short(pod.name)} encerra logo depois de iniciar. O kubelet continua reiniciando, esperando mais a cada vez. Ele nunca fica Ready, então nunca recebe tráfego.`,
       command: `kubectl logs ${pod.name}`,
     })
 
@@ -957,23 +957,23 @@ export class Simulation {
         .reduce((n, r) => n + this.activePods(r.uid).filter((p) => p.ready).length, 0)
       this.narrateOnce(`stall:${dep.uid}:${dep.revision}`, {
         tone: 'error',
-        title: 'Rollout stalled',
-        body: `The new Pod never becomes Ready, so the Deployment won't take down any old Pod. ${oldReady} Pod${oldReady === 1 ? '' : 's'} on ${tag(dep.history[dep.history.length - 2] ?? '')} keep serving — nobody is down.`,
+        title: 'Rollout travado',
+        body: `O Pod novo nunca fica Ready, então o Deployment não derruba nenhum Pod antigo. ${oldReady} Pod${oldReady === 1 ? '' : 's'} na ${tag(dep.history[dep.history.length - 2] ?? '')} ${oldReady === 1 ? 'continua' : 'continuam'} atendendo — ninguém ficou fora do ar.`,
         command: `kubectl rollout status deployment/${dep.name}`,
       })
     }
 
-    this.schedule(TIMING.errorToBackoff, `kubelet backs off before restarting ${short(pod.name)}`, () => {
+    this.schedule(TIMING.errorToBackoff, `o kubelet aguarda (back-off) antes de reiniciar ${short(pod.name)}`, () => {
       const p = this.livePod(podUid)
       if (!p) return
       this.patchPod(podUid, { phase: 'CrashLoopBackOff' })
       const wait = Math.min(TIMING.backoffBase * 2 ** (p.restarts - 1), TIMING.backoffMax)
-      this.schedule(wait, `kubelet restarts the container in ${short(pod.name)}`, () => {
+      this.schedule(wait, `o kubelet reinicia o container de ${short(pod.name)}`, () => {
         const q = this.livePod(podUid)
         if (!q) return
         this.patchPod(podUid, { phase: 'Running' })
         this.emit('kubelet', 'progress', 'Started', `Started container backend (restart #${q.restarts})`, this.ref(q))
-        this.schedule(TIMING.crash, `Container in ${short(pod.name)} exits with an error`, () => this.crash(podUid))
+        this.schedule(TIMING.crash, `o container de ${short(pod.name)} encerra com erro`, () => this.crash(podUid))
       })
     })
     this.touchDeployment(pod.ownerUid)
@@ -990,20 +990,20 @@ export class Simulation {
         const actual = this.activePods(rs.uid).length
         this.narrate({
           tone: 'warn',
-          title: 'A Pod is going away',
-          body: `Terminating Pods no longer count toward the ReplicaSet. Actual just dropped to ${actual}, but desired is still ${rs.desired}.`,
+          title: 'Um Pod está saindo',
+          body: `Pods em Terminating não contam mais para o ReplicaSet. O Actual acabou de cair para ${actual}, mas o desired continua ${rs.desired}.`,
           metrics: { desired: rs.desired, actual },
         })
       } else {
         this.narrate({
           tone: 'warn',
-          title: 'A Pod with no owner',
-          body: `${short(pod.name)} isn't managed by any ReplicaSet. When it's gone, nothing brings it back.`,
+          title: 'Um Pod sem dono',
+          body: `${short(pod.name)} não é gerenciado por nenhum ReplicaSet. Quando ele sumir, nada vai trazê-lo de volta.`,
         })
       }
     }
 
-    this.schedule(TIMING.terminate, `${short(pod.name)} finishes terminating`, () => {
+    this.schedule(TIMING.terminate, `${short(pod.name)} termina de encerrar`, () => {
       const current = this.cluster.pods[pod.uid]
       if (!current) return
       const owner = current.ownerUid ? this.cluster.replicaSets[current.ownerUid] : undefined
@@ -1039,11 +1039,11 @@ export class Simulation {
     this.fx({ kind: 'ping', uid: rs.ownerUid, tone: 'success' })
     this.narrate({
       tone: 'success',
-      title: 'Reconciled',
+      title: 'Reconciliado',
       body:
         since !== undefined
-          ? `Actual matches desired again. The cluster converged in ${((this.now - since) / 1000).toFixed(1)}s of simulated time — without you doing anything.`
-          : 'Actual matches desired. The cluster is exactly how you described it.',
+          ? `Actual voltou a ser igual ao desired. O cluster convergiu em ${((this.now - since) / 1000).toFixed(1).replace('.', ',')}s de tempo simulado — sem você fazer nada.`
+          : 'Actual é igual ao desired. O cluster está exatamente como você descreveu.',
       metrics: { desired: rs.desired, actual: active.length },
     })
   }
@@ -1070,8 +1070,8 @@ export class Simulation {
     this.emit('you', 'user', 'Created', `service/${svc.name} created — selects ${labelString(svc.selector)}`, this.ref(svc))
     this.narrate({
       tone: 'info',
-      title: 'Service created',
-      body: `A Service is one stable address in front of Pods that come and go. It finds them by label, not by name: ${labelString(svc.selector)}.`,
+      title: 'Service criado',
+      body: `Um Service é um endereço estável na frente de Pods que vêm e vão. Ele os encontra por label, não por nome: ${labelString(svc.selector)}.`,
     })
   }
 
@@ -1098,15 +1098,15 @@ export class Simulation {
         this.fx({ kind: 'ping', uid: svc.uid, tone: 'error' })
         this.narrate({
           tone: 'error',
-          title: 'No endpoints',
-          body: `service/${svc.name} selects ${labelString(svc.selector)}, but no Ready Pod matches. Every request to it fails.`,
+          title: 'Sem endpoints',
+          body: `service/${svc.name} seleciona ${labelString(svc.selector)}, mas nenhum Pod Ready combina. Toda requisição para ele falha.`,
         })
       } else if (!before.length && eps.length) {
         this.fx({ kind: 'ping', uid: svc.uid, tone: 'success' })
         this.narrate({
           tone: 'success',
-          title: 'Traffic is flowing',
-          body: `service/${svc.name} found ${eps.length} Ready Pod${eps.length === 1 ? '' : 's'} with ${labelString(svc.selector)} and load-balances requests across them.`,
+          title: 'O tráfego está fluindo',
+          body: `service/${svc.name} encontrou ${eps.length} Pod${eps.length === 1 ? '' : 's'} Ready com ${labelString(svc.selector)} e distribui as requisições entre ${eps.length === 1 ? 'ele' : 'eles'}.`,
         })
       }
     }

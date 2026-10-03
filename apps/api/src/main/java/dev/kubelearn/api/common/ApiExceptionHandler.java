@@ -20,7 +20,7 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 	@ExceptionHandler(TooManyRequestsException.class)
 	ResponseEntity<ProblemDetail> tooMany(TooManyRequestsException ex) {
 		long seconds = Math.max(1, ex.retryAfter().toSeconds());
-		var p = Problems.of(HttpStatus.TOO_MANY_REQUESTS, "rate_limited", "Too many attempts. Try again in a moment.");
+		var p = Problems.of(HttpStatus.TOO_MANY_REQUESTS, "rate_limited", "Muitas tentativas. Tente novamente em instantes.");
 		p.setProperty("retryAfterSeconds", seconds);
 		return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).header(HttpHeaders.RETRY_AFTER, String.valueOf(seconds)).body(p);
 	}
@@ -33,7 +33,7 @@ class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 	@Override
 	protected ResponseEntity<Object> handleMethodArgumentNotValid(MethodArgumentNotValidException ex, HttpHeaders headers,
 			HttpStatusCode status, WebRequest request) {
-		var p = Problems.of(HttpStatus.BAD_REQUEST, "invalid_request", "Some fields are invalid.");
+		var p = Problems.of(HttpStatus.BAD_REQUEST, "invalid_request", "Alguns campos são inválidos.");
 		p.setProperty("errors", ex.getBindingResult()
 			.getFieldErrors()
 			.stream()

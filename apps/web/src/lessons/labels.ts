@@ -10,13 +10,13 @@ const lastOrphan = (ctx: LessonCtx) => [...ctx.events].reverse().find((e) => e.r
 export const labels: Lesson = {
   id: 'labels',
   number: 4,
-  track: 'Networking',
-  title: 'Labels & selectors',
-  tagline: 'Nothing in Kubernetes is wired by name. Labels are the glue.',
+  track: 'Rede',
+  title: 'Labels e selectors',
+  tagline: 'Nada no Kubernetes é ligado pelo nome. As labels são a cola.',
   idea: {
-    a: { label: 'Labels', text: 'tags on every Pod' },
-    b: { label: 'Selectors', text: 'queries over tags' },
-    body: 'Services and ReplicaSets both find their Pods with a selector. Change a label and you change who belongs to what — instantly.',
+    a: { label: 'Labels', text: 'etiquetas em cada Pod' },
+    b: { label: 'Selectors', text: 'consultas sobre as etiquetas' },
+    body: 'Services e ReplicaSets encontram seus Pods com um selector. Mude uma label e você muda quem pertence a quem — na hora.',
   },
   files: ['backend.yaml', 'service.yaml'],
   setup: {
@@ -27,16 +27,16 @@ export const labels: Lesson = {
   objectives: [
     {
       id: 'inspect',
-      title: 'See what the Service selects',
-      detail: 'Select the Service. Every Pod shows the one label that decides whether it matches app=backend.',
-      uiHint: 'or list labels in the terminal',
+      title: 'Veja o que o Service seleciona',
+      detail: 'Selecione o Service. Cada Pod mostra a label que decide se ele combina com app=backend.',
+      uiHint: 'ou liste as labels no terminal',
       suggest: () => 'kubectl get pods --show-labels',
       done: (ctx) => ctx.seen.some((u) => ctx.cluster.services[u]) || ran(ctx.history, /--show-labels/),
     },
     {
       id: 'join',
-      title: 'Make frontend match',
-      detail: "frontend wasn't created by the Deployment. Give it app=backend anyway, and see whether the Service cares.",
+      title: 'Faça o frontend combinar',
+      detail: 'O frontend não foi criado pelo Deployment. Dê a ele app=backend mesmo assim e veja se o Service se importa.',
       suggest: () => 'kubectl label pod frontend app=backend --overwrite',
       done: (ctx) => {
         const fe = frontend(ctx)
@@ -45,8 +45,8 @@ export const labels: Lesson = {
     },
     {
       id: 'quarantine',
-      title: 'Pull a Pod out for debugging',
-      detail: 'Relabel one backend Pod to app=debug. It leaves the Service and its ReplicaSet — which replaces it. The Pod itself keeps running.',
+      title: 'Isole um Pod para depurar',
+      detail: 'Troque a label de um Pod do backend para app=debug. Ele sai do Service e do ReplicaSet — que o substitui. O Pod em si continua rodando.',
       suggest: (ctx) => {
         const pod = ownedPods(ctx.cluster)[1] ?? ownedPods(ctx.cluster)[0]
         return pod ? `kubectl label pod ${pod.name} app=debug --overwrite` : null
@@ -56,8 +56,8 @@ export const labels: Lesson = {
     {
       id: 'return',
       optional: true,
-      title: 'Bonus: put it back',
-      detail: 'Give it app=backend again. The ReplicaSet adopts it — and now has one Pod too many.',
+      title: 'Bônus: devolva o Pod',
+      detail: 'Dê app=backend a ele de novo. O ReplicaSet o adota — e passa a ter um Pod a mais.',
       suggest: (ctx) => {
         const o = lastOrphan(ctx)
         return o && ctx.cluster.pods[o.involved.uid] ? `kubectl label pod ${o.involved.name} app=backend --overwrite` : null
@@ -66,10 +66,10 @@ export const labels: Lesson = {
     },
   ],
   completion: {
-    title: 'Labels are the glue.',
+    title: 'As labels são a cola.',
     summary: (ctx) => {
       const o = lastOrphan(ctx)
-      return `A Pod nobody owned joined the Service because of one label${o ? `, and ${short(o.involved.name)} left both its Service and its ReplicaSet because of another` : ''}. No names, no wiring — just selectors.`
+      return `Um Pod sem dono entrou no Service por causa de uma label${o ? `, e ${short(o.involved.name)} saiu do Service e do ReplicaSet por causa de outra` : ''}. Sem nomes, sem fios — só selectors.`
     },
     story: (events) => {
       const i = firstIndex(events, (e) => e.reason === 'Labeled')
@@ -77,15 +77,15 @@ export const labels: Lesson = {
       const end = orphaned < 0 ? -1 : firstIndex(events, (e) => e.reason === 'Reconciled', orphaned)
       if (end < 0) return null
       return storyFrom(events, i, end, [
-        { reason: 'Labeled', text: (e) => `You relabeled ${podShort(e)}` },
-        { reason: 'EndpointAdded', text: (e) => `${podShort(e)} matched the Service and joined its endpoints` },
-        { reason: 'Orphaned', text: (e) => `${podShort(e)} stopped matching — its ReplicaSet let go` },
-        { reason: 'EndpointRemoved', text: (e) => `${podShort(e)} left the Service`, pick: 'last' },
-        { reason: 'SuccessfulCreate', text: (e) => `The ReplicaSet created ${podShort(e)} to make up the count`, pick: 'last' },
-        { reason: 'Reconciled', text: () => 'Desired state reconciled', pick: 'last' },
+        { reason: 'Labeled', text: (e) => `Você trocou a label de ${podShort(e)}` },
+        { reason: 'EndpointAdded', text: (e) => `${podShort(e)} combinou com o Service e entrou nos endpoints` },
+        { reason: 'Orphaned', text: (e) => `${podShort(e)} deixou de combinar — o ReplicaSet o soltou` },
+        { reason: 'EndpointRemoved', text: (e) => `${podShort(e)} saiu do Service`, pick: 'last' },
+        { reason: 'SuccessfulCreate', text: (e) => `O ReplicaSet criou ${podShort(e)} para completar a conta`, pick: 'last' },
+        { reason: 'Reconciled', text: () => 'Desired state reconciliado', pick: 'last' },
       ])
     },
-    takeaway: 'Selectors, not names or owners, decide what belongs together.',
-    note: 'Relabeling a misbehaving Pod out of its Service is a real debugging technique: it stops getting traffic, gets replaced, and stays alive for you to inspect.',
+    takeaway: 'São os selectors — não nomes nem donos — que decidem o que pertence a quê.',
+    note: 'Tirar um Pod problemático do Service trocando a label é uma técnica real de depuração: ele para de receber tráfego, é substituído e continua vivo para você investigar.',
   },
 }

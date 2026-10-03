@@ -92,9 +92,9 @@ const welcome = (lesson: Lesson): TermEntry[] => [
   {
     id: ++termSeq,
     lines: [
-      [{ t: 'Connected to ', c: 'muted' }, { t: 'kubelearn-sandbox', c: 'accent' }, { t: ' · 3 nodes · namespace default', c: 'muted' }],
-      [{ t: 'Files here: ', c: 'muted' }, ...lesson.files.map((f) => ({ t: `${f}  `, c: 'accent' as const }))],
-      [{ t: 'Type ', c: 'muted' }, { t: 'help', c: 'strong' }, { t: ' for commands. Tab completes names.', c: 'muted' }],
+      [{ t: 'Conectado a ', c: 'muted' }, { t: 'kubelearn-sandbox', c: 'accent' }, { t: ' · 3 nodes · namespace default', c: 'muted' }],
+      [{ t: 'Arquivos aqui: ', c: 'muted' }, ...lesson.files.map((f) => ({ t: `${f}  `, c: 'accent' as const }))],
+      [{ t: 'Digite ', c: 'muted' }, { t: 'help', c: 'strong' }, { t: ' para ver os comandos. Tab completa nomes.', c: 'muted' }],
     ],
   },
 ]

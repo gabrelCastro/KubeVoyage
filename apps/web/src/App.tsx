@@ -13,6 +13,7 @@ import { useAuth } from './auth/auth'
 import { SignInDialog } from './components/account/SignInDialog'
 import { VerifyDialog } from './components/account/VerifyDialog'
 import { Toaster } from './components/ui/Toaster'
+import { ApostilaPanel } from './components/apostila/ApostilaPanel'
 import { LessonTracker } from './lessons/useLesson'
 import { useSim } from './store/useSim'
 
@@ -83,6 +84,7 @@ export default function App() {
       <LessonTracker />
       <SignInDialog />
       <VerifyDialog />
+      <ApostilaPanel />
       <Toaster />
     </MotionConfig>
   )

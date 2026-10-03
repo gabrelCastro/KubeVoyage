@@ -28,7 +28,7 @@ export function Toaster() {
                 <div className="text-[13px] font-medium text-fg">{t.title}</div>
                 {t.body && <div className="mt-0.5 text-[12px] leading-relaxed text-fg-muted">{t.body}</div>}
               </div>
-              <button onClick={() => dismiss(t.id)} className="rounded p-0.5 text-fg-faint transition hover:text-fg" aria-label="Dismiss">
+              <button onClick={() => dismiss(t.id)} className="rounded p-0.5 text-fg-faint transition hover:text-fg" aria-label="Dispensar">
                 <X size={13} />
               </button>
             </motion.div>

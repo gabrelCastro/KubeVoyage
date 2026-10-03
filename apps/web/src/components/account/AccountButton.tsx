@@ -20,12 +20,12 @@ export function AccountButton() {
 
   if (status === 'anonymous' || !user) {
     return (
-      <Tooltip label="Progress is saved on this device only">
+      <Tooltip label="O progresso está salvo apenas neste dispositivo">
         <button
           onClick={openSignIn}
           className="flex h-8 items-center gap-1.5 rounded-lg border border-line-strong px-2.5 text-[12.5px] text-fg-muted transition hover:border-fg-faint hover:text-fg"
         >
-          <CloudOff size={14} /> Sign in
+          <CloudOff size={14} /> Entrar
         </button>
       </Tooltip>
     )
@@ -34,7 +34,7 @@ export function AccountButton() {
   return (
     <div className="relative">
       <Tooltip label={syncLabel(sync)}>
-        <button onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open} className="relative grid size-8 place-items-center rounded-full transition hover:ring-2 hover:ring-line-strong" aria-label={`Account: ${user.email}`}>
+        <button onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open} className="relative grid size-8 place-items-center rounded-full transition hover:ring-2 hover:ring-line-strong" aria-label={`Conta: ${user.email}`}>
           <Avatar user={user} size={28} />
           <SyncDot state={sync} />
         </button>
@@ -70,24 +70,24 @@ function SyncDot({ state }: { state: SyncState }) {
 function syncLabel(s: SyncState) {
   switch (s.status) {
     case 'syncing':
-      return 'Syncing…'
+      return 'Sincronizando…'
     case 'synced':
-      return `All progress synced${s.lastSyncedAt ? ` · ${ago(s.lastSyncedAt)}` : ''}`
+      return `Todo o progresso foi sincronizado${s.lastSyncedAt ? ` · ${ago(s.lastSyncedAt)}` : ''}`
     case 'offline':
-      return 'Offline — will sync when you’re back'
+      return 'Offline — será sincronizado quando você voltar'
     case 'error':
-      return 'Couldn’t sync — retrying'
+      return 'Não foi possível sincronizar — tentando novamente'
     default:
-      return 'Not syncing'
+      return 'Sem sincronização'
   }
 }
 
 function ago(t: number) {
   const s = Math.round((Date.now() - t) / 1000)
-  if (s < 10) return 'just now'
-  if (s < 60) return `${s}s ago`
+  if (s < 10) return 'agora mesmo'
+  if (s < 60) return `há ${s}s`
   const m = Math.round(s / 60)
-  return m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`
+  return m < 60 ? `há ${m} min` : `há ${Math.round(m / 60)} h`
 }
 
 function AccountMenu({ user, sync, onClose }: { user: User; sync: SyncState; onClose: () => void }) {
@@ -123,7 +123,7 @@ function AccountMenu({ user, sync, onClose }: { user: User; sync: SyncState; onC
       <motion.div
         ref={ref}
         role="menu"
-        aria-label="Account"
+        aria-label="Conta"
         initial={{ opacity: 0, y: -6, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: -4, scale: 0.98, transition: { duration: 0.1 } }}
@@ -144,7 +144,7 @@ function AccountMenu({ user, sync, onClose }: { user: User; sync: SyncState; onC
             <span>{syncLabel(sync)}</span>
             {(sync.status === 'error' || sync.status === 'offline') && (
               <button onClick={() => void progressSync.syncNow()} className="ml-auto text-[11.5px] text-accent hover:underline">
-                Retry
+                Tentar novamente
               </button>
             )}
           </div>
@@ -154,18 +154,18 @@ function AccountMenu({ user, sync, onClose }: { user: User; sync: SyncState; onC
             ))}
           </div>
           <div className="mt-1.5 text-[11.5px] text-fg-muted">
-            {done} of {LESSON_IDS.length} lessons complete
+            {done} de {LESSON_IDS.length} lições concluídas
           </div>
         </div>
         <div className="mt-2 border-t border-line p-1.5">
           <MenuItem icon={LogOut} onClick={() => (onClose(), void signOut())}>
-            Sign out
+            Sair
           </MenuItem>
           <MenuItem icon={RotateCcw} onClick={() => setConfirm('reset')}>
-            Reset progress…
+            Reiniciar progresso…
           </MenuItem>
           <MenuItem icon={Trash2} danger onClick={() => setConfirm('delete')}>
-            Delete account…
+            Apagar conta…
           </MenuItem>
         </div>
       </motion.div>
@@ -194,13 +194,13 @@ function ConfirmReset({ open, onClose, onDone }: { open: boolean; onClose: () =>
   const resetProgress = useAuth((s) => s.resetProgress)
   const [busy, setBusy] = useState(false)
   return (
-    <Modal open={open} onClose={onClose} label="Reset progress">
+    <Modal open={open} onClose={onClose} label="Reiniciar progresso">
       <div className="px-6 pt-7 pb-6">
-        <h2 className="text-[17px] font-semibold tracking-tight">Reset all progress?</h2>
-        <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">Every lesson goes back to the start, on every device. Your account stays.</p>
+        <h2 className="text-[17px] font-semibold tracking-tight">Reiniciar todo o progresso?</h2>
+        <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">Todas as lições voltam ao início em todos os dispositivos. Sua conta continua ativa.</p>
         <div className="mt-6 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg px-3 py-2 text-[13px] text-fg-muted transition hover:text-fg">
-            Cancel
+            Cancelar
           </button>
           <button
             disabled={busy}
@@ -216,7 +216,7 @@ function ConfirmReset({ open, onClose, onDone }: { open: boolean; onClose: () =>
             }}
             className="rounded-lg border border-terminating/40 bg-terminating/10 px-3.5 py-2 text-[13px] font-medium text-terminating transition hover:bg-terminating/20 disabled:opacity-60"
           >
-            Reset progress
+            Reiniciar progresso
           </button>
         </div>
       </div>
@@ -229,16 +229,16 @@ function ConfirmDelete({ open, email, onClose, onDone }: { open: boolean; email:
   const [typed, setTyped] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const ok = typed.trim().toLowerCase() === 'delete'
+  const ok = typed.trim().toLowerCase() === 'apagar'
   return (
-    <Modal open={open} onClose={onClose} label="Delete account">
+    <Modal open={open} onClose={onClose} label="Apagar conta">
       <div className="px-6 pt-7 pb-6">
-        <h2 className="text-[17px] font-semibold tracking-tight">Delete your account?</h2>
+        <h2 className="text-[17px] font-semibold tracking-tight">Apagar sua conta?</h2>
         <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">
-          This permanently deletes <span className="text-fg">{email}</span> and all of its progress, and signs you out on every device. It can’t be undone.
+          Isso apaga permanentemente <span className="text-fg">{email}</span> e todo o progresso, além de encerrar sua sessão em todos os dispositivos. Não é possível desfazer.
         </p>
         <label htmlFor="confirm-delete" className="mt-4 block text-[12px] text-fg-muted">
-          Type <span className="font-mono text-fg">delete</span> to confirm
+          Digite <span className="font-mono text-fg">apagar</span> para confirmar
         </label>
         <input
           id="confirm-delete"
@@ -250,7 +250,7 @@ function ConfirmDelete({ open, email, onClose, onDone }: { open: boolean; email:
         {error && <p className="mt-2 text-[12px] text-terminating">{error}</p>}
         <div className="mt-6 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg px-3 py-2 text-[13px] text-fg-muted transition hover:text-fg">
-            Cancel
+            Cancelar
           </button>
           <button
             disabled={!ok || busy}
@@ -262,14 +262,14 @@ function ConfirmDelete({ open, email, onClose, onDone }: { open: boolean; email:
                 onClose()
                 onDone()
               } catch {
-                setError('Couldn’t delete the account. Please try again.')
+                setError('Não foi possível apagar a conta. Tente novamente.')
               } finally {
                 setBusy(false)
               }
             }}
             className="rounded-lg bg-terminating px-3.5 py-2 text-[13px] font-semibold text-[#1a0b0d] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Delete account
+            Apagar conta
           </button>
         </div>
       </div>

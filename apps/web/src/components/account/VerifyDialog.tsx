@@ -13,7 +13,7 @@ export function VerifyDialog() {
   const token = useAuth((s) => s.pendingToken)
   const dismiss = useAuth((s) => s.dismissLink)
   return (
-    <Modal open={!!token} onClose={dismiss} label="Finish signing in">
+    <Modal open={!!token} onClose={dismiss} label="Concluir acesso">
       <VerifyBody />
     </Modal>
   )
@@ -29,7 +29,7 @@ function VerifyBody() {
       await confirmLink()
     } catch (e) {
       const code = (e as { code?: string }).code
-      setState({ kind: 'failed', message: code === 'invalid_link' ? 'This link has expired or was already used.' : explain(e), expired: code === 'invalid_link' })
+      setState({ kind: 'failed', message: code === 'invalid_link' ? 'Este link expirou ou já foi usado.' : explain(e), expired: code === 'invalid_link' })
     }
   }
 
@@ -39,11 +39,11 @@ function VerifyBody() {
         <div className="grid size-11 place-items-center rounded-xl border border-crash/30 bg-crash/10 text-crash">
           <CircleAlert size={20} />
         </div>
-        <h2 className="mt-4 text-[19px] font-semibold tracking-tight">Couldn’t sign you in</h2>
+        <h2 className="mt-4 text-[19px] font-semibold tracking-tight">Não foi possível entrar</h2>
         <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">{state.message}</p>
         <div className="mt-6 flex justify-end gap-2">
           <button onClick={dismissLink} className="rounded-lg px-3 py-2 text-[13px] text-fg-muted transition hover:text-fg">
-            Not now
+            Agora não
           </button>
           {state.expired ? (
             <button
@@ -53,11 +53,11 @@ function VerifyBody() {
               }}
               className="rounded-lg bg-accent px-3.5 py-2 text-[13px] font-semibold text-[#0b1020] transition hover:brightness-110"
             >
-              Send a new link
+              Enviar um novo link
             </button>
           ) : (
             <button onClick={go} className="rounded-lg bg-accent px-3.5 py-2 text-[13px] font-semibold text-[#0b1020] transition hover:brightness-110">
-              Try again
+              Tentar novamente
             </button>
           )}
         </div>
@@ -70,8 +70,8 @@ function VerifyBody() {
       <motion.div initial={{ scale: 0.6 }} animate={{ scale: 1 }} transition={{ type: 'spring', stiffness: 380, damping: 16 }} className="grid size-11 place-items-center rounded-xl border border-accent/30 bg-accent/10 text-accent">
         <LogIn size={20} />
       </motion.div>
-      <h2 className="mt-4 text-[19px] font-semibold tracking-tight">Finish signing in</h2>
-      <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">Continue to sign in on this device. Anything you’ve done here while signed out comes with you.</p>
+      <h2 className="mt-4 text-[19px] font-semibold tracking-tight">Concluir acesso</h2>
+      <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">Continue para entrar neste dispositivo. Tudo o que você fez enquanto estava fora da conta será mantido.</p>
       <button
         autoFocus
         onClick={go}
@@ -79,7 +79,7 @@ function VerifyBody() {
         className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-3 py-2.5 text-[13px] font-semibold text-[#0b1020] transition hover:brightness-110 active:scale-[0.99] disabled:opacity-70"
       >
         {state.kind === 'working' && <Loader2 size={15} className="anim-spin" />}
-        {state.kind === 'working' ? 'Signing in…' : 'Continue'}
+        {state.kind === 'working' ? 'Entrando…' : 'Continuar'}
       </button>
     </div>
   )

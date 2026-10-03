@@ -1,11 +1,13 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { ArrowRight, Check, RotateCcw } from 'lucide-react'
+import { ArrowRight, BookOpen, Check, RotateCcw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { nextLesson } from '../lessons'
 import { useLesson, useRun } from '../lessons/useLesson'
 import { useAuth } from '../auth/auth'
 import { formatDuration } from './LessonPanel'
 import { useSim } from '../store/useSim'
+import { hasApostila } from '../lessons/apostilas'
+import { useApostila } from '../lessons/apostilas/store'
 
 /** Shown once per run, a beat after the lesson completes — so the learner sees the cluster settle first. */
 export function Completion() {
@@ -13,6 +15,7 @@ export function Completion() {
   const epoch = useSim((s) => s.epoch)
   const openLesson = useSim((s) => s.openLesson)
   const restart = useSim((s) => s.restart)
+  const openApostila = useApostila((s) => s.openApostila)
   const [open, setOpen] = useState(false)
   const [shownFor, setShownFor] = useState(-1)
 
@@ -36,6 +39,7 @@ export function Completion() {
 
   const story = open ? lesson.completion.story?.(ctx.events) : null
   const next = nextLesson(lesson.id)
+  const apostilaId = hasApostila(lesson.id) ? lesson.id : null
 
   return (
     <AnimatePresence>
@@ -70,7 +74,7 @@ export function Completion() {
                   >
                     <Check size={12} strokeWidth={3.5} />
                   </motion.span>
-                  Lesson {lesson.number} complete
+                  Lição {lesson.number} concluída
                 </div>
                 <h2 id="completion-title" className="mt-3 text-[22px] font-semibold tracking-tight">
                   {lesson.completion.title}
@@ -107,6 +111,18 @@ export function Completion() {
                 {lesson.completion.note && <p className="mt-1 text-[11.5px] leading-relaxed text-fg-faint">{lesson.completion.note}</p>}
               </div>
 
+              {apostilaId && (
+                <button
+                  onClick={() => {
+                    setOpen(false)
+                    openApostila(apostilaId)
+                  }}
+                  className="mx-6 mt-3 flex items-center gap-1.5 text-[12px] font-medium text-accent transition hover:underline"
+                >
+                  <BookOpen size={13} /> Aprofundar na apostila
+                </button>
+              )}
+
               <SaveNudge onSignIn={() => setOpen(false)} />
 
 
@@ -116,14 +132,14 @@ export function Completion() {
                     onClick={() => setOpen(false)}
                     className="rounded-lg border border-line-strong px-3 py-1.5 text-[12.5px] text-fg-muted transition hover:text-fg"
                   >
-                    Keep exploring
+                    Continuar explorando
                   </button>
                   <button
                     onClick={restart}
                     className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] text-fg-faint transition hover:text-fg"
-                    title="Restart this lesson"
+                    title="Refazer esta lição"
                   >
-                    <RotateCcw size={13} /> Again
+                    <RotateCcw size={13} /> De novo
                   </button>
                 </div>
                 {next ? (
@@ -132,10 +148,10 @@ export function Completion() {
                     autoFocus
                     className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12.5px] font-semibold text-[#0b1020] transition hover:brightness-110 active:scale-[0.98]"
                   >
-                    Next: {next.title} <ArrowRight size={13} />
+                    Próxima: {next.title} <ArrowRight size={13} />
                   </button>
                 ) : (
-                  <span className="text-[12px] text-fg-faint">That's every lesson — for now.</span>
+                  <span className="text-[12px] text-fg-faint">Essas são todas as lições — por enquanto.</span>
                 )}
               </div>
             </motion.div>
@@ -155,7 +171,7 @@ function RunStats({ lessonId }: { lessonId: string }) {
   return (
     <div className="mx-6 mt-4 flex items-center gap-3 text-[12px] text-fg-muted">
       <span>
-        Finished in <span className="font-mono text-fg">{formatDuration(run.elapsedMs)}</span>
+        Concluída em <span className="font-mono text-fg">{formatDuration(run.elapsedMs)}</span>
       </span>
       {record ? (
         <motion.span
@@ -164,10 +180,10 @@ function RunStats({ lessonId }: { lessonId: string }) {
           transition={{ delay: 0.6, type: 'spring', stiffness: 400, damping: 18 }}
           className="rounded-full border border-ready/40 bg-ready/10 px-2 py-0.5 text-[11px] font-medium text-ready"
         >
-          New best · was {formatDuration(best)}
+          Novo recorde · antes {formatDuration(best)}
         </motion.span>
       ) : best !== null ? (
-        <span className="text-fg-faint">best {formatDuration(best)}</span>
+        <span className="text-fg-faint">recorde {formatDuration(best)}</span>
       ) : null}
     </div>
   )
@@ -180,7 +196,7 @@ function SaveNudge({ onSignIn }: { onSignIn: () => void }) {
   if (status !== 'anonymous') return null
   return (
     <div className="mx-6 mt-3 flex items-center justify-between gap-3 rounded-xl border border-dashed border-line-strong px-4 py-2.5">
-      <p className="text-[12px] leading-relaxed text-fg-muted">This progress lives on this device only.</p>
+      <p className="text-[12px] leading-relaxed text-fg-muted">Este progresso está salvo só neste dispositivo.</p>
       <button
         onClick={() => {
           onSignIn()
@@ -188,7 +204,7 @@ function SaveNudge({ onSignIn }: { onSignIn: () => void }) {
         }}
         className="shrink-0 text-[12px] font-medium text-accent transition hover:underline"
       >
-        Keep it — sign in
+        Guardar — entrar
       </button>
     </div>
   )

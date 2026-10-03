@@ -32,7 +32,7 @@ class BodySizeLimitFilter extends OncePerRequestFilter {
 			response.setStatus(HttpStatus.CONTENT_TOO_LARGE.value());
 			response.setContentType("application/problem+json");
 			response.getWriter()
-				.write("{\"type\":\"https://kubelearn.dev/problems/too_large\",\"title\":\"Content Too Large\",\"status\":413,\"code\":\"too_large\",\"detail\":\"Request body is too large.\"}");
+				.write("{\"type\":\"https://kubelearn.dev/problems/too_large\",\"title\":\"Conteúdo grande demais\",\"status\":413,\"code\":\"too_large\",\"detail\":\"O corpo da requisição é grande demais.\"}");
 			return;
 		}
 		chain.doFilter(request, response);

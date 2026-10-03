@@ -20,12 +20,12 @@ export const podVisual = (p: Pod): PodVisual =>
             : 'running'
 
 export const VISUAL: Record<PodVisual, { label: string; color: string; step: number; hint: string }> = {
-  pending: { label: 'Pending', color: 'var(--color-pending)', step: 0, hint: 'Accepted by the API server, waiting for the scheduler to pick a node.' },
-  creating: { label: 'ContainerCreating', color: 'var(--color-creating)', step: 1, hint: 'Bound to a node. The kubelet is pulling the image and creating the container.' },
-  running: { label: 'Running', color: 'var(--color-running)', step: 2, hint: 'The container started, but the readiness probe has not passed yet.' },
-  ready: { label: 'Ready', color: 'var(--color-ready)', step: 3, hint: 'Running and passing its readiness probe. It counts as available and receives traffic.' },
-  crash: { label: 'CrashLoopBackOff', color: 'var(--color-crash)', step: 2, hint: 'The container keeps exiting. The kubelet restarts it with growing delays. It never becomes Ready.' },
-  terminating: { label: 'Terminating', color: 'var(--color-terminating)', step: -1, hint: 'Marked for deletion. It no longer counts toward the ReplicaSet or receives traffic.' },
+  pending: { label: 'Pending', color: 'var(--color-pending)', step: 0, hint: 'Aceito pelo API server, esperando o scheduler escolher um node.' },
+  creating: { label: 'ContainerCreating', color: 'var(--color-creating)', step: 1, hint: 'Já tem node. O kubelet está baixando a imagem e criando o container.' },
+  running: { label: 'Running', color: 'var(--color-running)', step: 2, hint: 'O container iniciou, mas a readiness probe ainda não passou.' },
+  ready: { label: 'Ready', color: 'var(--color-ready)', step: 3, hint: 'Rodando e passando na readiness probe. Conta como disponível e recebe tráfego.' },
+  crash: { label: 'CrashLoopBackOff', color: 'var(--color-crash)', step: 2, hint: 'O container fica encerrando. O kubelet o reinicia com esperas cada vez maiores. Ele nunca fica Ready.' },
+  terminating: { label: 'Terminating', color: 'var(--color-terminating)', step: -1, hint: 'Marcado para remoção. Não conta mais para o ReplicaSet nem recebe tráfego.' },
 }
 
 /** Text shown for a Pod's state: the real phase name for crashes (Error vs CrashLoopBackOff). */
@@ -126,7 +126,7 @@ export function computeLayout(c: ClusterState): Layout {
   if (loners.length) {
     const count = Math.max(...loners.map((p) => p.slot + 1))
     const w = count * SLOT_W
-    regions.push({ key: NO_OWNER, label: 'No owner', x: cursor - 8, y: ROW.Pod - SIZE.Pod.h / 2 - 30, w: w + 16, h: SIZE.Pod.h + 42 })
+    regions.push({ key: NO_OWNER, label: 'Sem dono', x: cursor - 8, y: ROW.Pod - SIZE.Pod.h / 2 - 30, w: w + 16, h: SIZE.Pod.h + 42 })
     for (const p of loners) boxes[p.uid] = { uid: p.uid, kind: 'Pod', x: cursor + p.slot * SLOT_W + SLOT_W / 2, y: ROW.Pod, ...SIZE.Pod }
     cursor += w + DEPLOY_GAP
   }

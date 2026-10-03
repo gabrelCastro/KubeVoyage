@@ -119,7 +119,7 @@ function Ring({ box, tone, badge, reduced }: { box: Layout['boxes'][string]; ton
           animate={{ opacity: [0, 1, 1, 0], y: [6, -8, -10, -16], scale: 1 }}
           transition={{ duration: 1.8, times: [0, 0.15, 0.8, 1], ease: 'easeOut' }}
         >
-          <Check size={11} strokeWidth={3} /> Reconciled
+          <Check size={11} strokeWidth={3} /> Reconciliado
         </motion.span>
       )}
     </div>

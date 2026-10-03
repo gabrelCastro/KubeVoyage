@@ -17,7 +17,7 @@ class MagicLinkEmailTest {
 	@Test
 	void plainTextVersionHasTheLinkAndTheExpiry() {
 		var text = SmtpMagicLinkMailer.text("http://x/auth/verify#token=t", Duration.ofMinutes(10));
-		assertThat(text).contains("http://x/auth/verify#token=t").contains("10 minutes");
+		assertThat(text).contains("http://x/auth/verify#token=t").contains("10 minutos");
 	}
 
 }

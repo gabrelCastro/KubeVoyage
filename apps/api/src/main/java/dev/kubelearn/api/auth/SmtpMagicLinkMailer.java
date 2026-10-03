@@ -46,7 +46,7 @@ class SmtpMagicLinkMailer implements MagicLinkMailer {
 			var helper = new MimeMessageHelper(message, true, "UTF-8");
 			helper.setFrom(props.mailFrom());
 			helper.setTo(email);
-			helper.setSubject("Your KubeLearn sign-in link");
+			helper.setSubject("Seu link de acesso ao KubeLearn");
 			helper.setText(text(link, validFor), html(email, link, validFor));
 			mail.send(message);
 		}
@@ -61,12 +61,12 @@ class SmtpMagicLinkMailer implements MagicLinkMailer {
 
 	static String text(String link, Duration validFor) {
 		return """
-				Sign in to KubeLearn
+				Entre no KubeLearn
 
-				Open this link to sign in. It works once and expires in %d minutes:
+				Abra este link para entrar. Ele funciona uma vez e expira em %d minutos:
 				%s
 
-				If you didn't ask for this, ignore this email — nothing happens.
+				Se você não solicitou este link, ignore este e-mail — nada acontecerá.
 				""".formatted(validFor.toMinutes(), link);
 	}
 
@@ -75,15 +75,15 @@ class SmtpMagicLinkMailer implements MagicLinkMailer {
 		var href = HtmlUtils.htmlEscape(link);
 		return """
 				<!doctype html>
-				<html><body style="margin:0;background:#0b0d11;font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;color:#e6e9ef">
+				<html lang="pt-BR"><body style="margin:0;background:#0b0d11;font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;color:#e6e9ef">
 				<table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="padding:40px 16px"><tr><td align="center">
 				<table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="max-width:440px;background:#11151b;border:1px solid #232a35;border-radius:14px">
 				<tr><td style="padding:32px 32px 8px">
 				<div style="font-size:13px;font-weight:600;color:#8aaeff">&#11041; KubeLearn</div>
-				<h1 style="margin:18px 0 8px;font-size:21px;font-weight:600;color:#e6e9ef">Sign in to KubeLearn</h1>
-				<p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#9aa3b2">Click the button to sign in as <strong style="color:#e6e9ef">%s</strong>. Your progress follows you to every device.</p>
-				<a href="%s" style="display:inline-block;background:#8aaeff;color:#0b1020;font-size:14px;font-weight:600;text-decoration:none;padding:11px 20px;border-radius:9px">Sign in</a>
-				<p style="margin:24px 0 0;font-size:12px;line-height:1.6;color:#6b7383">The link works once and expires in %d minutes. If you didn't ask for it, ignore this email — nothing happens.</p>
+				<h1 style="margin:18px 0 8px;font-size:21px;font-weight:600;color:#e6e9ef">Entre no KubeLearn</h1>
+				<p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#9aa3b2">Clique no botão para entrar como <strong style="color:#e6e9ef">%s</strong>. Seu progresso acompanha você em todos os dispositivos.</p>
+				<a href="%s" style="display:inline-block;background:#8aaeff;color:#0b1020;font-size:14px;font-weight:600;text-decoration:none;padding:11px 20px;border-radius:9px">Entrar</a>
+				<p style="margin:24px 0 0;font-size:12px;line-height:1.6;color:#6b7383">O link funciona uma vez e expira em %d minutos. Se você não o solicitou, ignore este e-mail — nada acontecerá.</p>
 				</td></tr>
 				<tr><td style="padding:20px 32px 28px"><p style="margin:0;font-size:11px;line-height:1.5;color:#4f5766;word-break:break-all">%s</p></td></tr>
 				</table></td></tr></table>

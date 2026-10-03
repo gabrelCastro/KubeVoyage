@@ -19,8 +19,8 @@ const TONE: Record<EventTone, string> = {
 }
 
 const SOURCE: Record<ClusterEvent['source'], string> = {
-  you: 'you',
-  cluster: 'before you arrived',
+  you: 'você',
+  cluster: 'antes de você chegar',
   'endpoints-controller': 'endpoints controller',
   'deployment-controller': 'deployment controller',
   'replicaset-controller': 'replicaset controller',
@@ -28,61 +28,71 @@ const SOURCE: Record<ClusterEvent['source'], string> = {
   kubelet: 'kubelet',
 }
 
+const plural = (n: string | number, one: string, many: string) => (Number(n) === 1 ? one : many)
+
+/** Event messages stay in Kubernetes' own words (they're what kubectl shows); the timeline tells the story in Portuguese. */
 function phrase(e: ClusterEvent): { lead: string; obj?: string; tail?: string } {
   const n = e.involved.kind === 'Pod' ? short(e.involved.name) : e.involved.name
   switch (e.reason) {
     case 'Existing':
-      return { lead: e.message.split(' ')[0], tail: e.message.split(' ').slice(1).join(' ') }
+      return { lead: e.involved.kind === 'Service' ? 'Service' : e.involved.kind, obj: n, tail: e.involved.kind === 'Service' ? 'já existia' : 'já estava rodando' }
     case 'Created':
-      return { lead: 'You created', obj: `service/${e.involved.name}` }
+      return { lead: 'Você criou', obj: `service/${e.involved.name}` }
     case 'Labeled':
-      return { lead: 'You relabeled', obj: n, tail: e.message.split(`${e.involved.name} `)[1] }
+      return { lead: 'Você trocou a label de', obj: n, tail: e.message.split(`${e.involved.name} `)[1] }
     case 'SelectorChanged':
-      return { lead: 'You changed the selector', tail: `→ ${e.message.split('→ ')[1]}` }
+      return { lead: 'Você mudou o selector', tail: `→ ${e.message.split('→ ')[1]}` }
     case 'ImageChanged':
-      return { lead: 'You requested', obj: e.message.split('→ ')[1] }
+      return { lead: 'Você pediu', obj: e.message.split('→ ')[1] }
     case 'RolledBack':
-      return { lead: 'You rolled back to', obj: e.message.split('back to ')[1] }
+      return { lead: 'Você fez rollback para', obj: e.message.split('back to ')[1] }
     case 'NewReplicaSet':
-      return { lead: 'New ReplicaSet for', obj: e.message.split(' for ')[1] }
+      return { lead: 'ReplicaSet novo para', obj: e.message.split(' for ')[1] }
     case 'RolloutComplete':
-      return { lead: 'Rollout complete', tail: `revision ${e.message.match(/revision (\d+)/)?.[1] ?? ''}` }
+      return { lead: 'Rollout concluído', tail: `revisão ${e.message.match(/revision (\d+)/)?.[1] ?? ''}` }
     case 'Orphaned':
-      return { lead: 'Pod', obj: n, tail: 'released by its ReplicaSet' }
+      return { lead: 'Pod', obj: n, tail: 'liberado pelo ReplicaSet' }
     case 'Adopted':
-      return { lead: 'Pod', obj: n, tail: 'adopted by the ReplicaSet' }
+      return { lead: 'Pod', obj: n, tail: 'adotado pelo ReplicaSet' }
     case 'EndpointAdded':
-      return { lead: 'Pod', obj: n, tail: 'now receives traffic' }
+      return { lead: 'Pod', obj: n, tail: 'agora recebe tráfego' }
     case 'EndpointRemoved':
-      return { lead: 'Pod', obj: n, tail: 'stopped receiving traffic' }
+      return { lead: 'Pod', obj: n, tail: 'parou de receber tráfego' }
     case 'BackOff':
-      return { lead: 'Pod', obj: n, tail: 'crashed — backing off' }
+      return { lead: 'Pod', obj: n, tail: 'quebrou — aguardando para reiniciar' }
     case 'Applied':
-      return { lead: 'You applied', obj: 'backend.yaml' }
+      return { lead: 'Você aplicou', obj: 'backend.yaml' }
     case 'Scaled':
-      return { lead: 'You changed replicas', tail: e.message.split('replicas ')[1] }
+      return { lead: 'Você mudou as réplicas', tail: e.message.split('replicas ')[1] }
     case 'Deleted':
-      return { lead: 'You deleted', obj: e.involved.kind === 'Service' ? `service/${n}` : n }
-    case 'ScalingReplicaSet':
-      return { lead: 'ReplicaSet set to', obj: `${e.message.split(' to ').pop()} replicas` }
-    case 'Reconciling':
-      return { lead: 'Desired ≠ Actual', tail: e.message.split('— ')[1] }
+      return { lead: 'Você apagou', obj: e.involved.kind === 'Service' ? `service/${n}` : n }
+    case 'ScalingReplicaSet': {
+      const count = e.message.split(' to ').pop() ?? ''
+      return { lead: 'ReplicaSet ajustado para', obj: `${count} ${plural(count, 'réplica', 'réplicas')}` }
+    }
+    case 'Reconciling': {
+      const m = e.message.match(/(creating|terminating) (\d+)/)
+      const tail = m ? `${m[1] === 'creating' ? 'criando' : 'encerrando'} ${m[2]} ${plural(m[2], 'Pod', 'Pods')}` : undefined
+      return { lead: 'Desired ≠ Actual', tail }
+    }
     case 'SuccessfulCreate':
-      return { lead: 'Pod', obj: n, tail: 'created' }
+      return { lead: 'Pod', obj: n, tail: 'criado' }
     case 'Scheduled':
       return { lead: 'Pod', obj: n, tail: `→ ${e.message.split(' ').pop()}` }
     case 'Pulled':
-      return { lead: 'Image ready for', obj: n }
+      return { lead: 'Imagem pronta para', obj: n }
     case 'Started':
-      return { lead: e.message.includes('restart') ? 'Container restarted in' : 'Container started in', obj: n }
+      return { lead: e.message.includes('restart') ? 'Container reiniciado em' : 'Container iniciado em', obj: n }
     case 'Ready':
-      return { lead: 'Pod', obj: n, tail: 'is Ready' }
+      return { lead: 'Pod', obj: n, tail: 'está Ready' }
     case 'Killing':
-      return { lead: 'Pod', obj: n, tail: 'terminating' }
+      return { lead: 'Pod', obj: n, tail: 'encerrando' }
     case 'Removed':
-      return { lead: 'Pod', obj: n, tail: 'removed' }
-    case 'Reconciled':
-      return { lead: 'Reconciled', tail: e.message.split('— ')[1] }
+      return { lead: 'Pod', obj: n, tail: 'removido' }
+    case 'Reconciled': {
+      const m = e.message.match(/(\d+)\/(\d+)/)
+      return { lead: 'Reconciliado', tail: m ? `${m[1]}/${m[2]} Pods Ready` : undefined }
+    }
     default:
       return { lead: e.reason, tail: e.message }
   }
@@ -155,10 +165,10 @@ export function Timeline() {
   const exists = (uid: string) => !!(cluster.pods[uid] || cluster.replicaSets[uid] || cluster.deployments[uid] || cluster.services[uid])
 
   return (
-    <section className="relative flex min-h-0 flex-1 flex-col" aria-label="Cluster history">
+    <section className="relative flex min-h-0 flex-1 flex-col" aria-label="Histórico do cluster">
       <header className="flex h-10 shrink-0 items-center gap-2 px-4">
         <History size={14} className="text-fg-faint" />
-        <h2 className="text-[12px] font-semibold tracking-tight">Cluster history</h2>
+        <h2 className="text-[12px] font-semibold tracking-tight">Histórico do cluster</h2>
         <span className="ml-auto rounded-full bg-panel-2 px-1.5 font-mono text-[10.5px] text-fg-faint tabular-nums">{events.length}</span>
       </header>
       <div
@@ -173,8 +183,8 @@ export function Timeline() {
       >
         {events.length === 0 ? (
           <div className="mx-2 mt-2 rounded-lg border border-dashed border-line px-4 py-6 text-center">
-            <p className="text-[12px] text-fg-muted">No history yet.</p>
-            <p className="mt-1 text-[11.5px] leading-relaxed text-fg-faint">Every change to the cluster — yours and the controllers' — will show up here, in order.</p>
+            <p className="text-[12px] text-fg-muted">Nenhum histórico ainda.</p>
+            <p className="mt-1 text-[11.5px] leading-relaxed text-fg-faint">Toda mudança no cluster — as suas e as dos controllers — aparece aqui, em ordem.</p>
           </div>
         ) : (
           <ol>
@@ -195,7 +205,7 @@ export function Timeline() {
             onClick={() => ref.current?.scrollTo({ top: ref.current.scrollHeight, behavior: 'smooth' })}
             className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border border-line-strong bg-raised px-2.5 py-1 text-[11px] text-fg shadow-lg shadow-black/40"
           >
-            <ArrowDown size={12} /> {unseen} new
+            <ArrowDown size={12} /> {unseen} {unseen === 1 ? 'novo' : 'novos'}
           </motion.button>
         )}
       </AnimatePresence>

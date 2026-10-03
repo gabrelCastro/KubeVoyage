@@ -111,9 +111,9 @@ export const DeploymentNode = memo(function DeploymentNode({ dep, geo, ...e }: {
 // ── ReplicaSet ─────────────────────────────────────────────────────────────
 
 const PHASE_PILL: Record<ControllerPhase, { label: string; color: string }> = {
-  idle: { label: 'In sync', color: 'var(--color-ready)' },
-  diverged: { label: 'Diverged', color: 'var(--color-warn)' },
-  reconciling: { label: 'Reconciling', color: 'var(--color-accent)' },
+  idle: { label: 'Em sincronia', color: 'var(--color-ready)' },
+  diverged: { label: 'Divergente', color: 'var(--color-warn)' },
+  reconciling: { label: 'Reconciliando', color: 'var(--color-accent)' },
 }
 
 export function PhasePill({ phase }: { phase: ControllerPhase }) {
@@ -166,14 +166,14 @@ export const ReplicaSetNode = memo(function ReplicaSetNode({
   if (compact) {
     return (
       <Positioned {...geo}>
-        <Card emphasis={{ ...e, dim: e.dim }} tint="var(--color-rs)" onClick={() => select(rs.uid)} label={`ReplicaSet ${rs.name}, scaled to 0`} className="px-3 py-2 opacity-70">
+        <Card emphasis={{ ...e, dim: e.dim }} tint="var(--color-rs)" onClick={() => select(rs.uid)} label={`ReplicaSet ${rs.name}, escalado para 0`} className="px-3 py-2 opacity-70">
           <div className="flex items-center justify-between gap-2">
             <KindBadge kind="ReplicaSet" />
             {version}
           </div>
           <div className="mt-1 flex items-baseline justify-between font-mono text-[11px]">
             <span className="text-fg-faint">-{rs.hash}</span>
-            <span className="text-fg-faint">0 replicas</span>
+            <span className="text-fg-faint">0 réplicas</span>
           </div>
         </Card>
       </Positioned>
@@ -192,7 +192,7 @@ export const ReplicaSetNode = memo(function ReplicaSetNode({
             <span className="text-fg-faint">-{rs.hash}</span>
           </span>
           <span className="flex items-center gap-1">
-            {!current && <span className="text-[9.5px] tracking-wide text-fg-faint uppercase">old</span>}
+            {!current && <span className="text-[9.5px] tracking-wide text-fg-faint uppercase">antigo</span>}
             {version}
           </span>
         </div>
@@ -280,7 +280,7 @@ export const PodNode = memo(function PodNode({ pod, geo, probe, ...e }: { pod: P
                     initial={{ opacity: 0, scale: 0.6 }}
                     animate={{ opacity: 1, scale: 1 }}
                     className="flex items-center gap-0.5 rounded-[4px] bg-crash/10 px-1 font-mono text-[9.5px] text-crash ring-1 ring-crash/30"
-                    title={`${pod.restarts} restarts`}
+                    title={`${pod.restarts} reinícios`}
                   >
                     ↻<Rolling value={pod.restarts} />
                   </motion.span>
@@ -342,7 +342,7 @@ export const ServiceNode = memo(function ServiceNode({ svc, geo, matched, ...e }
             style={{ color: tint, borderColor: `color-mix(in oklab, ${tint} 35%, transparent)`, background: `color-mix(in oklab, ${tint} 9%, transparent)` }}
           >
             {none ? <X size={11} strokeWidth={2.6} /> : <span className="size-1.5 rounded-full bg-current" />}
-            <Rolling value={none ? 'No endpoints' : `${svc.endpoints.length} endpoint${svc.endpoints.length === 1 ? '' : 's'}`} />
+            <Rolling value={none ? 'Sem endpoints' : `${svc.endpoints.length} endpoint${svc.endpoints.length === 1 ? '' : 's'}`} />
           </motion.span>
         </div>
         <div className="mt-1 flex items-baseline justify-between gap-2">
@@ -356,7 +356,7 @@ export const ServiceNode = memo(function ServiceNode({ svc, geo, matched, ...e }
           {Object.entries(svc.selector).map(([k, v]) => (
             <LabelChip key={k} k={k} v={v} tone={none ? 'neutral' : 'match'} />
           ))}
-          {none && matched > 0 && <span className="text-[10px] text-warn">{matched} not ready</span>}
+          {none && matched > 0 && <span className="text-[10px] text-warn">{matched} sem Ready</span>}
         </div>
       </Card>
     </Positioned>
@@ -428,10 +428,10 @@ export const SlotPlaceholder = memo(function SlotPlaceholder({
         {ghost ? (
           <>
             <span className="font-mono text-[12px] text-fg-muted line-through decoration-warn/60">{short(ghost)}</span>
-            <span className="text-[10px] text-warn/90">{reconciling ? 'replacement coming…' : 'desired, not running'}</span>
+            <span className="text-[10px] text-warn/90">{reconciling ? 'substituto a caminho…' : 'desejado, não está rodando'}</span>
           </>
         ) : (
-          <span className="text-[10px] text-fg-faint">awaiting Pod</span>
+          <span className="text-[10px] text-fg-faint">aguardando Pod</span>
         )}
       </div>
     </motion.div>

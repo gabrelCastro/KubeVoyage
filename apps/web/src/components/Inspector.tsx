@@ -7,6 +7,7 @@ import { cn, kindOf, podLabel, podVisual, VISUAL } from '../lib/visual'
 import { clockTime, useSim } from '../store/useSim'
 import { KindBadge, LabelChip, StatusGlyph } from './primitives'
 import { PhasePill } from './stage/Nodes'
+import { GlossaryText } from './GlossaryText'
 
 export function Inspector() {
   const selected = useSim((s) => s.selected)
@@ -15,7 +16,7 @@ export function Inspector() {
   const [tab, setTab] = useState<'overview' | 'yaml'>('overview')
 
   return (
-    <section className="flex max-h-[58%] min-h-0 shrink-0 flex-col border-b border-line" aria-label="Inspector">
+    <section className="flex max-h-[58%] min-h-0 shrink-0 flex-col border-b border-line" aria-label="Inspetor">
       <AnimatePresence mode="wait" initial={false}>
         {!selected || !kind ? (
           <motion.div
@@ -30,8 +31,8 @@ export function Inspector() {
               <MousePointerClick size={15} />
             </span>
             <div>
-              <p className="text-[12.5px] font-medium text-fg-muted">Nothing selected</p>
-              <p className="mt-0.5 text-[11.5px] leading-relaxed text-fg-faint">Click any resource on the stage. Its ownership chain lights up; everything else steps back.</p>
+              <p className="text-[12.5px] font-medium text-fg-muted">Nada selecionado</p>
+              <p className="mt-0.5 text-[11.5px] leading-relaxed text-fg-faint"><GlossaryText>Clique em qualquer recurso no palco. A cadeia de ownership dele acende; o resto fica em segundo plano.</GlossaryText></p>
             </div>
           </motion.div>
         ) : (
@@ -72,7 +73,7 @@ function Header({ uid, cluster, tab, setTab }: { uid: string; cluster: ClusterSt
     <div className="px-4 pt-3">
       <div className="flex items-center justify-between">
         <KindBadge kind={kind} />
-        <button onClick={() => select(null)} className="rounded p-0.5 text-fg-faint transition hover:bg-raised hover:text-fg" aria-label="Close inspector">
+        <button onClick={() => select(null)} className="rounded p-0.5 text-fg-faint transition hover:bg-raised hover:text-fg" aria-label="Fechar inspetor">
           <X size={14} />
         </button>
       </div>
@@ -83,7 +84,7 @@ function Header({ uid, cluster, tab, setTab }: { uid: string; cluster: ClusterSt
       <div className="mt-2.5 flex gap-4 border-b border-line text-[11.5px]">
         {(['overview', 'yaml'] as const).map((t) => (
           <button key={t} onClick={() => setTab(t)} className={cn('relative pb-1.5 capitalize transition-colors', tab === t ? 'text-fg' : 'text-fg-faint hover:text-fg-muted')}>
-            {t === 'yaml' ? 'YAML' : t}
+            {t === 'yaml' ? 'YAML' : 'Visão geral'}
             {tab === t && <motion.span layoutId="inspector-tab" className="absolute inset-x-0 -bottom-px h-px bg-accent" />}
           </button>
         ))}
@@ -163,10 +164,10 @@ function PodView({ pod, cluster }: { pod: Pod; cluster: ClusterState }) {
   const at = (reason: string) => mine.find((e) => e.reason === reason)
 
   const steps: { label: string; e?: ClusterEvent; detail?: string }[] = [
-    { label: 'Created', e: at('SuccessfulCreate'), detail: 'by the ReplicaSet' },
-    { label: 'Scheduled', e: at('Scheduled'), detail: pod.nodeName ?? undefined },
-    { label: 'Started', e: at('Started'), detail: pod.ip ?? undefined },
-    { label: 'Ready', e: at('Ready'), detail: 'readiness probe passed' },
+    { label: 'Criado', e: at('SuccessfulCreate'), detail: 'pelo ReplicaSet' },
+    { label: 'Agendado', e: at('Scheduled'), detail: pod.nodeName ?? undefined },
+    { label: 'Iniciado', e: at('Started'), detail: pod.ip ?? undefined },
+    { label: 'Ready', e: at('Ready'), detail: 'readiness probe passou' },
   ]
   const created = steps[0].e?.at ?? pod.createdAt
 
@@ -184,7 +185,7 @@ function PodView({ pod, cluster }: { pod: Pod; cluster: ClusterState }) {
         </div>
       </div>
 
-      <Section title="Lifecycle">
+      <Section title="Ciclo de vida">
         <ol className="relative ml-1">
           {steps.map((s, i) => {
             const done = !!s.e
@@ -220,14 +221,14 @@ function PodView({ pod, cluster }: { pod: Pod; cluster: ClusterState }) {
         </ol>
       </Section>
 
-      <Section title="Details">
+      <Section title="Detalhes">
         <Props
           rows={[
             ['Node', pod.nodeName ?? '—'],
             ['Pod IP', pod.ip ?? '—'],
-            ['Created', clockTime(wallStart, pod.createdAt)],
-            ['Restarts', String(pod.restarts)],
-            ['Image', pod.image.split('/').pop()],
+            ['Criado em', clockTime(wallStart, pod.createdAt)],
+            ['Reinícios', String(pod.restarts)],
+            ['Imagem', pod.image.split('/').pop()],
           ]}
         />
       </Section>
@@ -241,8 +242,8 @@ function PodView({ pod, cluster }: { pod: Pod; cluster: ClusterState }) {
         />
         <p className="mt-1.5 text-[11px] leading-relaxed text-fg-faint">
           {rs
-            ? "Highlighted labels match the ReplicaSet's selector — that's how it counts this Pod as its own. Click a value to change it."
-            : 'This Pod has no owner. If it dies, nothing replaces it. Click a value to change it.'}
+            ? 'As labels destacadas combinam com o selector do ReplicaSet — é assim que ele reconhece este Pod como seu. Clique num valor para mudar.'
+            : 'Este Pod não tem dono. Se ele morrer, nada o substitui. Clique num valor para mudar.'}
         </p>
       </Section>
 
@@ -252,7 +253,7 @@ function PodView({ pod, cluster }: { pod: Pod; cluster: ClusterState }) {
           onClick={() => exec(`kubectl delete pod ${pod.name}`, 'ui')}
           className="flex items-center gap-1.5 rounded-lg border border-terminating/35 bg-terminating/10 px-2.5 py-1.5 text-[12px] font-medium text-terminating transition hover:bg-terminating/20 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
         >
-          <Trash2 size={13} /> {v === 'terminating' ? 'Terminating…' : 'Delete Pod'}
+          <Trash2 size={13} /> {v === 'terminating' ? 'Encerrando…' : 'Apagar Pod'}
         </button>
         <button
           onClick={() => exec(`kubectl describe pod ${pod.name}`, 'ui')}
@@ -293,28 +294,28 @@ function ServiceView({ svc, cluster }: { svc: Service; cluster: ClusterState }) 
         }}
       >
         <div className="text-[13px] font-semibold" style={{ color: none ? 'var(--color-crash)' : 'var(--color-svc)' }}>
-          {none ? 'No endpoints' : `${svc.endpoints.length} endpoint${svc.endpoints.length === 1 ? '' : 's'}`}
+          {none ? 'Sem endpoints' : `${svc.endpoints.length} endpoint${svc.endpoints.length === 1 ? '' : 's'}`}
         </div>
         <p className="mt-0.5 text-[11.5px] leading-relaxed text-fg-muted">
           {none
             ? matched.length
-              ? `${matched.length} Pod${matched.length === 1 ? '' : 's'} match the selector, but none is Ready.`
-              : 'No Pod carries the labels this selector asks for. Every request fails.'
-            : 'Requests to this Service are spread across these Ready Pods.'}
+              ? `${matched.length} Pod${matched.length === 1 ? '' : 's'} ${matched.length === 1 ? 'combina' : 'combinam'} com o selector, mas nenhum está Ready.`
+              : 'Nenhum Pod tem as labels que este selector pede. Toda requisição falha.'
+            : 'As requisições para este Service são distribuídas entre estes Pods Ready.'}
         </p>
       </div>
 
       <Section title="Selector">
         <EditableLabels labels={svc.selector} highlight={svc.selector} onCommit={(k, val) => exec(`kubectl set selector service ${svc.name} ${k}=${val}`, 'ui')} />
-        <p className="mt-1.5 text-[11px] leading-relaxed text-fg-faint">The Service sends traffic to every Ready Pod with these labels. Click a value to change it.</p>
+        <p className="mt-1.5 text-[11px] leading-relaxed text-fg-faint"><GlossaryText>O Service manda tráfego para todo Pod Ready com estas labels. Clique num valor para mudar.</GlossaryText></p>
       </Section>
 
-      <Section title="Details">
+      <Section title="Detalhes">
         <Props
           rows={[
             ['Type', 'ClusterIP'],
             ['Cluster IP', svc.clusterIP],
-            ['Port', `${svc.port} → ${svc.targetPort}`],
+            ['Porta', `${svc.port} → ${svc.targetPort}`],
           ]}
         />
       </Section>
@@ -336,7 +337,7 @@ function ServiceView({ svc, cluster }: { svc: Service; cluster: ClusterState }) 
                       {key}={p.labels[key] ?? '∅'}
                     </span>
                     <span className={cn('ml-auto text-[11px]', isEndpoint ? 'text-ready' : isMatch ? 'text-warn' : 'text-fg-faint')}>
-                      {isEndpoint ? 'endpoint' : isMatch ? 'not ready' : 'no match'}
+                      {isEndpoint ? 'endpoint' : isMatch ? 'sem Ready' : 'não combina'}
                     </span>
                   </button>
                 </li>
@@ -385,7 +386,7 @@ function EditableLabels({
               onBlur={() => setEditing(null)}
               size={Math.max(4, value.length + 1)}
               spellCheck={false}
-              aria-label={`New value for ${k}`}
+              aria-label={`Novo valor para ${k}`}
               className="bg-transparent pr-1.5 text-fg outline-none focus-visible:outline-none"
             />
           </form>
@@ -395,7 +396,7 @@ function EditableLabels({
             disabled={disabled}
             onClick={() => (setEditing(k), setValue(v))}
             className="group relative rounded-[5px] transition hover:brightness-125 disabled:pointer-events-none"
-            title={`Edit ${k}`}
+            title={`Editar ${k}`}
           >
             <LabelChip k={k} v={v} tone={highlight?.[k] === v ? 'match' : 'neutral'} />
           </button>
@@ -430,16 +431,14 @@ function RSView({ rs, cluster }: { rs: ReplicaSet; cluster: ClusterState }) {
         </div>
         <PhasePill phase={rs.phase} />
       </div>
-      <p className="mt-2 text-[11.5px] leading-relaxed text-fg-faint">
-        A ReplicaSet runs one loop forever: count the Pods matching its selector, compare with <em>desired</em>, create or delete the difference.
-      </p>
-      <Section title="Details">
-        <Props rows={[['Image', <span key="image" className={cn(isBroken(rs.image) && 'text-crash')}>{rs.image.split('/').pop()}</span>], ['Revision', String(rs.revision)]]} />
+      <p className="mt-2 text-[11.5px] leading-relaxed text-fg-faint"><GlossaryText>Um ReplicaSet roda um único ciclo para sempre: conta os Pods que combinam com o selector, compara com o desired state, cria ou apaga a diferença.</GlossaryText></p>
+      <Section title="Detalhes">
+        <Props rows={[['Imagem', <span key="image" className={cn(isBroken(rs.image) && 'text-crash')}>{rs.image.split('/').pop()}</span>], ['Revisão', String(rs.revision)]]} />
       </Section>
       <Section title="Selector">
         <LabelList labels={rsSelector(rs)} highlight={rs.selector} />
       </Section>
-      <Section title={`Owned Pods · ${pods.length}`}>
+      <Section title={`Pods dele · ${pods.length}`}>
         <ul className="flex flex-col gap-0.5">
           {pods.map((p) => (
             <li key={p.uid}>
@@ -464,14 +463,14 @@ function DeploymentView({ dep, cluster }: { dep: Deployment; cluster: ClusterSta
   const set = (n: number) => exec(`kubectl scale deployment ${dep.name} --replicas=${n}`, 'ui')
   return (
     <>
-      <Section title="Desired replicas">
+      <Section title="Réplicas desejadas">
         <div className="flex items-center gap-3">
-          <button disabled={dep.replicas <= 0} onClick={() => set(dep.replicas - 1)} className="grid size-7 place-items-center rounded-md border border-line-strong text-fg-muted transition hover:text-fg disabled:opacity-30" aria-label="Fewer replicas">
+          <button disabled={dep.replicas <= 0} onClick={() => set(dep.replicas - 1)} className="grid size-7 place-items-center rounded-md border border-line-strong text-fg-muted transition hover:text-fg disabled:opacity-30" aria-label="Menos réplicas">
             <Minus size={13} />
           </button>
           <div className="flex flex-1 items-center gap-1" role="meter" aria-valuenow={dep.replicas} aria-valuemin={1} aria-valuemax={8}>
             {Array.from({ length: 8 }, (_, i) => (
-              <button key={i} onClick={() => set(i + 1)} className="group flex h-7 flex-1 items-center" aria-label={`${i + 1} replicas`}>
+              <button key={i} onClick={() => set(i + 1)} className="group flex h-7 flex-1 items-center" aria-label={`${i + 1} réplicas`}>
                 <motion.span
                   className="h-1.5 w-full rounded-full"
                   initial={false}
@@ -481,20 +480,20 @@ function DeploymentView({ dep, cluster }: { dep: Deployment; cluster: ClusterSta
               </button>
             ))}
           </div>
-          <button disabled={dep.replicas >= 8} onClick={() => set(dep.replicas + 1)} className="grid size-7 place-items-center rounded-md border border-line-strong text-fg-muted transition hover:text-fg disabled:opacity-30" aria-label="More replicas">
+          <button disabled={dep.replicas >= 8} onClick={() => set(dep.replicas + 1)} className="grid size-7 place-items-center rounded-md border border-line-strong text-fg-muted transition hover:text-fg disabled:opacity-30" aria-label="Mais réplicas">
             <Plus size={13} />
           </button>
           <span className="w-4 text-right font-mono text-[15px] font-semibold">{dep.replicas}</span>
         </div>
-        <p className="mt-1.5 text-[11px] leading-relaxed text-fg-faint">You're editing the desired state. You never create Pods yourself — the controllers do.</p>
+        <p className="mt-1.5 text-[11px] leading-relaxed text-fg-faint"><GlossaryText>Você está editando o desired state. Você nunca cria Pods diretamente — quem cria são os controllers.</GlossaryText></p>
       </Section>
-      <Section title="Details">
+      <Section title="Detalhes">
         <Props
           rows={[
-            ['Image', <span key="image" className={cn(isBroken(dep.template.image) && 'text-crash')}>{dep.template.image.split('/').pop()}</span>],
-            ['Revision', String(dep.revision)],
-            ['Rollout', <span key="rollout" className={cn(dep.rollout === 'stalled' ? 'text-crash' : dep.rollout === 'progressing' ? 'text-accent' : 'text-ready')}>{dep.rollout}</span>],
-            ['Strategy', 'RollingUpdate 25% / 25%'],
+            ['Imagem', <span key="image" className={cn(isBroken(dep.template.image) && 'text-crash')}>{dep.template.image.split('/').pop()}</span>],
+            ['Revisão', String(dep.revision)],
+            ['Rollout', <span key="rollout" className={cn(dep.rollout === 'stalled' ? 'text-crash' : dep.rollout === 'progressing' ? 'text-accent' : 'text-ready')}>{{ complete: 'concluído', progressing: 'em andamento', stalled: 'travado' }[dep.rollout]}</span>],
+            ['Estratégia', 'RollingUpdate 25% / 25%'],
             ['ReplicaSet', rs ? rs.name : '—'],
           ]}
         />

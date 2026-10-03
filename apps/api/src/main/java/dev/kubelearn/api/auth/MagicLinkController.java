@@ -87,7 +87,7 @@ class MagicLinkController {
 
 		var email = tokens.consume(body.token())
 			.orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "invalid_link",
-					"This sign-in link is invalid, expired, or was already used."));
+					"Este link de acesso é inválido, expirou ou já foi usado."));
 		var user = users.signInWithEmail(email);
 		session.signIn(user.id(), http, response);
 		return accounts.describe(user);

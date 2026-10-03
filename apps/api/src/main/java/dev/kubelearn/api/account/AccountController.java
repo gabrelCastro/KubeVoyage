@@ -42,7 +42,7 @@ public class AccountController {
 	Me me(@AuthenticationPrincipal SessionUser user) {
 		return users.findById(user.id())
 			.map(this::describe)
-			.orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "account_gone", "This account no longer exists."));
+			.orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "account_gone", "Esta conta não existe mais."));
 	}
 
 	/** Deletes the account and everything in it, and signs it out everywhere. */

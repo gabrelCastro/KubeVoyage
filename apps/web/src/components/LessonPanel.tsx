@@ -1,17 +1,22 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { Check, CornerDownLeft, Lightbulb } from 'lucide-react'
+import { BookOpen, Check, CornerDownLeft, Lightbulb } from 'lucide-react'
 import { cn } from '../lib/visual'
 import { isComplete, lessonFraction, type LessonId } from '@kubelearn/shared'
 import { LESSONS } from '../lessons'
 import { useProgress } from '../progress/browser'
 import { useLesson } from '../lessons/useLesson'
 import { useSim } from '../store/useSim'
+import { GlossaryText } from './GlossaryText'
+import { hasApostila } from '../lessons/apostilas'
+import { useApostila } from '../lessons/apostilas/store'
 
 export function LessonPanel() {
   const { lesson, statuses, current, complete, ctx } = useLesson()
   const setDraft = useSim((s) => s.setDraft)
   const hints = useSim((s) => s.hints)
   const revealHint = useSim((s) => s.revealHint)
+  const openApostila = useApostila((s) => s.openApostila)
+  const apostilaId = hasApostila(lesson.id) ? lesson.id : null
   const required = statuses.filter((s) => !s.optional)
   const doneCount = required.filter((s) => s.isDone).length
 
@@ -26,11 +31,23 @@ export function LessonPanel() {
           transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
         >
           <div className="px-5 pt-5">
-            <div className="text-[10.5px] font-semibold tracking-[0.12em] text-fg-faint uppercase">
-              {lesson.track} · Lesson {lesson.number}
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[10.5px] font-semibold tracking-[0.12em] text-fg-faint uppercase">
+                {lesson.track} · Lição {lesson.number}
+              </div>
+              {apostilaId && (
+                <button onClick={() => openApostila(apostilaId)} className="flex items-center gap-1.5 rounded-md border border-line-strong px-2 py-1 text-[11px] font-medium text-fg-muted transition hover:border-accent/50 hover:text-accent">
+                  <BookOpen size={12} /> Apostila
+                </button>
+              )}
             </div>
             <h1 className="mt-1 text-[21px] font-semibold tracking-tight">{lesson.title}</h1>
             <p className="mt-1 text-[13px] leading-relaxed text-fg-muted">{lesson.tagline}</p>
+            {apostilaId && (
+              <button onClick={() => openApostila(apostilaId)} className="mt-2 text-[11.5px] text-fg-faint transition hover:text-accent hover:underline">
+                Apostila · leitura de ~5 min
+              </button>
+            )}
 
             <div className="mt-4 flex items-center gap-2">
               <div className="flex flex-1 gap-1">
@@ -53,7 +70,7 @@ export function LessonPanel() {
 
           {/* the one idea this lesson is about */}
           <div className="mx-5 mt-5 rounded-xl border border-line bg-panel-2/60 p-3.5">
-            <div className="text-[10px] font-semibold tracking-[0.1em] text-fg-faint uppercase">The idea</div>
+            <div className="text-[10px] font-semibold tracking-[0.1em] text-fg-faint uppercase">A ideia</div>
             <div className="mt-2.5 flex items-center gap-2 text-[12px]">
               <div className="flex-1 rounded-lg border border-deploy/30 bg-deploy/[0.06] px-2.5 py-2">
                 <div className="text-[10px] text-deploy">{lesson.idea.a.label}</div>
@@ -67,7 +84,7 @@ export function LessonPanel() {
                 <div className="font-medium">{lesson.idea.b.text}</div>
               </div>
             </div>
-            <p className="mt-2.5 text-[11.5px] leading-relaxed text-fg-faint">{lesson.idea.body}</p>
+            <p className="mt-2.5 text-[11.5px] leading-relaxed text-fg-faint"><GlossaryText>{lesson.idea.body}</GlossaryText></p>
           </div>
 
           <ol className="mt-4 flex flex-col gap-1 px-3">
@@ -89,7 +106,7 @@ export function LessonPanel() {
                       <AnimatePresence initial={false}>
                         {isCurrent && (
                           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                            <p className="pt-1 text-[12px] leading-relaxed text-fg-muted">{o.detail}</p>
+                            <p className="pt-1 text-[12px] leading-relaxed text-fg-muted"><GlossaryText>{o.detail}</GlossaryText></p>
                             {o.hint && (
                               <AnimatePresence mode="wait" initial={false}>
                                 {hintShown ? (
@@ -100,7 +117,7 @@ export function LessonPanel() {
                                     className="mt-2 flex gap-1.5 rounded-lg border border-warn/25 bg-warn/[0.06] px-2.5 py-2 text-[11.5px] leading-relaxed text-fg-muted"
                                   >
                                     <Lightbulb size={13} className="mt-[2px] shrink-0 text-warn" />
-                                    {o.hint.text}
+                                    <span><GlossaryText>{o.hint.text}</GlossaryText></span>
                                   </motion.p>
                                 ) : (
                                   <motion.button
@@ -108,7 +125,7 @@ export function LessonPanel() {
                                     onClick={() => revealHint(o.id)}
                                     className="mt-2 flex items-center gap-1.5 text-[11.5px] text-fg-faint transition hover:text-warn"
                                   >
-                                    <Lightbulb size={12} /> Stuck? Show a hint
+                                    <Lightbulb size={12} /> Travou? Mostrar uma dica
                                   </motion.button>
                                 )}
                               </AnimatePresence>
@@ -123,7 +140,7 @@ export function LessonPanel() {
                                 <CornerDownLeft size={12} className="shrink-0 text-fg-faint" />
                               </button>
                             )}
-                            {o.uiHint && <p className="mt-1.5 text-[11px] text-fg-faint">{o.uiHint}</p>}
+                            {o.uiHint && <p className="mt-1.5 text-[11px] text-fg-faint"><GlossaryText>{o.uiHint}</GlossaryText></p>}
                           </motion.div>
                         )}
                       </AnimatePresence>
@@ -137,8 +154,8 @@ export function LessonPanel() {
           <AnimatePresence>
             {complete && (
               <motion.p initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="mx-5 mt-3 text-[12px] leading-relaxed text-fg-muted">
-                Try pausing (<span className="font-mono text-fg">Space</span>) right before something happens, then press <span className="font-mono text-fg">.</span> to step through every
-                controller decision.
+                Experimente pausar (<span className="font-mono text-fg">Espaço</span>) logo antes de algo acontecer e depois apertar <span className="font-mono text-fg">.</span> para avançar
+                decisão por decisão dos controllers.
               </motion.p>
             )}
           </AnimatePresence>
@@ -157,7 +174,7 @@ function Curriculum() {
   const openLesson = useSim((s) => s.openLesson)
   let lastTrack = ''
   return (
-    <nav className="mt-auto px-3 pt-8 pb-4" aria-label="Lessons">
+    <nav className="mt-auto px-3 pt-8 pb-4" aria-label="Lições">
       {LESSONS.map((l) => {
         const header = l.track !== lastTrack ? l.track : null
         lastTrack = l.track
@@ -178,7 +195,7 @@ function Curriculum() {
               <ProgressRing fraction={fraction} done={done} current={current} number={l.number} />
               <span className="relative min-w-0 flex-1 truncate text-[12.5px]">{l.title}</span>
               {best ? (
-                <span className="relative font-mono text-[10.5px] text-fg-faint tabular-nums" title="Your best time">
+                <span className="relative font-mono text-[10.5px] text-fg-faint tabular-nums" title="Seu melhor tempo">
                   {formatDuration(best)}
                 </span>
               ) : null}

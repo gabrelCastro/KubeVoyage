@@ -1,0 +1,208 @@
+import { Callout, DesiredActualDiagram, OwnershipDiagram, PodLifecycleDiagram, QuickQuestion, ReconciliationDiagram } from '../../components/apostila/ApostilaBlocks'
+
+# Self-healing: por que o Pod volta?
+
+Esta apostila acompanha a primeira lição. Você pode consultá-la antes, durante ou depois da atividade — não precisa terminar a leitura para experimentar o cluster.
+
+<section id="o-que-voce-vai-entender">
+
+## O que você vai entender
+
+- Como o Kubernetes compara **desired state** e **actual state** continuamente.
+- Por que Deployment, ReplicaSet e Pod têm responsabilidades diferentes.
+- O que acontece entre a criação de um Pod e o momento em que ele fica Ready.
+
+</section>
+
+<section id="conceitos">
+
+## Conceitos
+
+<h3 id="desired-state-e-actual-state">Desired state e actual state</h3>
+
+Pense em um termostato. Você escolhe 22 °C: esse é o **desired state**. O sensor mede 19 °C: esse é o **actual state**. O aparelho não precisa de uma ordem sua a cada segundo; ele observa a diferença e liga o aquecimento até os dois valores coincidirem.
+
+No Kubernetes, o manifesto declara o que você quer. Os controllers observam o que existe no cluster e agem quando há diferença. Se você declarou três réplicas e só existem duas, falta uma. Se existem quatro, sobra uma.
+
+<DesiredActualDiagram />
+
+<Callout>Self-healing não significa “consertar o mesmo container”. Muitas vezes significa descartar uma instância e criar outra que satisfaça o estado declarado.</Callout>
+
+<h3 id="deployment-replicaset-e-pods">Deployment, ReplicaSet e Pods</h3>
+
+Um **Pod** é a menor unidade executável do Kubernetes. Nesta lição, cada Pod contém uma instância do backend.
+
+Um **ReplicaSet** mantém uma quantidade estável de Pods equivalentes. Ele conta os Pods que correspondem ao seu selector e cria ou remove a diferença até chegar ao número Desired.
+
+Um **Deployment** descreve como a aplicação deve ser implantada e atualizada. Ele cria e administra ReplicaSets, permitindo rollout e rollback. O Deployment não substitui o Pod diretamente: ele gerencia o ReplicaSet, e o ReplicaSet gerencia os Pods.
+
+<OwnershipDiagram />
+
+Essa cadeia aparece no campo **`metadata.ownerReferences`**. Um Pod aponta para o ReplicaSet que o possui; o ReplicaSet aponta para o Deployment. Essa relação ajuda os controllers e a coleta de lixo do cluster a entenderem quem responde por cada recurso.
+
+<h3 id="ciclo-de-vida-do-pod">Ciclo de vida do Pod</h3>
+
+Nesta simulação, você acompanha quatro momentos:
+
+1. **Pending:** o Pod foi aceito, mas ainda não começou a executar.
+2. **ContainerCreating:** o **scheduler** já escolheu um node e o **kubelet** prepara o container, incluindo imagem, rede e volumes.
+3. **Running:** o container principal está executando.
+4. **Ready:** a **readiness probe** passou e o Pod pode receber tráfego de um Service.
+
+<PodLifecycleDiagram />
+
+**Running não é o mesmo que Ready.** Um processo pode estar de pé e ainda estar carregando dados, esperando uma dependência ou falhando na readiness probe. O Service só deve enviar tráfego quando o Pod estiver Ready.
+
+<h3 id="loop-de-reconciliacao">O loop de reconciliação</h3>
+
+Um controller repete três passos:
+
+1. **Observar:** lê o desired state e o actual state.
+2. **Comparar:** calcula a diferença entre eles.
+3. **Agir:** cria, atualiza ou remove recursos para reduzir essa diferença.
+
+<ReconciliationDiagram />
+
+Ao apagar um Pod, você altera o actual state, não o desired state. O ReplicaSet continua desejando três réplicas. Na observação seguinte ele encontra apenas duas e cria um substituto.
+
+</section>
+
+<section id="no-mundo-real">
+
+## No mundo real
+
+### O manifesto `backend.yaml`
+
+Este é o mesmo arquivo disponível no terminal da lição, comentado linha por linha:
+
+```yaml
+apiVersion: apps/v1                         # Usa a API estável para workloads.
+kind: Deployment                            # Declara um Deployment.
+metadata:                                   # Inicia os metadados do recurso.
+  name: backend                             # Define o nome do Deployment.
+spec:                                       # Descreve o estado desejado.
+  replicas: 3                               # Pede três Pods equivalentes.
+  selector:                                 # Diz quais Pods pertencem ao Deployment.
+    matchLabels:                            # Exige igualdade entre labels.
+      app: backend                          # Seleciona Pods com app=backend.
+  template:                                 # Modelo usado para criar cada Pod.
+    metadata:                               # Metadados aplicados aos novos Pods.
+      labels:                               # Labels gravadas em cada Pod.
+        app: backend                        # Precisa combinar com o selector acima.
+    spec:                                   # Configuração dos containers do Pod.
+      containers:                           # Lista de containers do Pod.
+        - name: backend                     # Nome do container principal.
+          image: ghcr.io/kubelearn/backend:1.4 # Imagem e versão executadas.
+          readinessProbe:                   # Verifica quando o container está pronto.
+            httpGet:                        # Faz uma requisição HTTP de verificação.
+              path: /healthz                # Caminho que deve responder com sucesso.
+              port: 8080                    # Porta consultada pela probe.
+```
+
+O selector e as labels do template precisam combinar. Caso contrário, o Deployment criaria Pods que seu ReplicaSet não consegue reconhecer como próprios.
+
+### Os comandos da atividade
+
+```console
+kubectl apply -f backend.yaml
+```
+
+Cria o Deployment ou atualiza o existente para corresponder ao arquivo. O Deployment cria um ReplicaSet; o ReplicaSet cria os Pods.
+
+```console
+kubectl get pods
+```
+
+Lista os Pods e mostra colunas como `READY`, `STATUS`, `RESTARTS` e `AGE`. Use `kubectl get pods -o wide` para ver também IP e node.
+
+```console
+kubectl delete pod backend-...
+```
+
+Solicita a exclusão de um Pod específico. Como o Deployment continua declarando três réplicas, o ReplicaSet cria outro Pod. Para mudar a quantidade de forma duradoura, altere o desired state do Deployment.
+
+```console
+kubectl describe pod backend-...
+```
+
+Mostra detalhes do recurso e seus eventos recentes. É útil para descobrir onde o Pod foi agendado, por que ainda não está Ready ou qual controller é seu dono.
+
+</section>
+
+<section id="o-que-simplificamos">
+
+## O que simplificamos
+
+- No cluster real, muitas dessas mudanças levam milissegundos. A simulação desacelera o tempo para que cada etapa fique visível.
+- O ReplicaSet cria o substituto assim que percebe a falta; ele não espera o Pod antigo terminar de encerrar.
+- Os “slots” desenhados no palco são apenas didáticos. O Kubernetes não reserva posições visuais para réplicas.
+- A simulação mostra os componentes importantes para a lição, mas omite detalhes de rede, armazenamento, admission e outros controllers.
+
+</section>
+
+<section id="erros-comuns">
+
+## Erros comuns
+
+### Apagar um Pod achando que ele não volta
+
+Se o Pod pertence a um ReplicaSet e o desired state não mudou, outro será criado. Para reduzir a aplicação, altere as réplicas do Deployment.
+
+### Editar diretamente um Pod gerenciado
+
+O Pod novo será criado a partir do template do Deployment, não das mudanças manuais feitas no Pod antigo. Altere o template do Deployment para tornar a mudança duradoura.
+
+### Confundir Deployment com ReplicaSet
+
+O Deployment cuida de versões, rollout e rollback. Cada versão normalmente corresponde a um ReplicaSet; o ReplicaSet cuida da quantidade de Pods daquela versão.
+
+### Achar que Running significa pronto
+
+Running só informa que o container está executando. Ready depende da readiness probe e determina se o Pod pode receber tráfego.
+
+</section>
+
+<section id="teste-rapido">
+
+## Teste rápido
+
+<QuickQuestion
+  question="Você apaga um Pod gerenciado e não altera o Deployment. O que acontece?"
+  options={[
+    { label: 'O ReplicaSet cria um substituto.', correct: true, explanation: 'Correto. O desired state ainda pede a mesma quantidade de réplicas, então o loop de reconciliação fecha a diferença.' },
+    { label: 'A aplicação fica permanentemente com um Pod a menos.', explanation: 'Não. Isso só aconteceria se o desired state também fosse reduzido ou se o controller não pudesse agir.' },
+    { label: 'O Deployment restaura exatamente o mesmo Pod.', explanation: 'Não. Um novo Pod é criado com outro UID; a instância antiga não é ressuscitada.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="Qual recurso mantém a quantidade Desired de Pods nesta lição?"
+  options={[
+    { label: 'O kubelet.', explanation: 'O kubelet executa containers no node, mas não mantém a quantidade global de réplicas.' },
+    { label: 'O ReplicaSet.', correct: true, explanation: 'Correto. Ele seleciona e conta os Pods, depois cria ou remove a diferença.' },
+    { label: 'A readiness probe.', explanation: 'A probe informa prontidão; ela não cria nem remove Pods.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="Um Pod está Running, mas ainda não está Ready. O que isso significa?"
+  options={[
+    { label: 'O container executa, mas ainda não deve receber tráfego.', correct: true, explanation: 'Correto. A readiness probe ainda não passou; Running e Ready medem coisas diferentes.' },
+    { label: 'O scheduler ainda não escolheu um node.', explanation: 'Não. Para chegar a Running, o Pod já foi agendado e o container foi iniciado pelo kubelet.' },
+    { label: 'O Pod já está saudável e recebendo tráfego.', explanation: 'Não necessariamente. Só o estado Ready autoriza o envio de tráfego pelo Service.' },
+  ]}
+/>
+
+</section>
+
+<section id="para-ir-alem">
+
+## Para ir além
+
+- [Deployments — documentação oficial](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)
+- [ReplicaSet — documentação oficial](https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/)
+- [Ciclo de vida do Pod — documentação oficial](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/)
+- [Probes de liveness, readiness e startup — documentação oficial](https://kubernetes.io/docs/concepts/workloads/pods/probes/)
+- [Controllers e control loops — documentação oficial](https://kubernetes.io/docs/concepts/architecture/controller/)
+
+</section>

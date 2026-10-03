@@ -98,13 +98,13 @@ class SecurityConfig {
 
 	private static AuthenticationEntryPoint unauthorized(JsonMapper json) {
 		return (request, response, ex) -> write(json, response,
-				Problems.of(HttpStatus.UNAUTHORIZED, "unauthenticated", "Sign in to continue."));
+				Problems.of(HttpStatus.UNAUTHORIZED, "unauthenticated", "Entre para continuar."));
 	}
 
 	private static AccessDeniedHandler forbidden(JsonMapper json) {
 		return (request, response, ex) -> write(json, response, ex instanceof CsrfException
-				? Problems.of(HttpStatus.FORBIDDEN, "csrf", "Missing or invalid CSRF token. Reload and try again.")
-				: Problems.of(HttpStatus.FORBIDDEN, "forbidden", "You can't do that."));
+				? Problems.of(HttpStatus.FORBIDDEN, "csrf", "Token CSRF ausente ou inválido. Recarregue a página e tente novamente.")
+				: Problems.of(HttpStatus.FORBIDDEN, "forbidden", "Você não pode fazer isso."));
 	}
 
 	private static void write(JsonMapper json, HttpServletResponse response, ProblemDetail problem) throws IOException {

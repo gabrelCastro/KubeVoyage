@@ -9,12 +9,12 @@ export const failures: Lesson = {
   id: 'failures',
   number: 6,
   track: 'Troubleshooting',
-  title: 'Failures & rollbacks',
-  tagline: 'Ship a broken version. Nobody notices — and you roll it back.',
+  title: 'Falhas e rollbacks',
+  tagline: 'Publique uma versão quebrada. Ninguém percebe — e você faz o rollback.',
   idea: {
-    a: { label: 'Rolling update', text: 'one Pod at a time' },
-    b: { label: 'Readiness', text: 'the gate it must pass' },
-    body: 'A Deployment only retires old Pods when new ones are Ready. A version that never gets Ready simply never takes over.',
+    a: { label: 'Rolling update', text: 'um Pod de cada vez' },
+    b: { label: 'Readiness', text: 'o portão que ele precisa passar' },
+    body: 'Um Deployment só aposenta Pods antigos quando os novos estão Ready. Uma versão que nunca fica Ready simplesmente nunca assume.',
   },
   files: ['backend.yaml', 'service.yaml'],
   setup: {
@@ -24,26 +24,26 @@ export const failures: Lesson = {
   objectives: [
     {
       id: 'ship',
-      title: 'Ship v1.5',
-      detail: 'Roll out the new version. Watch a second ReplicaSet appear and the Deployment start moving Pods over.',
+      title: 'Publique a v1.5',
+      detail: 'Faça o rollout da versão nova. Veja um segundo ReplicaSet aparecer e o Deployment começar a trocar os Pods.',
       suggest: () => 'kubectl set image deployment/backend backend=ghcr.io/kubelearn/backend:1.5',
       done: (ctx) => ctx.events.some((e) => e.reason === 'BackOff'),
     },
     {
       id: 'investigate',
-      title: 'Find out why it crashes',
-      detail: 'The new Pod restarts over and over. The cluster is fine — the container is not. Its logs will tell you why.',
+      title: 'Descubra por que ele quebra',
+      detail: 'O Pod novo reinicia sem parar. O cluster está bem — o container é que não está. Os logs vão dizer por quê.',
       suggest: (ctx) => {
         const p = crashing(ctx)
         return p ? `kubectl logs ${p.name}` : null
       },
-      uiHint: 'or select the crashing Pod and open its logs',
+      uiHint: 'ou selecione o Pod com problema e abra os logs',
       done: (ctx) => ran(ctx.history, /^kubectl\s+(logs|describe\s+pods?)\s/) && ctx.events.some((e) => e.reason === 'BackOff'),
     },
     {
       id: 'rollback',
-      title: 'Roll back',
-      detail: 'v1.4 is still running and still serving every request. Go back to it.',
+      title: 'Faça o rollback',
+      detail: 'A v1.4 continua rodando e atendendo todas as requisições. Volte para ela.',
       suggest: () => 'kubectl rollout undo deployment/backend',
       done: (ctx) => {
         const i = firstIndex(ctx.events, (e) => e.reason === 'RolledBack')
@@ -52,23 +52,23 @@ export const failures: Lesson = {
     },
   ],
   completion: {
-    title: 'Rolled back safely.',
-    summary: () => 'v1.5 crashed on start, so it never became Ready — and the Deployment never took a single v1.4 Pod down for it. The Service kept sending every request to healthy Pods.',
+    title: 'Rollback com segurança.',
+    summary: () => 'A v1.5 quebrava ao iniciar, então nunca ficou Ready — e o Deployment não derrubou nenhum Pod da v1.4 por causa dela. O Service continuou mandando todas as requisições para Pods saudáveis.',
     story: (events) => {
       const i = firstIndex(events, (e) => e.reason === 'ImageChanged')
       const end = i < 0 ? -1 : firstIndex(events, (e) => e.reason === 'RolloutComplete', i)
       if (end < 0) return null
       return storyFrom(events, i, end, [
-        { reason: 'ImageChanged', text: () => 'You asked for v1.5' },
-        { reason: 'NewReplicaSet', text: () => 'A new ReplicaSet was created for it' },
-        { reason: 'SuccessfulCreate', text: (e) => `It started one surge Pod: ${short(e.involved.name)}` },
-        { reason: 'BackOff', text: () => 'The container crashed — CrashLoopBackOff' },
-        { reason: 'RolledBack', text: () => 'You rolled back to v1.4' },
-        { reason: 'Killing', text: () => 'The broken Pod was removed', pick: 'last' },
-        { reason: 'RolloutComplete', text: () => 'Rollout complete — 3/3 on v1.4' },
+        { reason: 'ImageChanged', text: () => 'Você pediu a v1.5' },
+        { reason: 'NewReplicaSet', text: () => 'Um ReplicaSet novo foi criado para ela' },
+        { reason: 'SuccessfulCreate', text: (e) => `Ele subiu um Pod extra (surge): ${short(e.involved.name)}` },
+        { reason: 'BackOff', text: () => 'O container quebrou — CrashLoopBackOff' },
+        { reason: 'RolledBack', text: () => 'Você fez rollback para a v1.4' },
+        { reason: 'Killing', text: () => 'O Pod quebrado foi removido', pick: 'last' },
+        { reason: 'RolloutComplete', text: () => 'Rollout concluído — 3/3 na v1.4' },
       ])
     },
-    takeaway: 'Readiness is what makes rolling updates safe.',
-    note: 'With 3 replicas, the defaults (25% maxSurge, 25% maxUnavailable) allow 1 extra Pod and 0 unavailable — so nothing old goes down until something new is Ready.',
+    takeaway: 'É a readiness que torna o rolling update seguro.',
+    note: 'Com 3 réplicas, os padrões (25% de maxSurge, 25% de maxUnavailable) permitem 1 Pod extra e 0 indisponíveis — então nada antigo cai antes de algo novo estar Ready.',
   },
 }

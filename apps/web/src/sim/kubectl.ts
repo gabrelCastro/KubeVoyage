@@ -182,7 +182,7 @@ export function run(sim: Simulation, input: string): CommandResult {
     return { lines: FILES[f].yaml.split('\n').map((l) => plain(l, 'muted')) }
   }
   if (cmd !== 'kubectl' && cmd !== 'k') {
-    return { lines: [plain(`command not found: ${cmd}`, 'error'), plain('Try `help` to see what this terminal understands.', 'muted')] }
+    return { lines: [plain(`command not found: ${cmd}`, 'error'), plain('Digite `help` para ver o que este terminal entende.', 'muted')] }
   }
 
   const [verb, ...more] = rest
@@ -209,7 +209,7 @@ export function run(sim: Simulation, input: string): CommandResult {
       if (!kind || KIND_ALIASES[kind] !== 'deployments' || !names[0]) return err('Usage: kubectl scale deployment <name> --replicas=<n>')
       const n = Number(flags.replicas)
       if (!Number.isInteger(n) || n < 0) return err('error: --replicas=<count> is required, and must be a non-negative integer')
-      if (n > 8) return err('This playground cluster is small — keep replicas at 8 or fewer.')
+      if (n > 8) return err('Este cluster de treino é pequeno — use no máximo 8 réplicas.')
       if (!sim.scale(names[0], n)) return err(`Error from server (NotFound): deployments.apps "${names[0]}" not found`)
       return ok(`deployment.apps/${names[0]} scaled`, sim.findDeployment(names[0])?.uid)
     }
@@ -265,7 +265,7 @@ function remove(sim: Simulation, args: string[], flags: Parsed['flags']): Comman
     return sim.deleteService(names[0]) ? { lines: [plain(`service "${names[0]}" deleted`, 'warn')] } : err(`Error from server (NotFound): services "${names[0]}" not found`)
   }
   if (k !== 'pods') {
-    return kind ? err('In this playground you can delete Pods and Services. Try: kubectl delete pod <name>') : err('error: You must provide one or more resources by argument or filename.')
+    return kind ? err('Neste playground dá para apagar Pods e Services. Tente: kubectl delete pod <nome>') : err('error: You must provide one or more resources by argument or filename.')
   }
   let targets = names
   if (typeof flags.l === 'string') {
@@ -286,7 +286,7 @@ function remove(sim: Simulation, args: string[], flags: Parsed['flags']): Comman
       focusUid ??= sim.findPod(name)?.uid
     }
   }
-  if (lines.some((l) => l[0].c === 'error')) lines.push(plain('Tip: press Tab to autocomplete Pod names.', 'muted'))
+  if (lines.some((l) => l[0].c === 'error')) lines.push(plain('Dica: aperte Tab para completar nomes de Pods.', 'muted'))
   return { lines, focusUid }
 }
 
@@ -350,7 +350,7 @@ function rollout(sim: Simulation, args: string[]): CommandResult {
       lines: [
         plain(`Waiting for deployment "${dep.name}" rollout to finish: ${ready} of ${dep.replicas} updated replicas are available...`, 'warn'),
         ...(oldLeft ? [plain(`Waiting for deployment "${dep.name}" rollout to finish: ${oldLeft} old replicas are pending termination...`, 'warn')] : []),
-        ...(dep.rollout === 'stalled' ? [plain('# the new Pods never become Ready — check them with kubectl get pods / kubectl logs', 'muted')] : []),
+        ...(dep.rollout === 'stalled' ? [plain('# os Pods novos nunca ficam Ready — investigue com kubectl get pods / kubectl logs', 'muted')] : []),
       ],
     }
   }
@@ -617,30 +617,30 @@ function describe(sim: Simulation, args: string[]): CommandResult {
       ],
     }
   }
-  return err(`describe for ${rawKind} isn't available here`)
+  return err(`describe de ${rawKind} não está disponível aqui`)
 }
 
 function help(): CommandResult {
   const row = (c: string, d: string): Line => [{ t: `  ${c}`.padEnd(54), c: 'accent' }, { t: d, c: 'muted' }]
   return {
     lines: [
-      plain('This terminal talks to the simulated cluster on the stage.', 'muted'),
+      plain('Este terminal conversa com o cluster simulado no palco.', 'muted'),
       [],
-      row('ls · cat <file>', 'see the manifests for this lesson'),
-      row('kubectl apply -f <file>', 'create or update from a manifest'),
-      row('kubectl get pods [-o wide] [--show-labels] [-w]', 'list Pods (-w watches; Esc stops)'),
-      row('kubectl get deploy | rs | svc | endpoints | events | all', 'list other resources'),
-      row('kubectl describe pod|deploy|rs|svc <name>', 'details + events'),
-      row('kubectl delete pod <name>... | -l key=value', 'delete Pods'),
-      row('kubectl scale deploy backend --replicas=N', 'change desired replicas'),
-      row('kubectl expose deploy backend --port=80', 'put a Service in front of it'),
-      row('kubectl label pod <name> key=value --overwrite', 'change a Pod label (key- removes)'),
-      row('kubectl set selector svc <name> key=value', "change a Service's selector"),
-      row('kubectl set image deploy/backend backend=<image>', 'roll out a new version'),
-      row('kubectl rollout status|undo|history deploy/backend', 'follow or revert a rollout'),
-      row('kubectl logs <pod>', "read a container's output"),
+      row('ls · cat <file>', 'ver os manifestos desta lição'),
+      row('kubectl apply -f <file>', 'criar ou atualizar a partir de um manifesto'),
+      row('kubectl get pods [-o wide] [--show-labels] [-w]', 'listar Pods (-w acompanha; Esc para)'),
+      row('kubectl get deploy | rs | svc | endpoints | events | all', 'listar outros recursos'),
+      row('kubectl describe pod|deploy|rs|svc <name>', 'detalhes + eventos'),
+      row('kubectl delete pod <name>... | -l key=value', 'apagar Pods'),
+      row('kubectl scale deploy backend --replicas=N', 'mudar as réplicas desejadas'),
+      row('kubectl expose deploy backend --port=80', 'colocar um Service na frente'),
+      row('kubectl label pod <name> key=value --overwrite', 'mudar uma label de Pod (key- remove)'),
+      row('kubectl set selector svc <name> key=value', 'mudar o selector de um Service'),
+      row('kubectl set image deploy/backend backend=<image>', 'publicar uma versão nova'),
+      row('kubectl rollout status|undo|history deploy/backend', 'acompanhar ou desfazer um rollout'),
+      row('kubectl logs <pod>', 'ler a saída de um container'),
       [],
-      plain('Tab autocompletes · ↑/↓ history · `k` is an alias for kubectl · clear', 'muted'),
+      plain('Tab completa · ↑/↓ histórico · `k` é atalho para kubectl · clear limpa', 'muted'),
     ],
   }
 }
