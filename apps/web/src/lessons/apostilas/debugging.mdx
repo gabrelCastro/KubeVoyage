@@ -50,7 +50,7 @@ Siga esse caminho na ordem. O primeiro elo quebrado é onde o problema está.
 | Endpoints preenchidos, conexão recusada | `targetPort` errado, ou o app não escuta nessa porta |
 | Funciona por IP do Service, não pelo nome | DNS, ou namespace diferente |
 
-Sem endpoints, a conexão ao Service costuma falhar na hora. Se houver um Ingress ou um gateway na frente, ele normalmente responde **503 Service Unavailable** — o mesmo sintoma da lição.
+Sem endpoints, a conexão ao Service costuma falhar na hora. Se houver um Ingress ou um gateway na frente, ele normalmente responde **503 Service Unavailable**; nesta lição, o cliente fala direto com o Service e vê a conexão recusada.
 
 <Callout>Um Service sem endpoints é um dos problemas mais comuns em clusters novos. A documentação oficial tem um guia inteiro só sobre isso, seguindo exatamente esse caminho.</Callout>
 
@@ -127,7 +127,7 @@ explicar kubectl run teste --rm -it --image=busybox:1.36 --restart=Never -- wget
 ## O que simplificamos
 
 - O exercício tem uma única causa. Na prática, NetworkPolicies, DNS, namespaces e o próprio app também entram na lista de suspeitos.
-- O “503” aparece no próprio Service, para o sintoma ficar visível. Sem um Ingress na frente, um cliente real normalmente veria a conexão falhar.
+- O palco mostra as conexões recusadas ao próprio Service. Um Ingress ou gateway na frente dele normalmente transformaria essa falha em **503 Service Unavailable**.
 - `kubectl run` simula `wget`, `curl` e `nslookup` de dentro do cluster. `port-forward` e um shell interativo ainda não são simulados.
 
 </section>

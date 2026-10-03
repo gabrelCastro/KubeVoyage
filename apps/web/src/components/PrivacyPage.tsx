@@ -56,7 +56,8 @@ export function PrivacyPage() {
 
         <Section title="Sem conta">
           <p>
-            Seu progresso, o estado do tutorial e o histórico de comandos do terminal ficam no <strong>armazenamento local do seu navegador</strong> (localStorage). Eles não são enviados ao servidor. Limpar os dados do site no navegador apaga tudo.
+            Seu progresso, o estado do tutorial, o histórico de comandos do terminal e o design criado para o seu app ficam no{' '}
+            <strong>armazenamento local do seu navegador</strong> (localStorage). Eles não são enviados ao servidor. Limpar os dados do site no navegador apaga tudo.
           </p>
         </Section>
 

@@ -38,16 +38,18 @@ export interface Visit {
 
 const KEY = 'kubelearn.app.v1'
 const MAX_VISITS = 32
+const initialApp = () => ({ design: DEFAULT_DESIGN, customized: false })
+const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
 
-function load(): { design: AppDesign; customized: boolean } {
+export function parseStoredApp(value: string | null): { design: AppDesign; customized: boolean } {
   try {
-    const raw = JSON.parse(localStorage.getItem(KEY) ?? 'null')
-    if (raw && typeof raw === 'object') {
-      const d = raw.design ?? {}
+    const raw: unknown = JSON.parse(value ?? 'null')
+    if (record(raw)) {
+      const d = record(raw.design) ? raw.design : {}
       const design: AppDesign = {
         name: typeof d.name === 'string' && d.name.trim() ? d.name.slice(0, LIMITS.name) : DEFAULT_DESIGN.name,
-        emoji: (APP_EMOJIS as readonly string[]).includes(d.emoji) ? d.emoji : DEFAULT_DESIGN.emoji,
-        color: d.color in APP_COLORS ? d.color : DEFAULT_DESIGN.color,
+        emoji: typeof d.emoji === 'string' && (APP_EMOJIS as readonly string[]).includes(d.emoji) ? d.emoji : DEFAULT_DESIGN.emoji,
+        color: typeof d.color === 'string' && d.color in APP_COLORS ? (d.color as AppColor) : DEFAULT_DESIGN.color,
         message: typeof d.message === 'string' ? d.message.slice(0, LIMITS.message) : DEFAULT_DESIGN.message,
       }
       return { design, customized: raw.customized === true }
@@ -55,7 +57,15 @@ function load(): { design: AppDesign; customized: boolean } {
   } catch {
     // storage unavailable: the default app it is
   }
-  return { design: DEFAULT_DESIGN, customized: false }
+  return initialApp()
+}
+
+function load() {
+  try {
+    return parseStoredApp(localStorage.getItem(KEY))
+  } catch {
+    return initialApp()
+  }
 }
 
 interface AppState {
@@ -75,7 +85,7 @@ interface AppState {
 let seq = 0
 
 export const useApp = create<AppState>((set) => ({
-  ...(typeof localStorage === 'undefined' ? { design: DEFAULT_DESIGN, customized: false } : load()),
+  ...(typeof localStorage === 'undefined' ? initialApp() : load()),
   studioOpen: false,
   visits: [],
   served: 0,

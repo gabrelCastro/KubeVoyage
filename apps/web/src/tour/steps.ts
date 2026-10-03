@@ -50,6 +50,12 @@ export const TOUR: TourStep[] = [
     waiting: 'Aguardando os Pods ficarem Ready…',
   },
   {
+    id: 'app',
+    target: 'app',
+    title: 'Seu app no cluster',
+    body: 'Dê nome, cor, ícone e mensagem ao que esses Pods servem. Quando você criar um Service, cada visitante mostra qual Pod respondeu.',
+  },
+  {
     id: 'pod',
     target: 'pod',
     title: 'Tudo é clicável',

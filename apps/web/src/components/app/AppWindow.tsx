@@ -72,7 +72,7 @@ export function AppWindow() {
   }
 
   return (
-    <section className="shrink-0 border-b border-line" aria-label="Janela do app">
+    <section className="shrink-0 border-b border-line" aria-label="Janela do app" data-tour="app">
       <header className="flex items-center gap-2 px-4 pt-3 pb-2">
         <button onClick={toggle} aria-expanded={!collapsed} className="flex min-w-0 items-center gap-1.5 text-[12.5px] font-semibold text-fg">
           <ChevronDown size={14} className={cn('text-fg-faint transition-transform', collapsed && '-rotate-90')} />

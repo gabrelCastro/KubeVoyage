@@ -57,6 +57,9 @@ export const Traffic = memo(function Traffic({ layout, services }: { layout: Lay
       const { layout, services } = latest.current
       // the app window shows what visitors of the app's Service get
       const appSvc = services.find((s) => s.name === 'backend') ?? services[0]
+      // a request still in flight when the lesson restarts belongs to the old run: don't count it
+      const run = useSim.getState().epoch
+      const current = () => useSim.getState().epoch === run
       const { visit } = useApp.getState()
       for (const svc of services) {
         const sBox = layout.boxes[svc.uid]
@@ -65,7 +68,7 @@ export const Traffic = memo(function Traffic({ layout, services }: { layout: Lay
         if (!targets.length) {
           fly(failPath(sBox), true, () => {
             setFailed((f) => ({ ...f, [svc.uid]: (f[svc.uid] ?? 0) + 1 }))
-            if (svc === appSvc) visit({ ok: false })
+            if (svc === appSvc && current()) visit({ ok: false })
           })
           continue
         }
@@ -73,7 +76,7 @@ export const Traffic = memo(function Traffic({ layout, services }: { layout: Lay
         const pod = targets[i]
         fly(requestPath(sBox, layout.boxes[pod]), false, () => {
           setServed((s) => ({ ...s, [pod]: (s[pod] ?? 0) + 1 }))
-          if (svc === appSvc) visit({ ok: true, podUid: pod, podName: useSim.getState().cluster.pods[pod]?.name })
+          if (svc === appSvc && current()) visit({ ok: true, podUid: pod, podName: useSim.getState().cluster.pods[pod]?.name })
         })
       }
     }

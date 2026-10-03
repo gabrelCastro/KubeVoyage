@@ -11,7 +11,7 @@ export const debugging: Lesson = {
   title: 'Depuração: sem endpoints',
   tagline: 'Tudo está rodando. Nada funciona. Descubra por quê.',
   idea: {
-    a: { label: 'Sintoma', text: 'requisições falham com 503' },
+    a: { label: 'Sintoma', text: 'conexões ao Service são recusadas' },
     b: { label: 'Causa', text: '…é você quem vai descobrir' },
     body: 'Use o palco como um mapa: o que está conectado, e o que não está? Depois confirme com kubectl antes de mudar qualquer coisa.',
   },
@@ -62,7 +62,7 @@ export const debugging: Lesson = {
       if (end < 0 || !fix) return null
       return [
         { t: 0, text: 'Selector do Service: app=api — labels dos Pods: app=backend', tone: 'start' as const },
-        { t: 0, text: 'Endpoints: <none> → toda requisição respondida com 503' },
+        { t: 0, text: 'Endpoints: <none> → toda conexão ao Service é recusada' },
         { t: (events[end].at - fix.at) / 1000, text: `Você mudou ${fix.reason === 'SelectorChanged' ? 'o selector' : 'uma label'}` },
         { t: (events[end].at - fix.at) / 1000, text: 'O endpoints controller encontrou Pods Ready — o tráfego voltou', tone: 'end' as const },
       ]

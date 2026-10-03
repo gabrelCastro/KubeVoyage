@@ -233,6 +233,12 @@ describe('commands', () => {
     expect(out(sim, 'kubectl create deployment no-image')).toContain('required flag(s) "image" not set')
   })
 
+  it('shows the learner app in a request made from inside the cluster', () => {
+    const result = text(run(sim, 'kubectl run test --rm -it --image=busybox -- wget -qO- http://backend', { app: { name: 'Café Lunar', message: 'Aberto no cluster' } }))
+    expect(result).toContain('"app":"Café Lunar"')
+    expect(result).toContain('"message":"Aberto no cluster"')
+  })
+
   it('pipes through grep, wc, head', () => {
     expect(out(sim, 'kubectl get pods | grep Running | wc -l')).toBe('3')
     expect(out(sim, 'kubectl get pods | grep -c NAME')).toBe('1')

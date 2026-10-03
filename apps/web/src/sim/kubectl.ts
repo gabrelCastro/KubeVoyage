@@ -36,6 +36,10 @@ export interface CommandResult {
   focusUid?: string
 }
 
+export interface RunPresentation {
+  app?: { name: string; message: string }
+}
+
 export type WatchKind = 'pods' | 'deployments' | 'replicasets' | 'services' | 'endpoints' | 'endpointslices' | 'events' | 'nodes'
 
 export interface WatchSpec {
@@ -482,11 +486,11 @@ function usage(verb: string): CommandResult {
   }
 }
 
-export function run(sim: Simulation, input: string): CommandResult {
+export function run(sim: Simulation, input: string, presentation: RunPresentation = {}): CommandResult {
   const { stages, error } = tokenize(input.trim())
   if (error) return err(`bash: ${error}`)
   if (!stages.length || !stages[0].length) return stages.length > 1 ? err("bash: syntax error near unexpected token `|'") : { lines: [] }
-  const result = runOne(sim, stages[0])
+  const result = runOne(sim, stages[0], presentation)
   if (stages.length === 1) return result
   let lines = result.lines
   for (const stage of stages.slice(1)) {
@@ -499,7 +503,7 @@ export function run(sim: Simulation, input: string): CommandResult {
 
 const SHELL = ['kubectl', 'k', 'clear', 'help', 'ls', 'cat', 'explicar']
 
-function runOne(sim: Simulation, tokens: string[]): CommandResult {
+function runOne(sim: Simulation, tokens: string[], presentation: RunPresentation): CommandResult {
   const [cmd, ...rest] = tokens
 
   if (cmd === 'clear') return { lines: [], clear: true }
@@ -619,7 +623,7 @@ function runOne(sim: Simulation, tokens: string[]): CommandResult {
     case 'logs':
       return logs(sim, args, flags)
     case 'run':
-      return runPod(sim, args, flags)
+      return runPod(sim, args, flags, presentation)
     case 'edit': {
       const [kind, names] = splitKind(args)
       if (!kind || KIND_ALIASES[kind] !== 'deployments' || !names[0]) return err('Usage: kubectl edit deployment/<name>')
@@ -1545,7 +1549,7 @@ function table2(rows: [string, string, Tone?][]): Line[] {
 const DNS = /^([a-z0-9-]+)(?:\.default(?:\.svc(?:\.cluster\.local)?)?)?$/
 
 /** What a request from inside the cluster to a Service would get: DNS → ClusterIP → kube-proxy → endpoint. */
-function fromInside(sim: Simulation, command: string[]): Line[] {
+function fromInside(sim: Simulation, command: string[], presentation: RunPresentation): Line[] {
   const [tool, ...rest] = command
   if (tool === 'nslookup') {
     const host = rest.find((a) => !a.startsWith('-')) ?? ''
@@ -1574,14 +1578,14 @@ function fromInside(sim: Simulation, command: string[]): Line[] {
     const pod = sim.cluster.pods[svc.endpoints[Math.floor(Math.random() * svc.endpoints.length)]]
     const path = '/' + pathParts.join('/')
     return [
-      plain(JSON.stringify({ status: 'ok', path, servedBy: pod.name, version: tag(pod.image) }), 'success'),
+      plain(JSON.stringify({ status: 'ok', app: presentation.app?.name, message: presentation.app?.message, path, servedBy: pod.name, version: tag(pod.image) }), 'success'),
       [{ t: '# atendido por ', c: 'muted' }, { t: pod.name, c: 'muted', ref: pod.uid }, { t: ' — rode de novo e o kube-proxy pode escolher outro Pod', c: 'muted' }],
     ]
   }
   return [plain(`${tool ?? 'sh'}: este terminal não abre shells interativos dentro de Pods.`, 'warn'), note('dá para rodar wget, curl ou nslookup — ex.: -- wget -qO- http://backend')]
 }
 
-function runPod(sim: Simulation, args: string[], flags: Flags): CommandResult {
+function runPod(sim: Simulation, args: string[], flags: Flags, presentation: RunPresentation): CommandResult {
   const [name, ...command] = args
   if (!name) return err('error: NAME is required for run')
   if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(name)) return err(`The Pod "${name}" is invalid: metadata.name: Invalid value: "${name}": a lowercase RFC 1123 label must consist of lower case alphanumeric characters or '-'`)
@@ -1591,7 +1595,7 @@ function runPod(sim: Simulation, args: string[], flags: Flags): CommandResult {
   if (command.length && !interactive) return { lines: [plain('Sem -it o comando rodaria em segundo plano; aqui ele só é simulado com --rm -it.', 'warn')] }
   if (interactive) {
     if (!command.length) return { lines: [plain('Este terminal não abre shells interativos dentro de Pods.', 'warn'), note('passe um comando depois de --, ex.: -- wget -qO- http://backend')] }
-    const out = fromInside(sim, command)
+    const out = fromInside(sim, command, presentation)
     return { lines: [...out, ...(flags.rm ? [plain(`pod "${name}" deleted`, 'muted')] : [note('sem --rm, o Pod ficaria no cluster depois do comando')])] }
   }
   let labels: Labels = { run: name }
