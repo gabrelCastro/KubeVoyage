@@ -386,7 +386,7 @@ describe('rollout restart, pause and resume', () => {
     expect(out(sim, 'kubectl rollout pause deployment/backend')).toBe('deployment.apps/backend paused')
     expect(out(sim, 'kubectl rollout pause deployment/backend')).toContain('already paused')
     expect(out(sim, 'kubectl rollout restart deployment/backend')).toContain("can't restart paused deployment")
-    run(sim, 'kubectl set image deployment/backend backend=ghcr.io/kubelearn/backend:1.6')
+    run(sim, 'kubectl set image deployment/backend backend=ghcr.io/kubelearn/backend:1.7')
     settle(sim, 8000)
     expect(Object.keys(sim.cluster.replicaSets)).toHaveLength(1)
     expect(Object.values(sim.cluster.pods).every((p) => p.image.endsWith(':1.4'))).toBe(true)
@@ -397,7 +397,7 @@ describe('rollout restart, pause and resume', () => {
     expect(Object.values(sim.cluster.pods).filter((p) => p.ready)).toHaveLength(4)
     expect(out(sim, 'kubectl rollout resume deployment/backend')).toBe('deployment.apps/backend resumed')
     settle(sim, 25000)
-    expect(Object.values(sim.cluster.pods).filter((p) => p.ready && p.image.endsWith(':1.6'))).toHaveLength(4)
+    expect(Object.values(sim.cluster.pods).filter((p) => p.ready && p.image.endsWith(':1.7'))).toHaveLength(4)
   })
 })
 

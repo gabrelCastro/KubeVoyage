@@ -103,12 +103,12 @@ describe('labels', () => {
 describe('rollouts & failures', () => {
   it('a healthy new version rolls over completely, keeping the old ReplicaSet at 0', () => {
     const sim = cluster()
-    sim.setImage('backend', 'backend', 'ghcr.io/kubelearn/backend:1.6')
+    sim.setImage('backend', 'backend', 'ghcr.io/kubelearn/backend:1.7')
     settle(sim, 30000)
     const dep = sim.findDeployment('backend')!
     expect(dep.rollout).toBe('complete')
     expect(ready(sim)).toHaveLength(3)
-    expect(ready(sim).every((p) => p.image.endsWith(':1.6'))).toBe(true)
+    expect(ready(sim).every((p) => p.image.endsWith(':1.7'))).toBe(true)
     const rss = sim.replicaSetsOf(dep)
     expect(rss).toHaveLength(2)
     expect(rss[0].desired).toBe(0)
@@ -116,7 +116,7 @@ describe('rollouts & failures', () => {
 
   it('never drops below desired availability during a rollout', () => {
     const sim = cluster()
-    sim.setImage('backend', 'backend', 'ghcr.io/kubelearn/backend:1.6')
+    sim.setImage('backend', 'backend', 'ghcr.io/kubelearn/backend:1.7')
     let min = 3
     for (let t = 0; t < 30000; t += 16) {
       sim.advance(16)
