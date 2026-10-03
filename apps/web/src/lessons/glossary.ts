@@ -221,6 +221,19 @@ export const GLOSSARY: GlossaryEntry[] = [
     lessonId: 'autoscaling',
     anchor: 'metrics-server',
   },
+  {
+    term: 'Secret',
+    aliases: ['Secrets'],
+    definition: 'Como um ConfigMap, para senhas e tokens. Por padrão, os valores ficam só em base64 — codificados, não criptografados.',
+    lessonId: 'secrets',
+    anchor: 'secret',
+  },
+  {
+    term: 'base64',
+    definition: 'Uma forma de escrever bytes como texto. Não usa chave: qualquer um decodifica.',
+    lessonId: 'secrets',
+    anchor: 'base64',
+  },
 ]
 
 export const GLOSSARY_MATCHES = GLOSSARY.flatMap((entry) => [entry.term, ...(entry.aliases ?? [])].map((alias) => ({ alias, entry }))).sort(

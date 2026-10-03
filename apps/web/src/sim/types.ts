@@ -2,7 +2,7 @@ export type Labels = Record<string, string>
 
 export type PodPhase = 'Pending' | 'ContainerCreating' | 'Running' | 'Terminating' | 'Error' | 'CrashLoopBackOff'
 
-export type ResourceKind = 'Deployment' | 'ReplicaSet' | 'Pod' | 'Service' | 'Node' | 'ConfigMap' | 'HorizontalPodAutoscaler'
+export type ResourceKind = 'Deployment' | 'ReplicaSet' | 'Pod' | 'Service' | 'Node' | 'ConfigMap' | 'HorizontalPodAutoscaler' | 'Secret'
 
 export type RolloutState = 'complete' | 'progressing' | 'stalled'
 
@@ -18,6 +18,17 @@ export interface Template {
   liveness?: boolean
   /** CPU the container asks for (requests) and may use at most (limits), in millicores. */
   resources?: Resources
+  /** `envFrom: secretRef` — a Secret whose keys also become environment variables. */
+  secret?: string
+}
+
+/** Like a ConfigMap, for sensitive values. Kept here in clear text; the API shows them base64-encoded. */
+export interface Secret {
+  kind: 'Secret'
+  uid: string
+  name: string
+  data: Record<string, string>
+  createdAt: number
 }
 
 export interface Resources {
@@ -83,6 +94,7 @@ export interface ReplicaSet {
   configMap?: string
   liveness?: boolean
   resources?: Resources
+  secret?: string
   revision: number
   restartedAt?: number
   desired: number
@@ -121,6 +133,7 @@ export interface Pod {
   /** The process is alive but stopped answering — probes fail. */
   hung?: boolean
   resources?: Resources
+  secret?: string
   /** A load generator: while it runs, it sends a stream of requests to this Service. */
   loadTarget?: string
 }
@@ -158,6 +171,7 @@ export interface ClusterState {
   services: Record<string, Service>
   configMaps: Record<string, ConfigMap>
   hpas: Record<string, HorizontalPodAutoscaler>
+  secrets: Record<string, Secret>
   nodes: WorkerNode[]
   vacancies: Vacancy[]
 }

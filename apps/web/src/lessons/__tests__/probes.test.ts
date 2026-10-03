@@ -20,7 +20,7 @@ function lesson() {
 }
 
 /** Plays the lesson the way a learner would: the suggested command for each objective, in order. */
-describe('lesson 8: probes', () => {
+describe('lesson 9: probes', () => {
   it('each objective is done only after its own step, and the story is told', () => {
     const { sim, ctx, exec, done } = lesson()
     expect(done()).toEqual([])

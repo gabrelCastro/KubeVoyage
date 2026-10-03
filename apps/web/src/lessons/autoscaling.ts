@@ -9,7 +9,7 @@ const rescaled = (ctx: LessonCtx, why: 'above' | 'below', from = 0) => firstInde
 
 export const autoscaling: Lesson = {
   id: 'autoscaling',
-  number: 9,
+  number: 10,
   track: 'Escala',
   title: 'Recursos e autoscaling',
   tagline: 'Quanto cada Pod pede, quanto ele usa — e quem decide quantos Pods existem.',

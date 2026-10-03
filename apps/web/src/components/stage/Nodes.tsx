@@ -295,7 +295,7 @@ export const PodNode = memo(function PodNode({ pod, geo, probe, ...e }: { pod: P
             <StatusGlyph state={v} size={14} />
             <Rolling value={podLabel(pod)} className="truncate" />
             {/* the learner's app, running inside: only once the container is up */}
-            {appEmoji && (pod.phase === 'Running' || pod.phase === 'Terminating') && pod.image.includes('kubelearn/backend') && !isBroken(pod.image) && (
+            {appEmoji && (pod.phase === 'Running' || pod.phase === 'Terminating') && pod.image.includes('kubelearn/backend') && !(isBroken(pod.image) && !pod.env?.DATABASE_URL) && (
               <span className="ml-auto flex items-center gap-0.5 text-[13px] leading-none" title={handEdited ? 'Seu app — editado à mão só neste Pod' : 'Seu app roda aqui'}>
                 {handEdited && <span className="text-[10px] text-warn">✎</span>}
                 <span aria-hidden>{appEmoji}</span>

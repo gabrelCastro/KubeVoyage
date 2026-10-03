@@ -32,8 +32,9 @@ npm run fixtures   # regenerate the cross-language merge fixtures after changing
 | 5 | Debugging: no endpoints | A Service selecting `app=api` while Pods say `app=backend` — find it, fix it |
 | 6 | Failures & rollbacks | A broken v1.5 crash-loops, the rollout stalls safely, `rollout undo` restores v1.4 |
 | 7 | ConfigMaps | A missing ConfigMap stalls the rollout (`CreateContainerConfigError`); a changed one reaches no running Pod until `rollout restart` |
-| 8 | Probes | v1.6 freezes after a while: readiness takes it out of the Service but only a liveness probe restarts it — and `rollout undo` would drop the probe |
-| 9 | Resources & autoscaling | Without requests the HPA reads `<unknown>`; with them, a load generator scales it up — and down only after the stabilization window |
+| 8 | Secrets | v1.5 from lesson 6 fixed forward with a Secret — and `-o jsonpath … \| base64 -d` shows it was never hidden |
+| 9 | Probes | v1.6 freezes after a while: readiness takes it out of the Service but only a liveness probe restarts it — and `rollout undo` would drop the probe |
+| 10 | Resources & autoscaling | Without requests the HPA reads `<unknown>`; with them, a load generator scales it up — and down only after the stabilization window |
 
 Lessons live in `src/lessons/` as data: a starting cluster (`setup`), manifests in the
 terminal's directory (`files`), objectives as predicates over the simulated state, and a

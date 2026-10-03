@@ -110,7 +110,7 @@ describe('kubectl get', () => {
     expect(json.kind).toBe('List')
     expect(json.items[0].spec.template.metadata.labels).toEqual({ app: 'backend' })
     expect(out(sim, 'kubectl get svc -o name')).toBe('service/backend')
-    expect(out(sim, 'kubectl get pods -o jsonpath={.items}')).toContain('existe no kubectl real')
+    expect(out(sim, 'kubectl get pods -o custom-columns=NAME:.metadata.name')).toContain('existe no kubectl real')
     expect(out(sim, 'kubectl get pods -o bogus')).toContain('unable to match a printer')
   })
 
@@ -208,7 +208,7 @@ describe('commands', () => {
 
   it('says real-but-unsimulated commands and kinds exist', () => {
     expect(out(sim, 'kubectl exec -it x -- sh')).toContain('existe no kubectl real')
-    expect(out(sim, 'kubectl get secrets')).toContain('existe no Kubernetes real')
+    expect(out(sim, 'kubectl get ingress')).toContain('existe no Kubernetes real')
     expect(out(sim, 'kubectl set env deployment/backend A=b')).toContain('ainda não é simulado')
   })
 

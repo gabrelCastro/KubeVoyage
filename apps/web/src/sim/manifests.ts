@@ -135,6 +135,33 @@ spec:
             httpGet: { path: /healthz, port: 8080 }`,
 }
 
+// Lesson 10: the v1.5 that crashed for lack of DATABASE_URL, now reading it from a Secret
+FILES['backend-secret.yaml'] = {
+  manifest: { kind: 'Deployment', name: 'backend', replicas: 3, labels: { app: 'backend' }, image: 'ghcr.io/kubelearn/backend:1.5', secret: 'db-credentials' },
+  yaml: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/kubelearn/backend:1.5
+          envFrom:
+            - secretRef:
+                name: db-credentials   # DATABASE_URL vem daqui
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }`,
+}
+
 /** Kept for the first lesson and tests. */
 export const MANIFEST = { file: 'backend.yaml', manifest: FILES['backend.yaml'].manifest }
 export const MANIFEST_YAML = FILES['backend.yaml'].yaml

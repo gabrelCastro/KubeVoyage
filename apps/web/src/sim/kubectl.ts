@@ -2,6 +2,7 @@ import { parseArgs, parseSelector, selects, suggest, TAKES_VALUE, tokenize, type
 import {
   apiPhase,
   configMapObject,
+  secretObject,
   hpaObject,
   deploymentObject,
   endpointSliceObject,
@@ -15,12 +16,13 @@ import {
   sliceName,
   toJson,
   toYaml,
+  type Json,
   type Obj,
 } from './cli/objects'
 import { pipe } from './cli/pipe'
 import { isBroken, labelString, NODE_CPU, rsSelector, short, tag, type Simulation } from './engine'
 import { FILES, IMAGE } from './manifests'
-import type { ClusterEvent, ConfigMap, Deployment, HorizontalPodAutoscaler, Labels, Pod, ReplicaSet, Service, WorkerNode } from './types'
+import type { ClusterEvent, ConfigMap, Deployment, HorizontalPodAutoscaler, Labels, Pod, ReplicaSet, Secret, Service, WorkerNode } from './types'
 
 export { FILES, IMAGE, MANIFEST, MANIFEST_YAML } from './manifests'
 
@@ -46,7 +48,7 @@ export interface RunPresentation {
   images?: string[]
 }
 
-export type WatchKind = 'pods' | 'deployments' | 'replicasets' | 'services' | 'endpoints' | 'endpointslices' | 'events' | 'nodes' | 'configmaps' | 'horizontalpodautoscalers'
+export type WatchKind = 'pods' | 'deployments' | 'replicasets' | 'services' | 'endpoints' | 'endpointslices' | 'events' | 'nodes' | 'configmaps' | 'horizontalpodautoscalers' | 'secrets'
 
 export interface WatchSpec {
   kind: WatchKind
@@ -143,13 +145,14 @@ const KIND_ALIASES: Record<string, KindId | 'all'> = {
   endpointslice: 'endpointslices', endpointslices: 'endpointslices', 'endpointslice.discovery.k8s.io': 'endpointslices', 'endpointslices.discovery.k8s.io': 'endpointslices',
   ev: 'events', event: 'events', events: 'events',
   cm: 'configmaps', configmap: 'configmaps', configmaps: 'configmaps',
+  secret: 'secrets', secrets: 'secrets',
   hpa: 'horizontalpodautoscalers', horizontalpodautoscaler: 'horizontalpodautoscalers', horizontalpodautoscalers: 'horizontalpodautoscalers', 'horizontalpodautoscaler.autoscaling': 'horizontalpodautoscalers',
   no: 'nodes', node: 'nodes', nodes: 'nodes',
   all: 'all',
 }
 
 /** Real kinds this cluster doesn't simulate: say so instead of "no such type". */
-const UNSIMULATED_KINDS = ['secrets', 'secret', 'namespaces', 'ns', 'ingress', 'ingresses', 'ing', 'statefulsets', 'sts', 'daemonsets', 'ds', 'jobs', 'job', 'cronjobs', 'cj', 'persistentvolumeclaims', 'pvc', 'persistentvolumes', 'pv', 'serviceaccounts', 'sa', 'namespace']
+const UNSIMULATED_KINDS = ['namespaces', 'ns', 'ingress', 'ingresses', 'ing', 'statefulsets', 'sts', 'daemonsets', 'ds', 'jobs', 'job', 'cronjobs', 'cj', 'persistentvolumeclaims', 'pvc', 'persistentvolumes', 'pv', 'serviceaccounts', 'sa', 'namespace']
 
 type Item = { name: string; uid?: string }
 
@@ -325,6 +328,16 @@ const SPECS: { [K in KindId]: Spec<any> } = {
       { t: age(sim.now - h.createdAt) },
     ],
   } satisfies Spec<HorizontalPodAutoscaler>,
+  secrets: {
+    resource: 'secrets',
+    prefix: 'secret',
+    namespaced: true,
+    items: (sim) => Object.values(sim.cluster.secrets).sort((a, b) => a.createdAt - b.createdAt),
+    labels: () => ({}),
+    object: (sim, c: Secret) => secretObject(sim, c),
+    header: () => ['NAME', 'TYPE', 'DATA', 'AGE'],
+    row: (sim, c: Secret) => [{ t: c.name, c: 'strong' }, { t: 'Opaque' }, { t: String(Object.keys(c.data).length) }, { t: age(sim.now - c.createdAt) }],
+  } satisfies Spec<Secret>,
   configmaps: {
     resource: 'configmaps',
     prefix: 'configmap',
@@ -363,7 +376,7 @@ function resolveKind(raw: string): KindId[] | { error: Line[] } {
     if (k === 'all') out.push(...ALL)
     else if (k) out.push(k)
     else if (UNSIMULATED_KINDS.includes(part.toLowerCase()))
-      return { error: [plain(`"${part}" existe no Kubernetes real, mas este cluster de treino só simula Pods, Deployments, ReplicaSets, Services, ConfigMaps, EndpointSlices, Events e Nodes.`, 'warn')] }
+      return { error: [plain(`"${part}" existe no Kubernetes real, mas este cluster de treino só simula Pods, Deployments, ReplicaSets, Services, ConfigMaps, Secrets, HPAs, EndpointSlices, Events e Nodes.`, 'warn')] }
     else {
       const guess = suggest(part, Object.keys(KIND_ALIASES).filter((a) => !a.includes('.')))[0]
       return { error: [plain(`error: the server doesn't have a resource type "${part}"`, 'error'), ...(guess ? [note(`você quis dizer "${guess}"?`)] : [])] }
@@ -412,7 +425,7 @@ const VERB_FLAGS: Record<string, string[]> = {
   logs: ['p', 'follow', 'tail', 'c', 'l'],
   run: ['image', 'labels', 'restart', 'rm', 'i', 't', 'it', 'port'],
   edit: [],
-  create: ['image', 'replicas', 'from-literal'],
+  create: ['image', 'replicas', 'from-literal', 'cert', 'key'],
   patch: ['patch', 'type'],
   autoscale: ['cpu', 'cpu-percent', 'min', 'max', 'name'],
   top: [],
@@ -546,7 +559,7 @@ export function run(sim: Simulation, input: string, presentation: RunPresentatio
   return { ...result, lines: [...lines, ...(result.watch ? [note('-w não acompanha a saída depois de um | neste terminal')] : [])], watch: undefined }
 }
 
-const SHELL = ['kubectl', 'k', 'clear', 'help', 'ls', 'cat', 'explicar']
+const SHELL = ['kubectl', 'k', 'clear', 'help', 'ls', 'cat', 'explicar', 'echo']
 
 function runOne(sim: Simulation, tokens: string[], presentation: RunPresentation): CommandResult {
   const [cmd, ...rest] = tokens
@@ -554,6 +567,7 @@ function runOne(sim: Simulation, tokens: string[], presentation: RunPresentation
   if (cmd === 'clear') return { lines: [], clear: true }
   if (cmd === 'help') return help()
   if (cmd === 'explicar') return explain(sim, rest)
+  if (cmd === 'echo') return { lines: [plain(rest.filter((a) => a !== '-n').join(' '))] }
   if (cmd === 'ls') return { lines: [sim.files.map((f) => ({ t: `${f}  `, c: 'accent' as Tone }))] }
   if (cmd === 'cat') {
     if (!rest.length) return err('cat: informe um arquivo — por exemplo, cat backend.yaml')
@@ -686,6 +700,7 @@ function runOne(sim: Simulation, tokens: string[], presentation: RunPresentation
       const [kind, names] = splitKind(args)
       const name = names[0]
       if (kind && KIND_ALIASES[kind] === 'configmaps') return createConfigMap(sim, name, more)
+      if (kind === 'secret') return createSecret(sim, names, more)
       if (!kind || KIND_ALIASES[kind] !== 'deployments' || !name) return err('Usage: kubectl create deployment <name> --image=<image> [--replicas=N]')
       if (!/^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$/.test(name) || name.length > 253)
         return err(`error: failed to create deployment: Deployment.apps "${name}" is invalid: metadata.name: Invalid value`)
@@ -757,6 +772,11 @@ function remove(sim: Simulation, args: string[], flags: Flags): CommandResult {
     if (!names[0]) return err('error: resource(s) were provided, but no name was specified')
     if (sim.deleteHpa(names[0])) return { lines: [plain(`horizontalpodautoscaler.autoscaling "${names[0]}" deleted`, 'warn')] }
     return flags['ignore-not-found'] ? { lines: [] } : err(`Error from server (NotFound): horizontalpodautoscalers.autoscaling "${names[0]}" not found`)
+  }
+  if (k === 'secrets') {
+    if (!names[0]) return err('error: resource(s) were provided, but no name was specified')
+    if (sim.deleteSecret(names[0])) return { lines: [plain(`secret "${names[0]}" deleted`, 'warn')] }
+    return flags['ignore-not-found'] ? { lines: [] } : err(`Error from server (NotFound): secrets "${names[0]}" not found`)
   }
   if (k === 'configmaps') {
     if (!names[0]) return err('error: resource(s) were provided, but no name was specified')
@@ -912,7 +932,7 @@ function rollout(sim: Simulation, args: string[], flags: Flags): CommandResult {
 // ── get ────────────────────────────────────────────────────────────────────
 
 const FORMATS = ['wide', 'yaml', 'json', 'name']
-const REAL_FORMATS = ['custom-columns', 'custom-columns-file', 'go-template', 'go-template-file', 'jsonpath', 'jsonpath-as-json', 'jsonpath-file', 'template', 'templatefile']
+const REAL_FORMATS = ['custom-columns', 'custom-columns-file', 'go-template', 'go-template-file', 'jsonpath-as-json', 'jsonpath-file', 'template', 'templatefile']
 
 function yamlLines(obj: Obj): Line[] {
   return toYaml(obj).map((l) => {
@@ -1000,9 +1020,10 @@ function get(sim: Simulation, args: string[], flags: Flags): CommandResult {
   if ('error' in groups) return { lines: groups.error }
 
   const output = typeof flags.o === 'string' ? flags.o : undefined
-  if (output && !FORMATS.includes(output)) {
+  const jsonpath = output?.startsWith('jsonpath=') ? output.slice('jsonpath='.length) : undefined
+  if (output && !FORMATS.includes(output) && jsonpath === undefined) {
     if (REAL_FORMATS.includes(output.split('=')[0]))
-      return { lines: [plain(`O formato -o ${output.split('=')[0]} existe no kubectl real, mas aqui só há wide, yaml, json e name.`, 'warn')] }
+      return { lines: [plain(`O formato -o ${output.split('=')[0]} existe no kubectl real, mas aqui só há wide, yaml, json, name e jsonpath.`, 'warn')] }
     return err(
       `error: unable to match a printer suitable for the output format "${output}", allowed formats are: custom-columns,custom-columns-file,go-template,go-template-file,json,jsonpath,jsonpath-as-json,jsonpath-file,name,template,templatefile,wide,yaml`,
     )
@@ -1052,7 +1073,7 @@ function get(sim: Simulation, args: string[], flags: Flags): CommandResult {
     }
     found += items.length
 
-    if (output === 'yaml' || output === 'json') {
+    if (output === 'yaml' || output === 'json' || jsonpath !== undefined) {
       objects.push(...items.map((t) => spec.object(sim, t)))
       continue
     }
@@ -1079,6 +1100,13 @@ function get(sim: Simulation, args: string[], flags: Flags): CommandResult {
     lines.push(...(flags['no-headers'] ? t.slice(1) : t))
   }
 
+  if (jsonpath !== undefined) {
+    const single = objects.length === 1 && groups.length === 1 && groups[0].names.length === 1
+    if (!objects.length) return { lines: errors.length ? errors : [] }
+    const r = renderJsonPath(single ? objects[0] : listObject(objects), jsonpath)
+    if ('error' in r) return err(r.error)
+    return { lines: [...r.text.split('\n').map((l) => plain(l)), ...errors] }
+  }
   if (output === 'yaml' || output === 'json') {
     const single = objects.length === 1 && groups.length === 1 && groups[0].names.length === 1
     const value = single ? objects[0] : listObject(objects)
@@ -1127,7 +1155,7 @@ function describe(sim: Simulation, args: string[], flags: Flags): CommandResult 
   if ('error' in kinds) return { lines: kinds.error }
   if (kinds.length !== 1) return err('Usage: kubectl describe pod|deployment|rs|service|node <name>')
   const kind = kinds[0]
-  if (!['pods', 'deployments', 'replicasets', 'services', 'nodes', 'configmaps', 'horizontalpodautoscalers'].includes(kind)) return { lines: [plain(`describe de ${rawKind} ainda não está disponível aqui — tente kubectl get ${rawKind} -o yaml`, 'warn')] }
+  if (!['pods', 'deployments', 'replicasets', 'services', 'nodes', 'configmaps', 'horizontalpodautoscalers', 'secrets'].includes(kind)) return { lines: [plain(`describe de ${rawKind} ainda não está disponível aqui — tente kubectl get ${rawKind} -o yaml`, 'warn')] }
   const spec = SPECS[kind] as Spec<Item>
   let names = rawNames
   const sel = selectorFlag(flags)
@@ -1283,6 +1311,23 @@ function describeOne(sim: Simulation, kind: KindId, name: string): CommandResult
       ],
     }
   }
+  if (kind === 'secrets') {
+    const secret = sim.findSecret(name)
+    if (!secret) return err(`Error from server (NotFound): secrets "${name}" not found`)
+    return {
+      focusUid: secret.uid,
+      lines: [
+        kv('Name', secret.name, 'strong'),
+        kv('Namespace', 'default'),
+        kv('Type', 'Opaque'),
+        [],
+        plain('Data', 'muted'),
+        plain('====', 'muted'),
+        ...Object.entries(secret.data).map(([k, v]): Line => [{ t: `${k}:  `, c: 'accent' }, { t: `${new TextEncoder().encode(v).length} bytes` }]),
+        note('o describe esconde os valores — mas o -o yaml mostra, em base64'),
+      ],
+    }
+  }
   if (kind === 'configmaps') {
     const c = sim.findConfigMap(name)
     if (!c) return err(`Error from server (NotFound): configmaps "${name}" not found`)
@@ -1354,7 +1399,7 @@ function help(): CommandResult {
 
 // ── completion ─────────────────────────────────────────────────────────────
 
-const KIND_WORDS = ['pods', 'deployments', 'replicasets', 'services', 'endpoints', 'endpointslices', 'events', 'nodes', 'configmaps', 'hpa', 'all', 'po', 'deploy', 'rs', 'svc', 'ep', 'no', 'cm']
+const KIND_WORDS = ['pods', 'deployments', 'replicasets', 'services', 'endpoints', 'endpointslices', 'events', 'nodes', 'configmaps', 'secrets', 'hpa', 'all', 'po', 'deploy', 'rs', 'svc', 'ep', 'no', 'cm']
 
 /** How each flag is offered: `=` means "a value follows, right here". */
 const FLAG_WORDS: Record<string, string> = {
@@ -1430,7 +1475,7 @@ function candidatesFor(sim: Simulation, words: string[], last: string, images: s
     case 'edit':
       return positional.length === 0 ? ['deployment', 'deploy'] : namesOf(sim, 'deployments')
     case 'create':
-      return positional.length === 0 ? ['deployment', 'configmap'] : []
+      return positional.length === 0 ? ['deployment', 'configmap', 'secret'] : positional[0] === 'secret' && positional.length === 1 ? ['generic'] : []
     case 'patch':
       return positional.length === 0 ? ['configmap'] : positional.length === 1 ? namesOf(sim, 'configmaps') : []
     case 'autoscale':
@@ -1493,6 +1538,7 @@ const KIND_DOCS: Record<KindId | 'all', string> = {
   events: 'Events — o que os controllers relataram',
   nodes: 'Nodes — as máquinas do cluster',
   configmaps: 'ConfigMaps — configuração guardada fora da imagem',
+  secrets: 'Secrets — valores sensíveis, guardados em base64 (não criptografados por padrão)',
   horizontalpodautoscalers: 'HorizontalPodAutoscalers — ajustam as réplicas pela CPU',
   all: 'os tipos principais: Pods, Services, Deployments e ReplicaSets',
 }
@@ -1887,4 +1933,63 @@ function top(sim: Simulation, args: string[]): CommandResult {
       ...(throttled.length ? [note(`${throttled.length} Pod${throttled.length === 1 ? '' : 's'} no limite de CPU: o kernel está estrangulando (throttling) — ficam mais lentos`)] : []),
     ],
   }
+}
+
+// ── Secrets ────────────────────────────────────────────────────────────────
+
+function createSecret(sim: Simulation, names: string[], tokens: string[]): CommandResult {
+  const [type, name] = names
+  if (type !== 'generic') {
+    if (type === 'tls' || type === 'docker-registry')
+      return { lines: [plain(`kubectl create secret ${type} existe no kubectl real, mas aqui só simulamos secret generic.`, 'warn')] }
+    return err('Usage: kubectl create secret generic <nome> --from-literal=CHAVE=valor')
+  }
+  if (!name) return err('error: exactly one NAME is required, got 0')
+  if (!/^[a-z0-9]([-.a-z0-9]*[a-z0-9])?$/.test(name)) return err(`The Secret "${name}" is invalid: metadata.name: Invalid value: "${name}"`)
+  const data: Record<string, string> = {}
+  for (const lit of literals(tokens)) {
+    const eq = lit.indexOf('=')
+    if (eq <= 0) return err(`error: invalid literal source ${lit}, expected key=value`)
+    const key = lit.slice(0, eq)
+    if (!ENV_KEY.test(key)) return err(`error: "${key}" is not a valid key name for a Secret`)
+    data[key] = lit.slice(eq + 1)
+  }
+  if (sim.createSecret(name, data) === 'exists') return err(`error: failed to create secret secrets "${name}" already exists`)
+  return ok(`secret/${name} created`, sim.findSecret(name)?.uid)
+}
+
+/** The JSONPath subset people actually type: `{.a.b}`, `{.items[0].x}`, `{.items[*].metadata.name}`, literal text around. */
+function renderJsonPath(value: Json, template: string): { text: string } | { error: string } {
+  const evalPath = (root: Json, path: string): Json[] => {
+    const parts = path.replace(/^\./, '').split(/\.|\[([^\]]*)\]/).filter((p) => p !== undefined && p !== '')
+    let current: Json[] = [root]
+    for (const part of parts) {
+      current = current.flatMap((v): Json[] => {
+        if (v === null || typeof v !== 'object') return []
+        if (part === '*') return Array.isArray(v) ? v : Object.values(v)
+        if (Array.isArray(v)) return /^\d+$/.test(part) && v[Number(part)] !== undefined ? [v[Number(part)]] : []
+        return part in v ? [v[part]] : []
+      })
+    }
+    return current
+  }
+  let out = ''
+  let rest = template
+  while (rest.length) {
+    const open = rest.indexOf('{')
+    if (open < 0) {
+      out += rest
+      break
+    }
+    out += rest.slice(0, open)
+    const close = rest.indexOf('}', open)
+    if (close < 0) return { error: `error: error parsing jsonpath ${template}, unclosed action` }
+    const expr = rest.slice(open + 1, close).trim()
+    if (!expr.startsWith('.')) return { error: `error: aqui o -o jsonpath entende caminhos como {.data.CHAVE} ou {.items[*].metadata.name}` }
+    out += evalPath(value, expr)
+      .map((v) => (typeof v === 'string' ? v : JSON.stringify(v)))
+      .join(' ')
+    rest = rest.slice(close + 1)
+  }
+  return { text: out.replace(/\\n/g, '\n') }
 }

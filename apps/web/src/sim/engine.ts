@@ -1,4 +1,5 @@
 import type {
+  Secret,
   HorizontalPodAutoscaler,
   Resources,
   ConfigMap,
@@ -67,6 +68,8 @@ export interface DeploymentManifest {
   configMap?: string
   livenessProbe?: boolean
   resources?: Resources
+  /** envFrom: secretRef */
+  secret?: string
 }
 
 export interface ConfigMapManifest {
@@ -139,11 +142,12 @@ const sameTemplateData = (a: Template, b: Template) =>
   (a.configMap ?? '') === (b.configMap ?? '') &&
   !!a.liveness === !!b.liveness &&
   sameResources(a.resources, b.resources) &&
+  (a.secret ?? '') === (b.secret ?? '') &&
   sameLabels(a.labels, b.labels)
 
 /** Does this ReplicaSet run this template? */
-export const sameTemplate = (rs: { image: string; templateLabels: Labels; restartedAt?: number; configMap?: string; liveness?: boolean; resources?: Resources }, t: Template) =>
-  sameTemplateData({ image: rs.image, labels: rs.templateLabels, restartedAt: rs.restartedAt, configMap: rs.configMap, liveness: rs.liveness, resources: rs.resources }, t)
+export const sameTemplate = (rs: { image: string; templateLabels: Labels; restartedAt?: number; configMap?: string; liveness?: boolean; resources?: Resources; secret?: string }, t: Template) =>
+  sameTemplateData({ image: rs.image, labels: rs.templateLabels, restartedAt: rs.restartedAt, configMap: rs.configMap, liveness: rs.liveness, resources: rs.resources, secret: rs.secret }, t)
 
 /** The selector a ReplicaSet really uses: the Deployment's, pinned to its own template hash. */
 export const rsSelector = (rs: ReplicaSet): Labels => ({ ...rs.selector, 'pod-template-hash': rs.hash })
@@ -161,6 +165,7 @@ export class Simulation {
     services: {},
     configMaps: {},
     hpas: {},
+    secrets: {},
     nodes: [
       { kind: 'Node', name: 'node-1' },
       { kind: 'Node', name: 'node-2' },
@@ -322,6 +327,10 @@ export class Simulation {
 
   findPod(name: string) {
     return Object.values(this.cluster.pods).find((p) => p.name === name)
+  }
+
+  findSecret(name: string) {
+    return Object.values(this.cluster.secrets).find((c) => c.name === name)
   }
 
   findConfigMap(name: string) {
@@ -523,8 +532,13 @@ export class Simulation {
     }
     const existing = this.findDeployment(m.name)
     if (existing) {
-      if ((existing.template.configMap ?? '') !== (m.configMap ?? '') || !!existing.template.liveness !== !!m.livenessProbe || !sameResources(existing.template.resources, m.resources)) {
-        this.applyTemplate(existing, { ...existing.template, image: m.image, configMap: m.configMap, liveness: m.livenessProbe, resources: m.resources })
+      if (
+        (existing.template.configMap ?? '') !== (m.configMap ?? '') ||
+        !!existing.template.liveness !== !!m.livenessProbe ||
+        !sameResources(existing.template.resources, m.resources) ||
+        (existing.template.secret ?? '') !== (m.secret ?? '')
+      ) {
+        this.applyTemplate(existing, { ...existing.template, image: m.image, configMap: m.configMap, liveness: m.livenessProbe, resources: m.resources, secret: m.secret })
         if (existing.replicas !== m.replicas) this.scale(m.name, m.replicas, 'apply')
         return 'configured'
       }
@@ -543,10 +557,10 @@ export class Simulation {
         name: m.name,
         replicas: m.replicas,
         selector: { ...m.labels },
-        template: { labels: { ...m.labels }, image: m.image, ...(m.configMap && { configMap: m.configMap }), ...(m.livenessProbe && { liveness: true }), ...(m.resources && { resources: { ...m.resources } }) },
+        template: { labels: { ...m.labels }, image: m.image, ...(m.configMap && { configMap: m.configMap }), ...(m.livenessProbe && { liveness: true }), ...(m.resources && { resources: { ...m.resources } }), ...(m.secret && { secret: m.secret }) },
         createdAt: this.now,
         revision: 1,
-        history: [{ image: m.image, labels: { ...m.labels }, ...(m.configMap && { configMap: m.configMap }), ...(m.livenessProbe && { liveness: true }), ...(m.resources && { resources: { ...m.resources } }) }],
+        history: [{ image: m.image, labels: { ...m.labels }, ...(m.configMap && { configMap: m.configMap }), ...(m.livenessProbe && { liveness: true }), ...(m.resources && { resources: { ...m.resources } }), ...(m.secret && { secret: m.secret }) }],
         rollout: 'complete',
       }
       this.cluster = { ...this.cluster, deployments: { ...this.cluster.deployments, [dep.uid]: dep } }
@@ -634,7 +648,7 @@ export class Simulation {
     if (sameTemplateData(previous, dep.template)) return 'skipped' as const
     this.act(() => {
       this.patchDep(dep.uid, {
-        template: { image: previous.image, labels: { ...previous.labels }, restartedAt: previous.restartedAt, configMap: previous.configMap, liveness: previous.liveness, resources: previous.resources },
+        template: { image: previous.image, labels: { ...previous.labels }, restartedAt: previous.restartedAt, configMap: previous.configMap, liveness: previous.liveness, resources: previous.resources, secret: previous.secret },
         revision: dep.revision + 1,
         history: [...dep.history, previous],
         rollout: dep.paused ? dep.rollout : 'progressing',
@@ -1027,12 +1041,40 @@ export class Simulation {
     })
   }
 
+  // ── Secrets ──────────────────────────────────────────────────────────────
+
+  createSecret(name: string, data: Record<string, string>) {
+    if (this.findSecret(name)) return 'exists' as const
+    this.act(() => {
+      const secret: Secret = { kind: 'Secret', uid: `secret-${++this.seq}`, name, data: { ...data }, createdAt: this.now }
+      this.cluster = { ...this.cluster, secrets: { ...this.cluster.secrets, [secret.uid]: secret } }
+      this.emit('you', 'user', 'SecretCreated', `kubectl create secret generic ${name}`, this.ref(secret))
+      this.narrate({
+        tone: 'info',
+        title: 'Secret criado',
+        body: `${name} guarda ${Object.keys(data).length === 1 ? 'um valor' : `${Object.keys(data).length} valores`} fora da imagem, como um ConfigMap — com uma diferença de tratamento, não de cofre: por padrão, ele fica só codificado em base64.`,
+      })
+    })
+    return 'created' as const
+  }
+
+  deleteSecret(name: string) {
+    const secret = this.findSecret(name)
+    if (!secret) return false
+    this.act(() => {
+      const { [secret.uid]: _gone, ...rest } = this.cluster.secrets
+      this.cluster = { ...this.cluster, secrets: rest }
+      this.emit('you', 'user', 'Deleted', `kubectl delete secret ${name}`, this.ref(secret))
+    })
+    return true
+  }
+
   /** The kubelet can't build the container's environment: wait, report, try again. */
-  private missingConfig(pod: Pod) {
+  private missingConfig(pod: Pod, kind: 'configmap' | 'secret' = 'configmap', ref = pod.configMap) {
     const first = pod.waiting !== 'CreateContainerConfigError'
     this.patchPod(pod.uid, { waiting: 'CreateContainerConfigError' })
     if (first) {
-      this.emit('kubelet', 'warning', 'Failed', `Error: configmap "${pod.configMap}" not found`, this.ref(pod))
+      this.emit('kubelet', 'warning', 'Failed', `Error: ${kind} "${ref}" not found`, this.ref(pod))
       this.fx({ kind: 'ping', uid: pod.uid, tone: 'error' })
       const rs = pod.ownerUid ? this.cluster.replicaSets[pod.ownerUid] : undefined
       const dep = rs && this.cluster.deployments[rs.ownerUid]
@@ -1041,7 +1083,7 @@ export class Simulation {
         this.narrateOnce(`config:${dep.uid}:${dep.revision}`, {
           tone: 'error',
           title: 'Rollout travado: falta configuração',
-          body: `O Pod novo pede o ConfigMap ${pod.configMap}, que não existe — o container nem chega a ser criado. Os Pods antigos continuam atendendo enquanto isso.`,
+          body: `O Pod novo pede o ${kind === 'secret' ? 'Secret' : 'ConfigMap'} ${ref}, que não existe — o container nem chega a ser criado. Os Pods antigos continuam atendendo enquanto isso.`,
           command: `kubectl describe pod ${pod.name}`,
         })
       }
@@ -1164,7 +1206,7 @@ export class Simulation {
     const pod = this.findPod(name)
     if (!pod) return null
     if (previous && pod.restarts === 0) return 'noprevious'
-    if (isBroken(pod.image)) {
+    if (isBroken(pod.image) && (!pod.env?.DATABASE_URL || (previous && pod.restarts > 0))) {
       if (!previous && (pod.phase === 'Pending' || pod.phase === 'ContainerCreating')) return []
       return [
         `level=info msg="starting backend" version=${tag(pod.image)}`,
@@ -1301,6 +1343,7 @@ export class Simulation {
       configMap: dep.template.configMap,
       liveness: dep.template.liveness,
       resources: dep.template.resources,
+      secret: dep.template.secret,
       desired,
       selector: { ...dep.selector },
       createdAt: this.now,
@@ -1474,6 +1517,7 @@ export class Simulation {
       ...(rs.configMap && { configMap: rs.configMap }),
       ...(rs.liveness && { liveness: true }),
       ...(rs.resources && { resources: { ...rs.resources } }),
+      ...(rs.secret && { secret: rs.secret }),
     }
     this.putPod(pod)
     this.dropVacancy(rsUid, slot)
@@ -1523,13 +1567,18 @@ export class Simulation {
     let env: Record<string, string> | undefined
     if (pod.configMap) {
       const cm = this.findConfigMap(pod.configMap)
-      if (!cm) return this.missingConfig(pod)
+      if (!cm) return this.missingConfig(pod, 'configmap', pod.configMap)
       // read once, now: the container keeps this environment for as long as it runs
       env = { ...cm.data }
     }
+    if (pod.secret) {
+      const secret = this.findSecret(pod.secret)
+      if (!secret) return this.missingConfig(pod, 'secret', pod.secret)
+      env = { ...env, ...secret.data }
+    }
     this.patchPod(podUid, { phase: 'Running', ip: pod.ip ?? this.nextIp(pod.nodeName), waiting: undefined, ...(env && { env }) })
     this.emit('kubelet', 'progress', 'Started', 'Started container backend', this.ref(pod))
-    if (isBroken(pod.image)) {
+    if (isBroken(pod.image) && !env?.DATABASE_URL) {
       this.schedule(TIMING.crash, `o container de ${short(pod.name)} encerra com erro`, () => this.crash(podUid))
       return
     }

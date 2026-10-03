@@ -67,7 +67,7 @@ function phrase(e: ClusterEvent): { lead: string; obj?: string; tail?: string } 
     case 'Scaled':
       return { lead: 'Você mudou as réplicas', tail: e.message.split('replicas ')[1] }
     case 'Deleted':
-      return { lead: 'Você apagou', obj: e.involved.kind === 'Pod' ? n : `${({ Service: 'service', Deployment: 'deployment', ReplicaSet: 'rs', ConfigMap: 'configmap', HorizontalPodAutoscaler: 'hpa' } as Record<string, string>)[e.involved.kind] ?? ''}/${n}` }
+      return { lead: 'Você apagou', obj: e.involved.kind === 'Pod' ? n : `${({ Service: 'service', Deployment: 'deployment', ReplicaSet: 'rs', ConfigMap: 'configmap', HorizontalPodAutoscaler: 'hpa', Secret: 'secret' } as Record<string, string>)[e.involved.kind] ?? ''}/${n}` }
     case 'Restarted':
       return { lead: 'Você reiniciou', obj: `deployment/${n}`, tail: '— todos os Pods serão trocados' }
     case 'Paused':
@@ -82,6 +82,8 @@ function phrase(e: ClusterEvent): { lead: string; obj?: string; tail?: string } 
       return { lead: 'Template novo em', obj: `deployment/${n}`, tail: e.message.includes('configMapRef') ? '— agora lê um ConfigMap' : undefined }
     case 'Failed':
       return { lead: 'Pod', obj: n, tail: 'sem configuração — CreateContainerConfigError' }
+    case 'SecretCreated':
+      return { lead: 'Você criou', obj: `secret/${n}` }
     case 'HpaCreated':
       return { lead: 'Você criou um HPA para', obj: `deployment/${n}` }
     case 'SuccessfulRescale': {

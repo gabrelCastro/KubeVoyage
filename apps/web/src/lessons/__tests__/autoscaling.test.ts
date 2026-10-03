@@ -6,7 +6,7 @@ import { autoscaling } from '../autoscaling'
 import type { LessonCtx } from '../types'
 
 /** Plays the lesson the way a learner would: the suggested command for each objective, in order. */
-describe('lesson 9: resources and autoscaling', () => {
+describe('lesson 10: resources and autoscaling', () => {
   it('each objective is done only after its own step, and the story is told', () => {
     const sim = new Simulation()
     sim.files = [...autoscaling.files]

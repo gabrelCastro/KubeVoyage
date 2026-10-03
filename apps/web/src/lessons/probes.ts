@@ -10,7 +10,7 @@ const livenessRestart = (e: { reason: string; message: string }) => e.reason ===
 
 export const probes: Lesson = {
   id: 'probes',
-  number: 8,
+  number: 9,
   track: 'Configuração',
   title: 'Probes',
   tagline: 'Vivo não é o mesmo que funcionando. O kubelet precisa perguntar.',

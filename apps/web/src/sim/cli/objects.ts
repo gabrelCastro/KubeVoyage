@@ -1,5 +1,5 @@
 import { rsSelector, type Simulation } from '../engine'
-import type { ConfigMap, Deployment, HorizontalPodAutoscaler, Resources, Pod, ReplicaSet, Service, WorkerNode } from '../types'
+import type { ConfigMap, Deployment, HorizontalPodAutoscaler, Resources, Secret, Pod, ReplicaSet, Service, WorkerNode } from '../types'
 
 /**
  * The simulated objects as the API server would return them — what `-o yaml`, `-o json`
@@ -20,11 +20,11 @@ const restartAnnotation = (sim: Simulation, at?: number): Obj => (at === undefin
 
 const owner = (apiVersion: string, kind: string, name: string, uid: string): Obj => ({ apiVersion, kind, name, uid, controller: true, blockOwnerDeletion: true })
 
-const container = (image: string, name = CONTAINER, configMap?: string, liveness?: boolean, resources?: Resources): Obj => ({
+const container = (image: string, name = CONTAINER, configMap?: string, liveness?: boolean, resources?: Resources, secret?: string): Obj => ({
   name,
   image,
   ...(resources && { resources: { requests: { cpu: `${resources.cpuRequest}m` }, ...(resources.cpuLimit && { limits: { cpu: `${resources.cpuLimit}m` } }) } }),
-  ...(configMap && { envFrom: [{ configMapRef: { name: configMap } }] }),
+  ...((configMap || secret) && { envFrom: [...(configMap ? [{ configMapRef: { name: configMap } }] : []), ...(secret ? [{ secretRef: { name: secret } }] : [])] }),
   imagePullPolicy: 'IfNotPresent',
   ports: [{ containerPort: CONTAINER_PORT, protocol: 'TCP' }],
   readinessProbe: { httpGet: { path: '/healthz', port: CONTAINER_PORT, scheme: 'HTTP' }, periodSeconds: 10, failureThreshold: 3 },
@@ -62,7 +62,7 @@ export function podObject(sim: Simulation, p: Pod): Obj {
       ...(p.deletedAt !== null && { deletionTimestamp: stamp(sim, p.deletedAt + 30_000), deletionGracePeriodSeconds: 30 }),
     },
     spec: {
-      containers: [container(p.image, p.image.includes('kubelearn/backend') ? CONTAINER : p.name, p.configMap, p.liveness, p.resources)],
+      containers: [container(p.image, p.image.includes('kubelearn/backend') ? CONTAINER : p.name, p.configMap, p.liveness, p.resources, p.secret)],
       ...(p.nodeName && { nodeName: p.nodeName }),
       restartPolicy: 'Always',
       terminationGracePeriodSeconds: 30,
@@ -111,7 +111,7 @@ export function deploymentObject(sim: Simulation, d: Deployment): Obj {
       progressDeadlineSeconds: 600,
       selector: { matchLabels: { ...d.selector } },
       strategy: { type: 'RollingUpdate', rollingUpdate: { maxSurge: '25%', maxUnavailable: '25%' } },
-      template: { metadata: { labels: { ...d.template.labels }, ...restartAnnotation(sim, d.template.restartedAt) }, spec: { containers: [container(d.template.image, CONTAINER, d.template.configMap, d.template.liveness, d.template.resources)] } },
+      template: { metadata: { labels: { ...d.template.labels }, ...restartAnnotation(sim, d.template.restartedAt) }, spec: { containers: [container(d.template.image, CONTAINER, d.template.configMap, d.template.liveness, d.template.resources, d.template.secret)] } },
     },
     status: {
       observedGeneration: d.revision,
@@ -153,7 +153,7 @@ export function replicaSetObject(sim: Simulation, rs: ReplicaSet): Obj {
     spec: {
       replicas: rs.desired,
       selector: { matchLabels: rsSelector(rs) },
-      template: { metadata: { labels, ...restartAnnotation(sim, rs.restartedAt) }, spec: { containers: [container(rs.image, CONTAINER, rs.configMap, rs.liveness, rs.resources)] } },
+      template: { metadata: { labels, ...restartAnnotation(sim, rs.restartedAt) }, spec: { containers: [container(rs.image, CONTAINER, rs.configMap, rs.liveness, rs.resources, rs.secret)] } },
     },
     status: { replicas: active.length, readyReplicas: ready, availableReplicas: ready, ...(rs.desired === 0 && { replicas: 0 }) },
   }
@@ -328,5 +328,18 @@ export function hpaObject(sim: Simulation, h: HorizontalPodAutoscaler): Obj {
           : { type: 'ScalingActive', status: 'True', reason: 'ValidMetricFound', message: 'the HPA was able to successfully calculate a replica count from cpu resource utilization (percentage of request)' },
       ],
     },
+  }
+}
+
+const base64 = (text: string) => btoa(String.fromCharCode(...new TextEncoder().encode(text)))
+
+/** The API never shows a Secret's values in clear text — only base64, which anyone can decode. */
+export function secretObject(sim: Simulation, c: Secret): Obj {
+  return {
+    apiVersion: 'v1',
+    kind: 'Secret',
+    type: 'Opaque',
+    metadata: { name: c.name, namespace: 'default', uid: c.uid, creationTimestamp: stamp(sim, c.createdAt) },
+    data: Object.fromEntries(Object.entries(c.data).map(([k, v]) => [k, base64(v)])),
   }
 }

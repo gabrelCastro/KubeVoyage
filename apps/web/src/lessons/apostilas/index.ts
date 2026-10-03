@@ -12,6 +12,7 @@ const LOADERS: Record<ApostilaId, () => Promise<{ default: ComponentType }>> = {
   configmaps: () => import('./configmaps.mdx'),
   probes: () => import('./probes.mdx'),
   autoscaling: () => import('./autoscaling.mdx'),
+  secrets: () => import('./secrets.mdx'),
 }
 
 export const APOSTILAS: Record<ApostilaId, ComponentType> = {
@@ -24,6 +25,7 @@ export const APOSTILAS: Record<ApostilaId, ComponentType> = {
   configmaps: lazy(LOADERS.configmaps),
   probes: lazy(LOADERS.probes),
   autoscaling: lazy(LOADERS.autoscaling),
+  secrets: lazy(LOADERS.secrets),
 }
 
 /** Fetch an apostila ahead of time (the browser caches the chunk; `lazy` reuses the same import). */

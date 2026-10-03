@@ -35,9 +35,20 @@ export function pipe(lines: Line[], stage: string[]): Line[] | { error: string }
     case 'wc':
       if (args[0] !== '-l') return { error: 'wc: aqui só `wc -l` (contar linhas) está disponível' }
       return [[{ t: String(lines.length) }]]
+    case 'base64': {
+      const decode = args.includes('-d') || args.includes('--decode')
+      const input = lines.map(text).join('\n')
+      try {
+        if (!decode) return [[{ t: btoa(String.fromCharCode(...new TextEncoder().encode(input))) }]]
+        const bytes = Uint8Array.from(atob(input.trim()), (ch) => ch.charCodeAt(0))
+        return new TextDecoder().decode(bytes).split('\n').map((t) => [{ t }])
+      } catch {
+        return { error: 'base64: invalid input' }
+      }
+    }
     case 'sort':
       return [...lines].sort((a, b) => text(a).localeCompare(text(b)) * (args.includes('-r') ? -1 : 1))
     default:
-      return { error: `${cmd}: este terminal só entende grep, head, tail, wc -l e sort depois de um |` }
+      return { error: `${cmd}: este terminal só entende grep, head, tail, wc -l, sort e base64 depois de um |` }
   }
 }
