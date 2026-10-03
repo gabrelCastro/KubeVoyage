@@ -5,14 +5,14 @@ import { test as base, expect, type Page } from '@playwright/test'
  * error or console error — the API isn't running, so its connection errors are expected.
  */
 export const test = base.extend<{ errors: string[] }>({
-  errors: async ({ page }, use) => {
+  errors: async ({ page }, provide) => {
     const errors: string[] = []
     page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
     page.on('console', (m) => {
       if (m.type() === 'error' && !/\/api\/|Failed to load resource|ECONNREFUSED/.test(m.text())) errors.push(m.text())
     })
     await page.addInitScript(() => localStorage.setItem('kubelearn.onboarding.v1', JSON.stringify({ tour: 'done', tips: ['pausa', 'paleta', 'apostila', 'app'] })))
-    await use(errors)
+    await provide(errors)
     expect(errors, 'no errors in the page').toEqual([])
   },
 })
