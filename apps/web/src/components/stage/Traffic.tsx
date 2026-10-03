@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { memo, useEffect, useRef, useState } from 'react'
 import type { Service } from '../../sim/types'
 import type { Box, Layout } from '../../lib/visual'
+import { BASE_TRAFFIC } from '../../sim/engine'
 import { useApp } from '../../store/useApp'
 import { useSim } from '../../store/useSim'
 
@@ -100,8 +101,17 @@ export const Traffic = memo(function Traffic({ layout, services }: { layout: Lay
         done()
       }
     }
-    const t = setInterval(spawn, INTERVAL / speed)
-    return () => clearInterval(t)
+    // a load generator makes the stream visibly heavier (capped, so the picture stays readable)
+    let t = 0
+    const tick = () => {
+      spawn()
+      const { services } = latest.current
+      const app = services.find((x) => x.name === 'backend') ?? services[0]
+      const factor = app ? Math.min(4, useSim.getState().sim.trafficTo(app.name) / BASE_TRAFFIC) : 1
+      t = window.setTimeout(tick, INTERVAL / speed / factor)
+    }
+    t = window.setTimeout(tick, INTERVAL / speed)
+    return () => clearTimeout(t)
   }, [paused, speed, reduced, hasServices])
 
   return (

@@ -4,7 +4,7 @@ import { TOUR, type TourCtx } from '../steps'
 // every component's source, read through Vite — no Node APIs needed
 const files = import.meta.glob(['../../**/*.tsx', '!../../**/__tests__/**'], { query: '?raw', import: 'default', eager: true }) as Record<string, string>
 
-const empty: TourCtx = { cluster: { deployments: {}, replicaSets: {}, pods: {}, services: {}, configMaps: {}, nodes: [], vacancies: [] }, events: [], history: [], selected: null }
+const empty: TourCtx = { cluster: { deployments: {}, replicaSets: {}, pods: {}, services: {}, configMaps: {}, hpas: {}, nodes: [], vacancies: [] }, events: [], history: [], selected: null }
 
 describe('onboarding tour', () => {
   it('points only at areas that exist in the UI', () => {

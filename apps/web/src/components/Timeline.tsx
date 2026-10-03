@@ -25,6 +25,7 @@ const SOURCE: Record<ClusterEvent['source'], string> = {
   'deployment-controller': 'deployment controller',
   'replicaset-controller': 'replicaset controller',
   'garbage-collector': 'garbage collector',
+  'horizontal-pod-autoscaler': 'horizontal pod autoscaler',
   'default-scheduler': 'scheduler',
   kubelet: 'kubelet',
 }
@@ -66,7 +67,7 @@ function phrase(e: ClusterEvent): { lead: string; obj?: string; tail?: string } 
     case 'Scaled':
       return { lead: 'Você mudou as réplicas', tail: e.message.split('replicas ')[1] }
     case 'Deleted':
-      return { lead: 'Você apagou', obj: e.involved.kind === 'Pod' ? n : `${({ Service: 'service', Deployment: 'deployment', ReplicaSet: 'rs', ConfigMap: 'configmap' } as Record<string, string>)[e.involved.kind] ?? ''}/${n}` }
+      return { lead: 'Você apagou', obj: e.involved.kind === 'Pod' ? n : `${({ Service: 'service', Deployment: 'deployment', ReplicaSet: 'rs', ConfigMap: 'configmap', HorizontalPodAutoscaler: 'hpa' } as Record<string, string>)[e.involved.kind] ?? ''}/${n}` }
     case 'Restarted':
       return { lead: 'Você reiniciou', obj: `deployment/${n}`, tail: '— todos os Pods serão trocados' }
     case 'Paused':
@@ -81,6 +82,16 @@ function phrase(e: ClusterEvent): { lead: string; obj?: string; tail?: string } 
       return { lead: 'Template novo em', obj: `deployment/${n}`, tail: e.message.includes('configMapRef') ? '— agora lê um ConfigMap' : undefined }
     case 'Failed':
       return { lead: 'Pod', obj: n, tail: 'sem configuração — CreateContainerConfigError' }
+    case 'HpaCreated':
+      return { lead: 'Você criou um HPA para', obj: `deployment/${n}` }
+    case 'SuccessfulRescale': {
+      const m = e.message.match(/New size: (\d+)/)
+      return { lead: 'HPA', obj: n, tail: `ajustou para ${m?.[1]} réplicas — CPU ${e.message.includes('above') ? 'acima' : 'abaixo'} da meta` }
+    }
+    case 'FailedGetResourceMetric':
+      return { lead: 'HPA', obj: n, tail: 'não consegue medir: falta request de CPU' }
+    case 'FailedScheduling':
+      return { lead: 'Pod', obj: n, tail: 'sem node com CPU livre — Pending' }
     case 'GarbageCollecting':
       return { lead: 'Sem dono vivo:', obj: `rs/${n}`, tail: 'vai ser apagado, com os Pods' }
     case 'GarbageCollected':

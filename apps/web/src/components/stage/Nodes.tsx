@@ -255,6 +255,9 @@ export const PodNode = memo(function PodNode({ pod, geo, probe, ...e }: { pod: P
   const select = useSim((s) => s.select)
   const appEmoji = useApp((s) => designForPod(s, pod.uid, pod.image).emoji)
   const handEdited = useApp((s) => !!s.podEdits[pod.uid])
+  // CPU right now, as metrics-server would report it — shown once the container declares requests
+  const cpu = useSim((s) => (pod.resources && pod.ready ? s.sim.podCpu(pod) : null))
+  const throttled = useSim((s) => (pod.resources && pod.ready ? s.sim.isThrottled(pod) : false))
   const reduced = useSim((s) => s.reducedMotion)
   const v = podVisual(pod)
   const meta = VISUAL[v]
@@ -300,7 +303,13 @@ export const PodNode = memo(function PodNode({ pod, geo, probe, ...e }: { pod: P
             )}
           </span>
 
-          <div className="mt-2 truncate font-mono text-[9.5px] leading-tight text-fg-faint">{prefix}</div>
+          {cpu !== null && pod.resources ? (
+            <div className={cn('mt-2 truncate font-mono text-[9.5px] leading-tight', throttled ? 'text-crash' : cpu > pod.resources.cpuRequest ? 'text-warn' : 'text-fg-faint')} title="CPU em uso / requests">
+              cpu {cpu}m / {pod.resources.cpuRequest}m{throttled ? ' · no limite' : ''}
+            </div>
+          ) : (
+            <div className="mt-2 truncate font-mono text-[9.5px] leading-tight text-fg-faint">{prefix}</div>
+          )}
           <div className="flex items-center justify-between gap-2">
             <span className={cn('font-mono text-[16px] leading-tight font-semibold tracking-tight', terminating ? 'text-fg-muted line-through decoration-terminating/60' : 'text-fg')}>
               {short(pod.name)}
@@ -334,7 +343,11 @@ export const PodNode = memo(function PodNode({ pod, geo, probe, ...e }: { pod: P
             </span>
           </div>
 
-          <LifecycleBar step={meta.step} color={meta.color} stalled={crash} />
+          {cpu !== null && pod.resources ? (
+            <CpuBar used={cpu} request={pod.resources.cpuRequest} limit={pod.resources.cpuLimit} />
+          ) : (
+            <LifecycleBar step={meta.step} color={meta.color} stalled={crash} />
+          )}
         </Card>
         <AnimatePresence>
           {probe && (
@@ -397,6 +410,23 @@ export const ServiceNode = memo(function ServiceNode({ svc, geo, matched, ...e }
 })
 
 /** Four segments that fill as the Pod moves through its lifecycle — and drain when it is terminated. */
+/** CPU use against the request (the full width) — past it, the bar turns amber; at the limit, red. */
+function CpuBar({ used, request, limit }: { used: number; request: number; limit?: number }) {
+  const share = Math.min(used / request, 1)
+  const over = used > request
+  const capped = !!limit && used >= limit
+  return (
+    <div className="mt-2.5 flex h-[3px] overflow-hidden rounded-full bg-line" aria-hidden>
+      <motion.span
+        className="h-full rounded-full"
+        initial={false}
+        animate={{ width: `${share * 100}%`, backgroundColor: capped ? 'var(--color-crash)' : over ? 'var(--color-warn)' : 'var(--color-ready)' }}
+        transition={{ duration: 0.6 }}
+      />
+    </div>
+  )
+}
+
 export function LifecycleBar({ step, color, className, stalled }: { step: number; color: string; className?: string; stalled?: boolean }) {
   return (
     <div className={cn('mt-2.5 flex gap-1', className)} aria-hidden>

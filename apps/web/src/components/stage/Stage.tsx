@@ -7,7 +7,7 @@ import { useSim } from '../../store/useSim'
 import { Edges, type EdgeModel } from './Edges'
 import { Effects } from './Effects'
 import { DeploymentNode, PodNode, ReplicaSetNode, ServiceNode, SlotPlaceholder, type Probe } from './Nodes'
-import { BootSkeleton, ConfigMapLane, EdgeTooltip, EmptyState, Legend, Narration, NodeLane, ReconcileHud } from './Overlays'
+import { BootSkeleton, ConfigMapLane, HpaLane, EdgeTooltip, EmptyState, Legend, Narration, NodeLane, ReconcileHud } from './Overlays'
 import { Traffic } from './Traffic'
 
 const RESERVE = { top: 18, bottom: 100, x: 28 }
@@ -250,6 +250,7 @@ export function Stage() {
           </div>
           {!empty && (
             <div className="pointer-events-auto hidden shrink-0 flex-col items-end gap-2 sm:flex">
+              <HpaLane cluster={cluster} />
               <ConfigMapLane cluster={cluster} />
               <NodeLane cluster={cluster} />
             </div>

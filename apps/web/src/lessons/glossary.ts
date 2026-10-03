@@ -130,8 +130,8 @@ export const GLOSSARY: GlossaryEntry[] = [
     term: 'Horizontal Pod Autoscaler',
     aliases: ['HPA'],
     definition: 'Ajusta o número de réplicas sozinho, com base em métricas como uso de CPU.',
-    lessonId: 'scaling',
-    anchor: 'autoscaling',
+    lessonId: 'autoscaling',
+    anchor: 'hpa',
   },
   {
     term: 'rolling update',
@@ -202,6 +202,24 @@ export const GLOSSARY: GlossaryEntry[] = [
     definition: 'Segura a liveness e a readiness até o app terminar de iniciar.',
     lessonId: 'probes',
     anchor: 'startup-probe',
+  },
+  {
+    term: 'requests',
+    definition: 'Quanto de CPU (ou memória) um container reserva. O scheduler usa para escolher o node; o HPA, como base da porcentagem.',
+    lessonId: 'autoscaling',
+    anchor: 'requests',
+  },
+  {
+    term: 'limits',
+    definition: 'O máximo que um container pode usar. Acima do limit de CPU, ele é estrangulado; acima do de memória, encerrado.',
+    lessonId: 'autoscaling',
+    anchor: 'limits',
+  },
+  {
+    term: 'metrics-server',
+    definition: 'Componente que coleta o consumo de CPU e memória dos containers — a fonte do kubectl top e do HPA.',
+    lessonId: 'autoscaling',
+    anchor: 'metrics-server',
   },
 ]
 

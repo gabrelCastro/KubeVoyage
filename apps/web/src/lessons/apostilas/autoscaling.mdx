@@ -1,0 +1,184 @@
+import { Callout, QuickQuestion } from '../../components/apostila/ApostilaBlocks'
+
+# Recursos e autoscaling: quanto pedir, e quem decide quantos
+
+Esta apostila acompanha a lição 9. Na atividade, o HPA começou sem conseguir medir nada, ganhou uma régua quando você declarou requests, e então seguiu a carga — para cima na hora, para baixo com calma. Aqui está o que cada número significa.
+
+<section id="o-que-voce-vai-entender">
+
+## O que você vai entender
+
+- O que são **requests** e **limits** de CPU, e quem usa cada um.
+- Como o **HorizontalPodAutoscaler** calcula quantas réplicas pedir.
+- Por que ele fica em `<unknown>` sem requests, e por que demora para reduzir.
+
+</section>
+
+<section id="conceitos">
+
+## Conceitos
+
+<h3 id="requests">Requests: o que o container reserva</h3>
+
+Cada container pode declarar quanto de CPU **pede**. A unidade é o *millicore*: `200m` é um quinto de um núcleo.
+
+```yaml
+resources:
+  requests:
+    cpu: 200m
+  limits:
+    cpu: 500m
+```
+
+O **scheduler** usa as requests para escolher o node: ele só coloca um Pod num node se a soma das requests dos Pods de lá, mais a do novo, couber na capacidade do node. É uma **reserva**: conta mesmo que o container esteja ocioso. Se nenhum node tem espaço, o Pod fica `Pending` com o evento `Insufficient cpu`.
+
+<h3 id="limits">Limits: o teto</h3>
+
+O **limit** é o máximo que o container pode usar. Para CPU, passar do limit não derruba nada: o kernel **estrangula** (*throttling*) o processo, que fica mais lento. Para memória é diferente — quem passa do limit de memória é encerrado pelo kernel (*OOM kill*) e reiniciado.
+
+<h3 id="metrics-server">De onde vêm os números</h3>
+
+O `kubectl top pods` e o HPA leem o consumo de um componente à parte, o **metrics-server**, que coleta o uso de cada container nos nodes. Num cluster novo ele pode não estar instalado — e aí nem o `top` nem o HPA por CPU funcionam.
+
+<h3 id="hpa">HorizontalPodAutoscaler</h3>
+
+O **HPA** é um controller que ajusta o campo `replicas` de um Deployment. Periodicamente ele mede a CPU média dos Pods **como porcentagem das requests** e calcula:
+
+```text
+réplicas desejadas = ⌈ réplicas atuais × (uso atual ÷ meta) ⌉
+```
+
+Com 3 réplicas a 115% e meta de 50%: ⌈3 × 115 ÷ 50⌉ = ⌈6,9⌉ = 7. O resultado respeita o mínimo e o máximo, e diferenças pequenas (até 10% da meta, por padrão) são ignoradas para ele não ficar oscilando.
+
+Repare no “como porcentagem das requests”: se os containers não declaram requests, **não há porcentagem**. A documentação é direta — nesse caso, a utilização não é definida e o autoscaler não age por essa métrica. Foi o `<unknown>` da atividade.
+
+<h3 id="estabilizacao">Rápido para subir, devagar para descer</h3>
+
+Para cima, o HPA age assim que a métrica pede. Para baixo, ele usa uma **janela de estabilização**: só reduz até o **maior** número de réplicas recomendado nos últimos minutos (5, por padrão). Um pico de carga que some e volta não vira um vai-e-vem de Pods sendo criados e destruídos.
+
+</section>
+
+<section id="no-mundo-real">
+
+## No mundo real
+
+### Os comandos da atividade
+
+```bash
+kubectl top pods                     # consumo agora (metrics-server)
+kubectl autoscale deployment backend --cpu=50% --min=2 --max=8
+kubectl get hpa                      # TARGETS: cpu: <unknown>/50%
+kubectl apply -f backend-resources.yaml
+kubectl run load-generator --image=busybox:1.36 --restart=Never -- \
+  /bin/sh -c "while sleep 0.01; do wget -q -O- http://backend; done"
+kubectl get hpa -w                   # acompanhe TARGETS e REPLICAS
+kubectl delete pod load-generator
+```
+
+O tutorial oficial roda o gerador com `-i --tty` e o encerra com Ctrl+C. Aqui o terminal não fica preso a um processo, então ele roda como um Pod comum que você apaga.
+
+### O HPA como manifesto
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: backend }
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 50 }
+```
+
+Em produção, o HPA costuma ficar versionado junto com o Deployment. Ele também aceita memória e métricas customizadas (requisições por segundo, tamanho de fila), e o campo `behavior` ajusta a velocidade de subida e descida.
+
+<Callout title="Deployment com HPA: não fixe as réplicas no YAML">
+  Se o manifesto do Deployment diz `replicas: 3` e o HPA escalou para 7, um `kubectl apply` do manifesto volta para 3 — e o HPA sobe de novo na próxima medição. Com HPA, tire o campo `replicas` do manifesto e deixe o controller cuidar.
+</Callout>
+
+</section>
+
+<section id="o-que-simplificamos">
+
+## O que simplificamos
+
+- Os tempos foram encurtados: aqui o HPA mede a cada 3 segundos e estabiliza em cerca de 24. No cluster real, o padrão é medir a cada 15 segundos e esperar 5 minutos para reduzir.
+- A CPU de cada Pod vem de uma conta simples: um custo fixo de ociosidade mais a sua fatia do tráfego do Service. Apps reais variam bem mais.
+- Cada node tem exatamente 1000m de CPU para requests, e a memória não é simulada (o `top` mostra um número estável).
+- Não simulamos memória no HPA, métricas customizadas, o campo `behavior` nem o período inicial em que a CPU de Pods recém-iniciados é ignorada.
+
+</section>
+
+<section id="erros-comuns">
+
+## Erros comuns
+
+### Criar um HPA sem requests
+
+O TARGETS fica `<unknown>` e nada acontece. Toda métrica de utilização é relativa às requests: declare-as em todos os containers do Pod.
+
+### Requests altas demais
+
+Requests reservam espaço mesmo sem uso. Pedir 2 núcleos para um app que usa 100m desperdiça o cluster e deixa Pods `Pending` por “falta” de CPU que ninguém está usando.
+
+### Limit de CPU apertado demais
+
+Um limit perto do uso normal estrangula o app nos picos: ele fica lento sem nenhum erro aparente. Muitas equipes definem requests com cuidado e limits de CPU folgados — ou nenhum.
+
+### Escalar à mão um Deployment com HPA
+
+O `kubectl scale` funciona por alguns segundos: na próxima medição, o HPA recalcula e desfaz. Para mudar os limites, altere o `--min`/`--max` do HPA.
+
+</section>
+
+<section id="teste-rapido">
+
+## Teste rápido
+
+<QuickQuestion
+  question="O kubectl get hpa mostra TARGETS cpu: <unknown>/50%. Qual é a causa mais provável?"
+  options={[
+    { label: 'Os containers não declaram requests de CPU.', correct: true, explanation: 'Correto. A utilização é uma porcentagem das requests; sem elas, não há o que calcular.' },
+    { label: 'A carga está baixa demais para medir.', explanation: 'Carga baixa aparece como uma porcentagem baixa, não como <unknown>.' },
+    { label: 'O Deployment tem réplicas demais.', explanation: 'O número de réplicas não impede a medição.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="3 réplicas, CPU média em 100% das requests, meta de 50%, máximo 8. Quantas réplicas o HPA pede?"
+  options={[
+    { label: '4', explanation: 'A conta é 3 × (100 ÷ 50).' },
+    { label: '6', correct: true, explanation: 'Correto. ⌈3 × 100 ÷ 50⌉ = 6, dentro do máximo de 8.' },
+    { label: '8', explanation: 'O máximo só entra quando a conta passa dele.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="A carga acabou há 1 minuto e o HPA ainda mantém 7 réplicas. Por quê?"
+  options={[
+    { label: 'Porque ele só reduz se a carga continuar baixa durante a janela de estabilização.', correct: true, explanation: 'Correto. Por padrão, 5 minutos: picos que somem e voltam não viram um vai-e-vem de Pods.' },
+    { label: 'Porque o metrics-server parou de responder.', explanation: 'Nesse caso o HPA não teria métrica nenhuma, e o TARGETS mostraria <unknown>.' },
+    { label: 'Porque o HPA nunca reduz réplicas sozinho.', explanation: 'Ele reduz, sim — só que com cuidado.' },
+  ]}
+/>
+
+</section>
+
+<section id="para-ir-alem">
+
+## Para ir além
+
+- **VerticalPodAutoscaler** ajusta as requests de cada container em vez do número de réplicas. Não se combina com o HPA na mesma métrica.
+- **Cluster Autoscaler** e ferramentas como o Karpenter adicionam nodes quando Pods ficam `Pending` por falta de espaço — o outro lado das requests.
+- **LimitRange** e **ResourceQuota** definem valores padrão e tetos de requests e limits por namespace.
+- [HorizontalPodAutoscaler — conceito](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)
+- [HPA — passo a passo oficial](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale-walkthrough/)
+- [Requests e limits](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)
+- [kubectl autoscale — referência](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_autoscale/)
+
+</section>

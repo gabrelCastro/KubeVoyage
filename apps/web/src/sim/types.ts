@@ -2,7 +2,7 @@ export type Labels = Record<string, string>
 
 export type PodPhase = 'Pending' | 'ContainerCreating' | 'Running' | 'Terminating' | 'Error' | 'CrashLoopBackOff'
 
-export type ResourceKind = 'Deployment' | 'ReplicaSet' | 'Pod' | 'Service' | 'Node' | 'ConfigMap'
+export type ResourceKind = 'Deployment' | 'ReplicaSet' | 'Pod' | 'Service' | 'Node' | 'ConfigMap' | 'HorizontalPodAutoscaler'
 
 export type RolloutState = 'complete' | 'progressing' | 'stalled'
 
@@ -16,6 +16,31 @@ export interface Template {
   configMap?: string
   /** A liveness probe: the kubelet restarts the container when it stops answering. */
   liveness?: boolean
+  /** CPU the container asks for (requests) and may use at most (limits), in millicores. */
+  resources?: Resources
+}
+
+export interface Resources {
+  cpuRequest: number
+  cpuLimit?: number
+}
+
+/** Adjusts a Deployment's replicas to keep average CPU, as a share of requests, near a target. */
+export interface HorizontalPodAutoscaler {
+  kind: 'HorizontalPodAutoscaler'
+  uid: string
+  name: string
+  /** Name of the Deployment it scales. */
+  target: string
+  min: number
+  max: number
+  /** Target average CPU utilization, in % of requests. */
+  cpuPercent: number
+  createdAt: number
+  /** Last measured average utilization; null when it can't be computed. */
+  current: number | null
+  /** Recent desired replica counts — scale-down waits for the highest of them (stabilization). */
+  recommendations: { at: number; desired: number }[]
 }
 
 /** Configuration kept outside the image. Containers read it as environment variables at start. */
@@ -57,6 +82,7 @@ export interface ReplicaSet {
   templateLabels: Labels
   configMap?: string
   liveness?: boolean
+  resources?: Resources
   revision: number
   restartedAt?: number
   desired: number
@@ -94,6 +120,9 @@ export interface Pod {
   liveness?: boolean
   /** The process is alive but stopped answering — probes fail. */
   hung?: boolean
+  resources?: Resources
+  /** A load generator: while it runs, it sends a stream of requests to this Service. */
+  loadTarget?: string
 }
 
 export interface Service {
@@ -128,6 +157,7 @@ export interface ClusterState {
   pods: Record<string, Pod>
   services: Record<string, Service>
   configMaps: Record<string, ConfigMap>
+  hpas: Record<string, HorizontalPodAutoscaler>
   nodes: WorkerNode[]
   vacancies: Vacancy[]
 }
@@ -138,6 +168,7 @@ export type EventSource =
   | 'deployment-controller'
   | 'replicaset-controller'
   | 'garbage-collector'
+  | 'horizontal-pod-autoscaler'
   | 'endpoints-controller'
   | 'default-scheduler'
   | 'kubelet'

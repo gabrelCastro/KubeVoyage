@@ -2,6 +2,7 @@ import { parseArgs, parseSelector, selects, suggest, TAKES_VALUE, tokenize, type
 import {
   apiPhase,
   configMapObject,
+  hpaObject,
   deploymentObject,
   endpointSliceObject,
   endpointsObject,
@@ -17,9 +18,9 @@ import {
   type Obj,
 } from './cli/objects'
 import { pipe } from './cli/pipe'
-import { isBroken, labelString, rsSelector, short, tag, type Simulation } from './engine'
+import { isBroken, labelString, NODE_CPU, rsSelector, short, tag, type Simulation } from './engine'
 import { FILES, IMAGE } from './manifests'
-import type { ClusterEvent, ConfigMap, Deployment, Labels, Pod, ReplicaSet, Service, WorkerNode } from './types'
+import type { ClusterEvent, ConfigMap, Deployment, HorizontalPodAutoscaler, Labels, Pod, ReplicaSet, Service, WorkerNode } from './types'
 
 export { FILES, IMAGE, MANIFEST, MANIFEST_YAML } from './manifests'
 
@@ -45,7 +46,7 @@ export interface RunPresentation {
   images?: string[]
 }
 
-export type WatchKind = 'pods' | 'deployments' | 'replicasets' | 'services' | 'endpoints' | 'endpointslices' | 'events' | 'nodes' | 'configmaps'
+export type WatchKind = 'pods' | 'deployments' | 'replicasets' | 'services' | 'endpoints' | 'endpointslices' | 'events' | 'nodes' | 'configmaps' | 'horizontalpodautoscalers'
 
 export interface WatchSpec {
   kind: WatchKind
@@ -142,12 +143,13 @@ const KIND_ALIASES: Record<string, KindId | 'all'> = {
   endpointslice: 'endpointslices', endpointslices: 'endpointslices', 'endpointslice.discovery.k8s.io': 'endpointslices', 'endpointslices.discovery.k8s.io': 'endpointslices',
   ev: 'events', event: 'events', events: 'events',
   cm: 'configmaps', configmap: 'configmaps', configmaps: 'configmaps',
+  hpa: 'horizontalpodautoscalers', horizontalpodautoscaler: 'horizontalpodautoscalers', horizontalpodautoscalers: 'horizontalpodautoscalers', 'horizontalpodautoscaler.autoscaling': 'horizontalpodautoscalers',
   no: 'nodes', node: 'nodes', nodes: 'nodes',
   all: 'all',
 }
 
 /** Real kinds this cluster doesn't simulate: say so instead of "no such type". */
-const UNSIMULATED_KINDS = ['secrets', 'secret', 'namespaces', 'ns', 'ingress', 'ingresses', 'ing', 'statefulsets', 'sts', 'daemonsets', 'ds', 'jobs', 'job', 'cronjobs', 'cj', 'persistentvolumeclaims', 'pvc', 'persistentvolumes', 'pv', 'hpa', 'horizontalpodautoscalers', 'serviceaccounts', 'sa', 'namespace']
+const UNSIMULATED_KINDS = ['secrets', 'secret', 'namespaces', 'ns', 'ingress', 'ingresses', 'ing', 'statefulsets', 'sts', 'daemonsets', 'ds', 'jobs', 'job', 'cronjobs', 'cj', 'persistentvolumeclaims', 'pvc', 'persistentvolumes', 'pv', 'serviceaccounts', 'sa', 'namespace']
 
 type Item = { name: string; uid?: string }
 
@@ -305,6 +307,24 @@ const SPECS: { [K in KindId]: Spec<any> } = {
       { t: e.message, c: 'muted' },
     ],
   } satisfies Spec<ClusterEvent & { name: string }>,
+  horizontalpodautoscalers: {
+    resource: 'horizontalpodautoscalers.autoscaling',
+    prefix: 'horizontalpodautoscaler.autoscaling',
+    namespaced: true,
+    items: (sim) => Object.values(sim.cluster.hpas).sort((a, b) => a.createdAt - b.createdAt),
+    labels: () => ({}),
+    object: (sim, h: HorizontalPodAutoscaler) => hpaObject(sim, h),
+    header: () => ['NAME', 'REFERENCE', 'TARGETS', 'MINPODS', 'MAXPODS', 'REPLICAS', 'AGE'],
+    row: (sim, h: HorizontalPodAutoscaler) => [
+      { t: h.name, c: 'strong' },
+      { t: `Deployment/${h.target}` },
+      { t: `cpu: ${h.current === null ? '<unknown>' : `${h.current}%`}/${h.cpuPercent}%`, c: h.current === null ? 'warn' : h.current > h.cpuPercent * 1.1 ? 'error' : 'success' },
+      { t: String(h.min) },
+      { t: String(h.max) },
+      { t: String(sim.findDeployment(h.target)?.replicas ?? 0) },
+      { t: age(sim.now - h.createdAt) },
+    ],
+  } satisfies Spec<HorizontalPodAutoscaler>,
   configmaps: {
     resource: 'configmaps',
     prefix: 'configmap',
@@ -394,6 +414,8 @@ const VERB_FLAGS: Record<string, string[]> = {
   edit: [],
   create: ['image', 'replicas', 'from-literal'],
   patch: ['patch', 'type'],
+  autoscale: ['cpu', 'cpu-percent', 'min', 'max', 'name'],
+  top: [],
 }
 
 /** Real kubectl flags this playground doesn't simulate: refuse rather than half-do the command. */
@@ -423,17 +445,15 @@ function checkFlags(verb: string, p: Parsed): Line[] | null {
 
 // ── verbs ──────────────────────────────────────────────────────────────────
 
-const VERBS = ['apply', 'get', 'describe', 'delete', 'scale', 'expose', 'label', 'set', 'rollout', 'logs', 'run', 'edit', 'create', 'patch']
+const VERBS = ['apply', 'get', 'describe', 'delete', 'scale', 'expose', 'label', 'set', 'rollout', 'logs', 'run', 'edit', 'create', 'patch', 'autoscale', 'top']
 
 /** Real verbs that aren't simulated (yet): what they do, so the learner isn't told they don't exist. */
 const UNSIMULATED_VERBS: Record<string, string> = {
   exec: 'executar um comando dentro de um container',
   'port-forward': 'abrir um túnel da sua máquina até um Pod ou Service',
-  top: 'mostrar o consumo de CPU e memória (precisa do metrics-server)',
   explain: 'explicar os campos de cada tipo de recurso',
   annotate: 'mudar as annotations de um recurso',
   replace: 'substituir um recurso inteiro',
-  autoscale: 'criar um HorizontalPodAutoscaler',
   cp: 'copiar arquivos de e para containers',
   attach: 'conectar ao processo de um container',
   debug: 'criar containers de depuração',
@@ -658,6 +678,10 @@ function runOne(sim: Simulation, tokens: string[], presentation: RunPresentation
     }
     case 'patch':
       return patch(sim, args, flags)
+    case 'autoscale':
+      return autoscale(sim, args, flags)
+    case 'top':
+      return top(sim, args)
     case 'create': {
       const [kind, names] = splitKind(args)
       const name = names[0]
@@ -729,6 +753,11 @@ function remove(sim: Simulation, args: string[], flags: Flags): CommandResult {
   const [kind, names] = splitKind(args)
   const k = kind ? KIND_ALIASES[kind] : undefined
   const graceNote = flags.force || flags.now || flags['grace-period'] !== undefined ? [note('neste simulador todo Pod passa pelo encerramento gracioso')] : []
+  if (k === 'horizontalpodautoscalers') {
+    if (!names[0]) return err('error: resource(s) were provided, but no name was specified')
+    if (sim.deleteHpa(names[0])) return { lines: [plain(`horizontalpodautoscaler.autoscaling "${names[0]}" deleted`, 'warn')] }
+    return flags['ignore-not-found'] ? { lines: [] } : err(`Error from server (NotFound): horizontalpodautoscalers.autoscaling "${names[0]}" not found`)
+  }
   if (k === 'configmaps') {
     if (!names[0]) return err('error: resource(s) were provided, but no name was specified')
     if (sim.deleteConfigMap(names[0])) return { lines: [plain(`configmap "${names[0]}" deleted`, 'warn')] }
@@ -922,6 +951,10 @@ const watchState = (sim: Simulation, kind: WatchKind, item: Item) => {
   }
   if (kind === 'events') return [(item as Item & ClusterEvent).id]
   if (kind === 'configmaps') return [(item as ConfigMap).data]
+  if (kind === 'horizontalpodautoscalers') {
+    const h = item as HorizontalPodAutoscaler
+    return [h.current, h.min, h.max, h.cpuPercent, sim.findDeployment(h.target)?.replicas]
+  }
   return [item.name]
 }
 
@@ -1094,7 +1127,7 @@ function describe(sim: Simulation, args: string[], flags: Flags): CommandResult 
   if ('error' in kinds) return { lines: kinds.error }
   if (kinds.length !== 1) return err('Usage: kubectl describe pod|deployment|rs|service|node <name>')
   const kind = kinds[0]
-  if (!['pods', 'deployments', 'replicasets', 'services', 'nodes', 'configmaps'].includes(kind)) return { lines: [plain(`describe de ${rawKind} ainda não está disponível aqui — tente kubectl get ${rawKind} -o yaml`, 'warn')] }
+  if (!['pods', 'deployments', 'replicasets', 'services', 'nodes', 'configmaps', 'horizontalpodautoscalers'].includes(kind)) return { lines: [plain(`describe de ${rawKind} ainda não está disponível aqui — tente kubectl get ${rawKind} -o yaml`, 'warn')] }
   const spec = SPECS[kind] as Spec<Item>
   let names = rawNames
   const sel = selectorFlag(flags)
@@ -1154,6 +1187,7 @@ function describeOne(sim: Simulation, kind: KindId, name: string): CommandResult
           ? [kv('State', `Waiting (Reason: ${p.phase === 'Error' ? 'Error' : 'CrashLoopBackOff'})`, 'error'), kv('Last State', 'Terminated (Reason: Error, Exit Code: 2)', 'error')]
           : []),
         kv('Restart Count', String(p.restarts), p.restarts ? 'warn' : undefined),
+        ...(p.resources ? [kv('Requests', `cpu: ${p.resources.cpuRequest}m`), kv('Limits', p.resources.cpuLimit ? `cpu: ${p.resources.cpuLimit}m` : '<none>')] : []),
         kv('Readiness', 'http-get http://:8080/healthz period=10s #failure=3', 'muted'),
         kv('Liveness', p.liveness ? 'http-get http://:8080/healthz period=10s #failure=3' : '<none>', p.liveness ? 'muted' : 'warn'),
         kv('Ready', p.ready ? 'True' : 'False', p.ready ? 'success' : 'warn'),
@@ -1226,6 +1260,29 @@ function describeOne(sim: Simulation, kind: KindId, name: string): CommandResult
     }
   }
 
+  if (kind === 'horizontalpodautoscalers') {
+    const h = sim.findHpa(name)
+    if (!h) return err(`Error from server (NotFound): horizontalpodautoscalers.autoscaling "${name}" not found`)
+    const dep = sim.findDeployment(h.target)
+    const stable = h.recommendations.length ? Math.max(...h.recommendations.map((r) => r.desired)) : undefined
+    return {
+      focusUid: h.uid,
+      lines: [
+        kv('Name', h.name, 'strong'),
+        kv('Reference', `Deployment/${h.target}`, 'info', dep?.uid),
+        kv('Metrics', `( current / target )`, 'muted'),
+        kv('  cpu', `${h.current === null ? '<unknown>' : `${h.current}% (${Math.round((h.current / 100) * (dep?.template.resources?.cpuRequest ?? 0))}m)`} / ${h.cpuPercent}%`, h.current === null ? 'warn' : undefined),
+        kv('Min replicas', String(h.min)),
+        kv('Max replicas', String(h.max)),
+        kv('Deployment pods', `${dep?.replicas ?? 0} desired`),
+        kv('Conditions', h.current === null ? 'ScalingActive False — FailedGetResourceMetric' : 'ScalingActive True — ValidMetricFound', h.current === null ? 'error' : 'success'),
+        ...(stable !== undefined && dep && stable > dep.replicas - 1 && h.recommendations.at(-1)!.desired < dep.replicas
+          ? [note(`a CPU já pede menos réplicas, mas o HPA espera a carga se manter baixa antes de reduzir (janela de estabilização)`)]
+          : []),
+        ...eventsFor(h.uid),
+      ],
+    }
+  }
   if (kind === 'configmaps') {
     const c = sim.findConfigMap(name)
     if (!c) return err(`Error from server (NotFound): configmaps "${name}" not found`)
@@ -1284,6 +1341,8 @@ function help(): CommandResult {
       row('kubectl rollout restart|pause|resume deploy/backend', 'trocar todos os Pods · pausar mudanças'),
       row('kubectl logs <pod> [--previous] [--tail=N]', 'ler a saída de um container'),
       row('kubectl run <nome> --image=<imagem>', 'criar um Pod avulso (sem dono)'),
+      row('kubectl top pods | nodes', 'consumo de CPU e memória'),
+      row('kubectl autoscale deploy backend --cpu=50% --min=2 --max=8', 'criar um HPA'),
       row('kubectl run t --rm -it --image=busybox -- wget -qO- http://backend', 'testar um Service de dentro do cluster'),
       row('… | grep · head · tail · wc -l · sort', 'filtrar a saída'),
       row('explicar <comando>', 'explica cada parte de um comando, sem executar'),
@@ -1295,10 +1354,11 @@ function help(): CommandResult {
 
 // ── completion ─────────────────────────────────────────────────────────────
 
-const KIND_WORDS = ['pods', 'deployments', 'replicasets', 'services', 'endpoints', 'endpointslices', 'events', 'nodes', 'configmaps', 'all', 'po', 'deploy', 'rs', 'svc', 'ep', 'no', 'cm']
+const KIND_WORDS = ['pods', 'deployments', 'replicasets', 'services', 'endpoints', 'endpointslices', 'events', 'nodes', 'configmaps', 'hpa', 'all', 'po', 'deploy', 'rs', 'svc', 'ep', 'no', 'cm']
 
 /** How each flag is offered: `=` means "a value follows, right here". */
 const FLAG_WORDS: Record<string, string> = {
+  cpu: '--cpu=', 'cpu-percent': '--cpu-percent=', min: '--min=', max: '--max=',
   o: '-o', l: '-l', L: '-L', w: '-w', A: '-A', f: '-f', n: '-n', c: '-c', p: '--previous',
   'show-labels': '--show-labels', 'sort-by': '--sort-by=', 'field-selector': '--field-selector=', 'no-headers': '--no-headers', 'ignore-not-found': '--ignore-not-found',
   'grace-period': '--grace-period=', force: '--force', now: '--now', wait: '--wait', replicas: '--replicas=', port: '--port=', 'target-port': '--target-port=', name: '--name=', type: '--type=',
@@ -1373,6 +1433,10 @@ function candidatesFor(sim: Simulation, words: string[], last: string, images: s
       return positional.length === 0 ? ['deployment', 'configmap'] : []
     case 'patch':
       return positional.length === 0 ? ['configmap'] : positional.length === 1 ? namesOf(sim, 'configmaps') : []
+    case 'autoscale':
+      return positional.length === 0 ? ['deployment'] : positional.length === 1 ? namesOf(sim, 'deployments') : []
+    case 'top':
+      return positional.length === 0 ? ['pods', 'nodes'] : namesOf(sim, 'pods', true)
     case 'delete':
       return positional.length === 0 ? ['pod', 'pods', 'service', 'svc', 'deployment', 'deploy', 'replicaset', 'rs'] : namesOf(sim, kindOf(positional[0]), true)
     case 'logs':
@@ -1429,6 +1493,7 @@ const KIND_DOCS: Record<KindId | 'all', string> = {
   events: 'Events — o que os controllers relataram',
   nodes: 'Nodes — as máquinas do cluster',
   configmaps: 'ConfigMaps — configuração guardada fora da imagem',
+  horizontalpodautoscalers: 'HorizontalPodAutoscalers — ajustam as réplicas pela CPU',
   all: 'os tipos principais: Pods, Services, Deployments e ReplicaSets',
 }
 
@@ -1447,6 +1512,8 @@ const VERB_DOCS: Record<string, string> = {
   edit: 'abre o recurso em YAML para você alterar e salvar',
   create: 'cria um recurso novo a partir dos argumentos',
   patch: 'altera só os campos indicados de um recurso',
+  autoscale: 'cria um HorizontalPodAutoscaler para um Deployment',
+  top: 'mostra o consumo de CPU e memória agora (dados do metrics-server)',
 }
 
 function describeSelector(v: string): string {
@@ -1489,6 +1556,10 @@ const FLAG_DOCS: Record<string, (v: string) => string> = {
   wait: () => 'espera a exclusão terminar',
   image: (v) => `a imagem do container: ${v}`,
   'from-literal': (v) => `uma chave e seu valor: ${v}`,
+  cpu: (v) => `a meta: CPU média em ${v} das requests`,
+  'cpu-percent': (v) => `a meta: CPU média em ${v}% das requests`,
+  min: (v) => `nunca menos que ${v} réplica${v === '1' ? '' : 's'}`,
+  max: (v) => `nunca mais que ${v} réplicas`,
   patch: (v) => `o pedaço a mesclar no recurso: ${v}`,
   labels: (v) => `labels do Pod: ${v}`,
   restart: (v) => (v === 'Never' ? 'não reinicia o container quando ele termina' : `política de restart: ${v}`),
@@ -1577,6 +1648,14 @@ function explain(sim: Simulation, tokens: string[]): CommandResult {
       if (name) rows.push([name, k === 'configmaps' ? 'o nome do ConfigMap novo' : 'o nome do Deployment novo'])
       break
     }
+    case 'autoscale':
+      positional(args)
+      break
+    case 'top': {
+      const [what] = args
+      if (what) rows.push([what, what.startsWith('no') ? 'o consumo de cada node' : 'o consumo de cada Pod, medido agora'])
+      break
+    }
     case 'patch': {
       const [kind, name] = args
       if (kind) rows.push([kind, KIND_DOCS.configmaps])
@@ -1658,7 +1737,18 @@ function runPod(sim: Simulation, args: string[], flags: Flags, presentation: Run
   if (typeof flags.image !== 'string') return err('error: required flag(s) "image" not set')
   const interactive = flags.it === true || (flags.i === true && flags.t === true) || flags.i === true
   if (flags.rm && !interactive) return err('error: --rm should only be used for attached containers')
-  if (command.length && !interactive) return { lines: [plain('Sem -it o comando rodaria em segundo plano; aqui ele só é simulado com --rm -it.', 'warn')] }
+  // a request loop (the HPA walkthrough's load generator): keeps a Service busy while the Pod runs
+  const loop = command.join(' ').match(/\bwhile\b.*\b(?:wget|curl)\b.*?(?:https?:\/\/)?([a-z0-9-]+)(?:\.default(?:\.svc(?:\.cluster\.local)?)?)?(?::\d+)?\/?\s*;?\s*done/)
+  if (loop && interactive)
+    return {
+      lines: [
+        plain('Esse loop não termina sozinho: no kubectl real, ele prende o terminal até o Ctrl+C.', 'warn'),
+        note('aqui, rode o gerador sem -it e apague o Pod quando quiser parar:'),
+        plain(`kubectl run ${name} --image=${flags.image} --restart=Never -- /bin/sh -c "while sleep 0.01; do wget -q -O- http://${loop[1]}; done"`, 'accent'),
+      ],
+    }
+  if (command.length && !interactive && !loop)
+    return { lines: [plain('Sem -it o comando rodaria em segundo plano; aqui ele só é simulado com --rm -it — ou como gerador de carga (while … wget … done).', 'warn')] }
   if (interactive) {
     if (!command.length) return { lines: [plain('Este terminal não abre shells interativos dentro de Pods.', 'warn'), note('passe um comando depois de --, ex.: -- wget -qO- http://backend')] }
     const out = fromInside(sim, command, presentation)
@@ -1670,9 +1760,9 @@ function runPod(sim: Simulation, args: string[], flags: Flags, presentation: Run
     if (!parsed || Object.values(parsed).some((v) => v === null)) return err(`error: invalid label spec: ${flags.labels}`)
     labels = parsed as Labels
   }
-  const r = sim.runPod(name, flags.image, labels)
+  const r = sim.runPod(name, flags.image, labels, loop?.[1])
   if (r === 'exists') return err(`Error from server (AlreadyExists): pods "${name}" already exists`)
-  return ok(`pod/${name} created`, sim.findPod(name)?.uid)
+  return { ...ok(`pod/${name} created`, sim.findPod(name)?.uid), ...(loop && { lines: [plain(`pod/${name} created`, 'success'), note(`enquanto ${name} rodar, ele manda um fluxo de requisições para ${loop[1]} — apague o Pod para parar`)] }) }
 }
 
 // ── ConfigMaps ─────────────────────────────────────────────────────────────
@@ -1734,4 +1824,67 @@ function patch(sim: Simulation, args: string[], flags: Flags): CommandResult {
   }
   const r = sim.putConfigMap(cm.name, data, 'patch')
   return { lines: [plain(`configmap/${cm.name} ${r === 'unchanged' ? 'patched (no change)' : 'patched'}`, r === 'unchanged' ? 'muted' : 'success')], focusUid: cm.uid }
+}
+
+// ── autoscaling ────────────────────────────────────────────────────────────
+
+function autoscale(sim: Simulation, args: string[], flags: Flags): CommandResult {
+  const [kind, names] = splitKind(args)
+  if (!kind || KIND_ALIASES[kind] !== 'deployments' || !names[0]) return err('Usage: kubectl autoscale deployment <name> --cpu=50% --min=2 --max=8')
+  const raw = typeof flags.cpu === 'string' ? flags.cpu : typeof flags['cpu-percent'] === 'string' ? `${flags['cpu-percent']}%` : undefined
+  if (raw === undefined) return { lines: [plain('Diga a meta de CPU: --cpu=50% (média de uso como porcentagem das requests).', 'warn')] }
+  if (!/^\d+%$/.test(raw)) return { lines: [plain(`--cpu=${raw}: aqui só metas em porcentagem (ex.: --cpu=50%). O kubectl real também aceita valores absolutos, como 500m.`, 'warn')] }
+  const cpu = Number(raw.slice(0, -1))
+  const max = Number(flags.max)
+  const min = flags.min === undefined ? 1 : Number(flags.min)
+  if (flags.max === undefined) return err('error: --max=MAXPODS is required and must be at least 1')
+  if (!Number.isInteger(max) || max < 1) return err(`error: invalid argument "${flags.max}" for "--max" flag`)
+  if (!Number.isInteger(min) || min < 1 || min > max) return err('error: --min must be between 1 and --max')
+  if (cpu < 1 || cpu > 100) return err('error: --cpu must be a percentage between 1% and 100%')
+  if (max > 8) return err('Este cluster de treino é pequeno — use --max de no máximo 8.')
+  const r = sim.autoscale(names[0], min, max, cpu)
+  if (r === 'notfound') return err(`Error from server (NotFound): deployments.apps "${names[0]}" not found`)
+  if (r === 'exists') return err(`Error from server (AlreadyExists): horizontalpodautoscalers.autoscaling "${names[0]}" already exists`)
+  return ok(`horizontalpodautoscaler.autoscaling/${names[0]} autoscaled`, sim.findHpa(names[0])?.uid)
+}
+
+/** Memory isn't modeled: a plausible, stable number per Pod. */
+const mem = (p: Pod) => 24 + (p.uid.length % 7) + p.restarts * 3
+
+function top(sim: Simulation, args: string[]): CommandResult {
+  const [rawKind, ...names] = args
+  const kind = rawKind ? KIND_ALIASES[rawKind] : undefined
+  if (kind === 'nodes') {
+    return {
+      lines: table(
+        ['NAME', 'CPU(cores)', 'CPU(%)', 'MEMORY(bytes)', 'MEMORY(%)'],
+        sim.cluster.nodes.map((n) => {
+          const pods = Object.values(sim.cluster.pods).filter((p) => p.nodeName === n.name && p.deletedAt === null)
+          const cpu = 80 + pods.reduce((t, p) => t + sim.podCpu(p), 0)
+          const memory = 600 + pods.reduce((t, p) => t + mem(p), 0)
+          return [{ t: n.name, c: 'strong' as Tone }, { t: `${cpu}m` }, { t: `${Math.round((cpu / NODE_CPU) * 100)}%`, c: cpu > NODE_CPU * 0.8 ? ('warn' as Tone) : undefined }, { t: `${memory}Mi` }, { t: `${Math.round((memory / 4096) * 100)}%` }]
+        }),
+      ),
+    }
+  }
+  if (kind !== 'pods') return err('Usage: kubectl top pods | kubectl top nodes')
+  let pods = Object.values(sim.cluster.pods).filter((p) => p.phase === 'Running' && p.deletedAt === null)
+  if (names.length) pods = pods.filter((p) => names.includes(p.name))
+  if (!pods.length) return { lines: [plain(names.length ? `Error from server (NotFound): podmetrics.metrics.k8s.io "default/${names[0]}" not found` : 'No resources found in default namespace.', names.length ? 'error' : 'muted')] }
+  const rows = pods.map((p) => {
+    const cpu = sim.podCpu(p)
+    const req = p.resources?.cpuRequest
+    return [
+      { t: p.name, c: 'strong' as Tone, ref: p.uid },
+      { t: `${cpu}m`, c: sim.isThrottled(p) ? ('error' as Tone) : req && cpu > req ? ('warn' as Tone) : undefined },
+      { t: `${mem(p)}Mi` },
+    ]
+  })
+  const throttled = pods.filter((p) => sim.isThrottled(p))
+  return {
+    lines: [
+      ...table(['NAME', 'CPU(cores)', 'MEMORY(bytes)'], rows),
+      ...(throttled.length ? [note(`${throttled.length} Pod${throttled.length === 1 ? '' : 's'} no limite de CPU: o kernel está estrangulando (throttling) — ficam mais lentos`)] : []),
+    ],
+  }
 }

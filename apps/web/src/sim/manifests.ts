@@ -106,6 +106,35 @@ spec:
             failureThreshold: 3`,
 }
 
+// Lesson 9: what each container asks for (requests) and may use (limits)
+FILES['backend-resources.yaml'] = {
+  manifest: { kind: 'Deployment', name: 'backend', replicas: 3, labels: { app: 'backend' }, image: IMAGE, resources: { cpuRequest: 200, cpuLimit: 500 } },
+  yaml: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: ${IMAGE}
+          resources:
+            requests:
+              cpu: 200m      # reservado no node; a base do HPA
+            limits:
+              cpu: 500m      # acima disso, o container é estrangulado
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }`,
+}
+
 /** Kept for the first lesson and tests. */
 export const MANIFEST = { file: 'backend.yaml', manifest: FILES['backend.yaml'].manifest }
 export const MANIFEST_YAML = FILES['backend.yaml'].yaml

@@ -1,5 +1,5 @@
 import { rsSelector, type Simulation } from '../engine'
-import type { ConfigMap, Deployment, Pod, ReplicaSet, Service, WorkerNode } from '../types'
+import type { ConfigMap, Deployment, HorizontalPodAutoscaler, Resources, Pod, ReplicaSet, Service, WorkerNode } from '../types'
 
 /**
  * The simulated objects as the API server would return them — what `-o yaml`, `-o json`
@@ -20,9 +20,10 @@ const restartAnnotation = (sim: Simulation, at?: number): Obj => (at === undefin
 
 const owner = (apiVersion: string, kind: string, name: string, uid: string): Obj => ({ apiVersion, kind, name, uid, controller: true, blockOwnerDeletion: true })
 
-const container = (image: string, name = CONTAINER, configMap?: string, liveness?: boolean): Obj => ({
+const container = (image: string, name = CONTAINER, configMap?: string, liveness?: boolean, resources?: Resources): Obj => ({
   name,
   image,
+  ...(resources && { resources: { requests: { cpu: `${resources.cpuRequest}m` }, ...(resources.cpuLimit && { limits: { cpu: `${resources.cpuLimit}m` } }) } }),
   ...(configMap && { envFrom: [{ configMapRef: { name: configMap } }] }),
   imagePullPolicy: 'IfNotPresent',
   ports: [{ containerPort: CONTAINER_PORT, protocol: 'TCP' }],
@@ -61,7 +62,7 @@ export function podObject(sim: Simulation, p: Pod): Obj {
       ...(p.deletedAt !== null && { deletionTimestamp: stamp(sim, p.deletedAt + 30_000), deletionGracePeriodSeconds: 30 }),
     },
     spec: {
-      containers: [container(p.image, p.image.includes('kubelearn/backend') ? CONTAINER : p.name, p.configMap, p.liveness)],
+      containers: [container(p.image, p.image.includes('kubelearn/backend') ? CONTAINER : p.name, p.configMap, p.liveness, p.resources)],
       ...(p.nodeName && { nodeName: p.nodeName }),
       restartPolicy: 'Always',
       terminationGracePeriodSeconds: 30,
@@ -110,7 +111,7 @@ export function deploymentObject(sim: Simulation, d: Deployment): Obj {
       progressDeadlineSeconds: 600,
       selector: { matchLabels: { ...d.selector } },
       strategy: { type: 'RollingUpdate', rollingUpdate: { maxSurge: '25%', maxUnavailable: '25%' } },
-      template: { metadata: { labels: { ...d.template.labels }, ...restartAnnotation(sim, d.template.restartedAt) }, spec: { containers: [container(d.template.image, CONTAINER, d.template.configMap, d.template.liveness)] } },
+      template: { metadata: { labels: { ...d.template.labels }, ...restartAnnotation(sim, d.template.restartedAt) }, spec: { containers: [container(d.template.image, CONTAINER, d.template.configMap, d.template.liveness, d.template.resources)] } },
     },
     status: {
       observedGeneration: d.revision,
@@ -152,7 +153,7 @@ export function replicaSetObject(sim: Simulation, rs: ReplicaSet): Obj {
     spec: {
       replicas: rs.desired,
       selector: { matchLabels: rsSelector(rs) },
-      template: { metadata: { labels, ...restartAnnotation(sim, rs.restartedAt) }, spec: { containers: [container(rs.image, CONTAINER, rs.configMap, rs.liveness)] } },
+      template: { metadata: { labels, ...restartAnnotation(sim, rs.restartedAt) }, spec: { containers: [container(rs.image, CONTAINER, rs.configMap, rs.liveness, rs.resources)] } },
     },
     status: { replicas: active.length, readyReplicas: ready, availableReplicas: ready, ...(rs.desired === 0 && { replicas: 0 }) },
   }
@@ -302,5 +303,30 @@ export function configMapObject(sim: Simulation, c: ConfigMap): Obj {
     kind: 'ConfigMap',
     metadata: { name: c.name, namespace: 'default', uid: c.uid, creationTimestamp: stamp(sim, c.createdAt) },
     data: { ...c.data },
+  }
+}
+
+export function hpaObject(sim: Simulation, h: HorizontalPodAutoscaler): Obj {
+  const dep = sim.findDeployment(h.target)
+  return {
+    apiVersion: 'autoscaling/v2',
+    kind: 'HorizontalPodAutoscaler',
+    metadata: { name: h.name, namespace: 'default', uid: h.uid, creationTimestamp: stamp(sim, h.createdAt) },
+    spec: {
+      scaleTargetRef: { apiVersion: 'apps/v1', kind: 'Deployment', name: h.target },
+      minReplicas: h.min,
+      maxReplicas: h.max,
+      metrics: [{ type: 'Resource', resource: { name: 'cpu', target: { type: 'Utilization', averageUtilization: h.cpuPercent } } }],
+    },
+    status: {
+      currentReplicas: dep?.replicas ?? 0,
+      desiredReplicas: h.recommendations.at(-1)?.desired ?? dep?.replicas ?? 0,
+      ...(h.current !== null && { currentMetrics: [{ type: 'Resource', resource: { name: 'cpu', current: { averageUtilization: h.current } } }] }),
+      conditions: [
+        h.current === null
+          ? { type: 'ScalingActive', status: 'False', reason: 'FailedGetResourceMetric', message: 'the HPA was unable to compute the replica count: failed to get cpu utilization: missing request for cpu' }
+          : { type: 'ScalingActive', status: 'True', reason: 'ValidMetricFound', message: 'the HPA was able to successfully calculate a replica count from cpu resource utilization (percentage of request)' },
+      ],
+    },
   }
 }

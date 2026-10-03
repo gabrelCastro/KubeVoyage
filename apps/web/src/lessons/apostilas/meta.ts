@@ -10,4 +10,5 @@ export const READING_MINUTES: Record<ApostilaId, number> = {
   failures: 6,
   configmaps: 5,
   probes: 5,
+  autoscaling: 5,
 }

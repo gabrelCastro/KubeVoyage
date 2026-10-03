@@ -33,6 +33,7 @@ npm run fixtures   # regenerate the cross-language merge fixtures after changing
 | 6 | Failures & rollbacks | A broken v1.5 crash-loops, the rollout stalls safely, `rollout undo` restores v1.4 |
 | 7 | ConfigMaps | A missing ConfigMap stalls the rollout (`CreateContainerConfigError`); a changed one reaches no running Pod until `rollout restart` |
 | 8 | Probes | v1.6 freezes after a while: readiness takes it out of the Service but only a liveness probe restarts it — and `rollout undo` would drop the probe |
+| 9 | Resources & autoscaling | Without requests the HPA reads `<unknown>`; with them, a load generator scales it up — and down only after the stabilization window |
 
 Lessons live in `src/lessons/` as data: a starting cluster (`setup`), manifests in the
 terminal's directory (`files`), objectives as predicates over the simulated state, and a

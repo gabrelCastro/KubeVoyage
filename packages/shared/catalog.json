@@ -8,6 +8,7 @@
     "debugging": { "required": ["notice", "compare", "fix"], "optional": [] },
     "failures": { "required": ["ship", "investigate", "rollback"], "optional": [] },
     "configmaps": { "required": ["missing", "create", "change", "restart"], "optional": [] },
-    "probes": { "required": ["ship", "notice", "liveness", "fix"], "optional": [] }
+    "probes": { "required": ["ship", "notice", "liveness", "fix"], "optional": [] },
+    "autoscaling": { "required": ["measure", "autoscale", "requests", "load", "calm"], "optional": [] }
   }
 }

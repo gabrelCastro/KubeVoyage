@@ -237,6 +237,7 @@ function PodView({ pod, cluster }: { pod: Pod; cluster: ClusterState }) {
             ['Pod IP', pod.ip ?? '—'],
             ['Criado em', clockTime(wallStart, pod.createdAt)],
             ['Reinícios', String(pod.restarts)],
+            ...(pod.resources ? ([['CPU (requests / limits)', `${pod.resources.cpuRequest}m / ${pod.resources.cpuLimit ? `${pod.resources.cpuLimit}m` : '—'}`]] as [string, string][]) : []),
             ['Imagem', pod.image.split('/').pop()],
           ]}
         />

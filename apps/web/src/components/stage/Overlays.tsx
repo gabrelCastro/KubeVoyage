@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { CircleCheck, FileCode2, FileCog, Lightbulb, Play, RefreshCw, Server, TriangleAlert } from 'lucide-react'
+import { CircleCheck, FileCode2, FileCog, Gauge, Lightbulb, Play, RefreshCw, Server, TriangleAlert } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { MANIFEST_YAML } from '../../sim/manifests'
 import { labelString } from '../../sim/engine'
@@ -287,6 +287,42 @@ export function ConfigMapLane({ cluster }: { cluster: ClusterState }) {
             {stale.length > 0 && (
               <span className="shrink-0 rounded-full border border-warn/40 bg-warn/10 px-1.5 text-[10px] whitespace-nowrap text-warn" title="Esses Pods iniciaram antes da mudança">
                 {stale.length} Pod{stale.length === 1 ? '' : 's'} com valor antigo
+              </span>
+            )}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Each HorizontalPodAutoscaler: what it measures against its target, and the replicas it settled on. */
+export function HpaLane({ cluster }: { cluster: ClusterState }) {
+  const exec = useSim((s) => s.exec)
+  const hpas = Object.values(cluster.hpas)
+  if (!hpas.length) return null
+  return (
+    <div className={cn(panel, 'flex max-w-[420px] flex-col gap-1.5 px-3 py-2')}>
+      {hpas.map((h) => {
+        const dep = Object.values(cluster.deployments).find((d) => d.name === h.target)
+        const last = h.recommendations.at(-1)?.desired
+        const waiting = dep && last !== undefined && last < dep.replicas
+        const tone = h.current === null ? 'text-warn' : h.current > h.cpuPercent * 1.1 ? 'text-crash' : h.current < h.cpuPercent * 0.9 ? 'text-creating' : 'text-ready'
+        return (
+          <button key={h.uid} onClick={() => exec(`kubectl describe hpa ${h.name}`, 'ui')} className="flex min-w-0 items-center gap-2 text-left" title="kubectl describe hpa">
+            <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-semibold tracking-[0.1em] text-fg-faint uppercase">
+              <Gauge size={11} /> HPA
+            </span>
+            <span className="shrink-0 font-mono text-[11px] text-fg">{h.name}</span>
+            <span className={cn('shrink-0 font-mono text-[11px]', tone)}>
+              cpu {h.current === null ? '<unknown>' : `${h.current}%`}/{h.cpuPercent}%
+            </span>
+            <span className="shrink-0 font-mono text-[10.5px] text-fg-muted">
+              {dep?.replicas ?? 0} réplicas ({h.min}–{h.max})
+            </span>
+            {waiting && (
+              <span className="shrink-0 rounded-full border border-creating/40 bg-creating/10 px-1.5 text-[10px] whitespace-nowrap text-creating" title="Janela de estabilização">
+                estabilizando para {last}
               </span>
             )}
           </button>

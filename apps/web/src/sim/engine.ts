@@ -1,4 +1,6 @@
 import type {
+  HorizontalPodAutoscaler,
+  Resources,
   ConfigMap,
   ClusterEvent,
   ClusterState,
@@ -38,6 +40,9 @@ export const TIMING = {
   terminate: 900,
   configRetry: 1600,
   hangAfter: 22000,
+  hpaSync: 3000,
+  hpaDownWindow: 24000,
+  scheduleRetry: 2500,
   hangJitter: 8000,
   livenessFail: 2400,
   scaleDownStagger: 220,
@@ -61,6 +66,7 @@ export interface DeploymentManifest {
   /** envFrom: configMapRef */
   configMap?: string
   livenessProbe?: boolean
+  resources?: Resources
 }
 
 export interface ConfigMapManifest {
@@ -94,6 +100,15 @@ export const setBrokenImages = (images: Iterable<string>) => {
 }
 export const isBroken = (image: string) => /:1\.5$/.test(image) || brokenImages.has(image)
 
+/** CPU each node can hand out to requests, in millicores. */
+export const NODE_CPU = 1000
+/** Simulated traffic: visitors always arriving, plus what each load generator adds (req/s). */
+export const BASE_TRAFFIC = 30
+export const GENERATOR_TRAFFIC = 600
+/** CPU an idle container uses, and what each request per second costs, in millicores. */
+const IDLE_CPU = 15
+const CPU_PER_RPS = 1
+
 /** v1.6 starts fine, then freezes after a while: the process stays up but stops answering. */
 export const hangs = (image: string) => /:1\.6$/.test(image)
 
@@ -116,16 +131,19 @@ const sameLabels = (a: Labels, b: Labels) => {
   return ak.length === bk.length && ak.every((key, i) => key === bk[i] && a[key] === b[key])
 }
 
+const sameResources = (a?: Resources, b?: Resources) => (a?.cpuRequest ?? 0) === (b?.cpuRequest ?? 0) && (a?.cpuLimit ?? 0) === (b?.cpuLimit ?? 0)
+
 const sameTemplateData = (a: Template, b: Template) =>
   a.image === b.image &&
   (a.restartedAt ?? 0) === (b.restartedAt ?? 0) &&
   (a.configMap ?? '') === (b.configMap ?? '') &&
   !!a.liveness === !!b.liveness &&
+  sameResources(a.resources, b.resources) &&
   sameLabels(a.labels, b.labels)
 
 /** Does this ReplicaSet run this template? */
-export const sameTemplate = (rs: { image: string; templateLabels: Labels; restartedAt?: number; configMap?: string; liveness?: boolean }, t: Template) =>
-  sameTemplateData({ image: rs.image, labels: rs.templateLabels, restartedAt: rs.restartedAt, configMap: rs.configMap, liveness: rs.liveness }, t)
+export const sameTemplate = (rs: { image: string; templateLabels: Labels; restartedAt?: number; configMap?: string; liveness?: boolean; resources?: Resources }, t: Template) =>
+  sameTemplateData({ image: rs.image, labels: rs.templateLabels, restartedAt: rs.restartedAt, configMap: rs.configMap, liveness: rs.liveness, resources: rs.resources }, t)
 
 /** The selector a ReplicaSet really uses: the Deployment's, pinned to its own template hash. */
 export const rsSelector = (rs: ReplicaSet): Labels => ({ ...rs.selector, 'pod-template-hash': rs.hash })
@@ -142,6 +160,7 @@ export class Simulation {
     pods: {},
     services: {},
     configMaps: {},
+    hpas: {},
     nodes: [
       { kind: 'Node', name: 'node-1' },
       { kind: 'Node', name: 'node-2' },
@@ -164,6 +183,7 @@ export class Simulation {
   private divergedSince: Record<string, number> = {}
   private told = new Set<string>()
   private ipCounter = 4
+  private unschedulable = new Set<string>()
   private svcIpCounter = 12
   private quiet = false
   private listeners = new Set<() => void>()
@@ -503,8 +523,8 @@ export class Simulation {
     }
     const existing = this.findDeployment(m.name)
     if (existing) {
-      if ((existing.template.configMap ?? '') !== (m.configMap ?? '') || !!existing.template.liveness !== !!m.livenessProbe) {
-        this.applyTemplate(existing, { ...existing.template, image: m.image, configMap: m.configMap, liveness: m.livenessProbe })
+      if ((existing.template.configMap ?? '') !== (m.configMap ?? '') || !!existing.template.liveness !== !!m.livenessProbe || !sameResources(existing.template.resources, m.resources)) {
+        this.applyTemplate(existing, { ...existing.template, image: m.image, configMap: m.configMap, liveness: m.livenessProbe, resources: m.resources })
         if (existing.replicas !== m.replicas) this.scale(m.name, m.replicas, 'apply')
         return 'configured'
       }
@@ -523,10 +543,10 @@ export class Simulation {
         name: m.name,
         replicas: m.replicas,
         selector: { ...m.labels },
-        template: { labels: { ...m.labels }, image: m.image, ...(m.configMap && { configMap: m.configMap }), ...(m.livenessProbe && { liveness: true }) },
+        template: { labels: { ...m.labels }, image: m.image, ...(m.configMap && { configMap: m.configMap }), ...(m.livenessProbe && { liveness: true }), ...(m.resources && { resources: { ...m.resources } }) },
         createdAt: this.now,
         revision: 1,
-        history: [{ image: m.image, labels: { ...m.labels }, ...(m.configMap && { configMap: m.configMap }), ...(m.livenessProbe && { liveness: true }) }],
+        history: [{ image: m.image, labels: { ...m.labels }, ...(m.configMap && { configMap: m.configMap }), ...(m.livenessProbe && { liveness: true }), ...(m.resources && { resources: { ...m.resources } }) }],
         rollout: 'complete',
       }
       this.cluster = { ...this.cluster, deployments: { ...this.cluster.deployments, [dep.uid]: dep } }
@@ -541,14 +561,24 @@ export class Simulation {
     })
   }
 
-  scale(name: string, replicas: number, via: 'scale' | 'apply' | 'ui' | 'edit' = 'scale') {
+  scale(name: string, replicas: number, via: 'scale' | 'apply' | 'ui' | 'edit' | 'hpa' = 'scale') {
     const dep = this.findDeployment(name)
     if (!dep) return false
     if (dep.replicas === replicas) return true
     this.act(() => {
       const from = dep.replicas
       this.patchDep(dep.uid, { replicas })
+      if (via === 'hpa') {
+        this.schedule(TIMING.scaleNotice, 'o Deployment controller atualiza o ReplicaSet', () => this.syncDeployment(dep.uid))
+        return
+      }
       this.emit('you', 'user', 'Scaled', `${via === 'apply' ? 'kubectl apply' : via === 'edit' ? 'kubectl edit' : 'kubectl scale'} — replicas ${from} → ${replicas}`, this.ref(dep))
+      if (Object.values(this.cluster.hpas).some((h) => h.target === name))
+        this.narrateOnce(`manual-vs-hpa:${dep.uid}`, {
+          tone: 'warn',
+          title: 'Há um HPA cuidando disso',
+          body: `${name} tem um HorizontalPodAutoscaler. Na próxima verificação, ele recalcula as réplicas pela CPU e pode desfazer o que você mudou à mão.`,
+        })
       this.narrate({
         tone: 'info',
         title: 'Você mudou o desired state',
@@ -604,7 +634,7 @@ export class Simulation {
     if (sameTemplateData(previous, dep.template)) return 'skipped' as const
     this.act(() => {
       this.patchDep(dep.uid, {
-        template: { image: previous.image, labels: { ...previous.labels }, restartedAt: previous.restartedAt, configMap: previous.configMap, liveness: previous.liveness },
+        template: { image: previous.image, labels: { ...previous.labels }, restartedAt: previous.restartedAt, configMap: previous.configMap, liveness: previous.liveness, resources: previous.resources },
         revision: dep.revision + 1,
         history: [...dep.history, previous],
         rollout: dep.paused ? dep.rollout : 'progressing',
@@ -742,7 +772,7 @@ export class Simulation {
   }
 
   /** `kubectl run`: a Pod with no owner. Nothing will replace it if it goes away. */
-  runPod(name: string, image: string, labels: Labels) {
+  runPod(name: string, image: string, labels: Labels, loadTarget?: string) {
     if (this.findPod(name)) return 'exists' as const
     this.act(() => {
       const pod: Pod = {
@@ -760,6 +790,7 @@ export class Simulation {
         createdAt: this.now,
         deletedAt: null,
         restarts: 0,
+        ...(loadTarget && { loadTarget }),
       }
       this.putPod(pod)
       this.emit('you', 'user', 'Created', `kubectl run ${name} --image=${image}`, this.ref(pod))
@@ -774,6 +805,145 @@ export class Simulation {
       for (const rs of Object.values(this.cluster.replicaSets)) this.kick(rs.uid)
     })
     return 'created' as const
+  }
+
+  // ── metrics (what metrics-server would report) ─────────────────────────────
+
+  /** Requests per second reaching a Service: the usual visitors, plus every running load generator. */
+  trafficTo(serviceName: string) {
+    const generators = Object.values(this.cluster.pods).filter((p) => p.loadTarget === serviceName && p.phase === 'Running' && p.deletedAt === null).length
+    return BASE_TRAFFIC + generators * GENERATOR_TRAFFIC
+  }
+
+  /** What a container would like to use: idle cost plus its share of its Services' traffic. */
+  cpuDemand(pod: Pod) {
+    if (pod.phase !== 'Running' || pod.deletedAt !== null) return 0
+    if (pod.loadTarget) return 5
+    let demand = IDLE_CPU
+    if (pod.ready && !pod.hung)
+      for (const svc of Object.values(this.cluster.services))
+        if (svc.endpoints.includes(pod.uid)) demand += (this.trafficTo(svc.name) * CPU_PER_RPS) / svc.endpoints.length
+    return Math.round(demand)
+  }
+
+  /** What it actually gets: CPU limits are enforced by throttling. */
+  podCpu(pod: Pod) {
+    const demand = this.cpuDemand(pod)
+    return pod.resources?.cpuLimit ? Math.min(demand, pod.resources.cpuLimit) : demand
+  }
+
+  isThrottled(pod: Pod) {
+    return !!pod.resources?.cpuLimit && this.cpuDemand(pod) > pod.resources.cpuLimit
+  }
+
+  /** CPU already promised on a node: the sum of its Pods' requests. */
+  requestedOn(node: string) {
+    return Object.values(this.cluster.pods)
+      .filter((p) => p.nodeName === node && p.deletedAt === null)
+      .reduce((n, p) => n + (p.resources?.cpuRequest ?? 0), 0)
+  }
+
+  // ── HorizontalPodAutoscaler ──────────────────────────────────────────────
+
+  findHpa(name: string) {
+    return Object.values(this.cluster.hpas).find((h) => h.name === name)
+  }
+
+  autoscale(target: string, min: number, max: number, cpuPercent: number) {
+    if (!this.findDeployment(target)) return 'notfound' as const
+    if (this.findHpa(target)) return 'exists' as const
+    this.act(() => {
+      const hpa: HorizontalPodAutoscaler = {
+        kind: 'HorizontalPodAutoscaler',
+        uid: `hpa-${++this.seq}`,
+        name: target,
+        target,
+        min,
+        max,
+        cpuPercent,
+        createdAt: this.now,
+        current: null,
+        recommendations: [],
+      }
+      this.cluster = { ...this.cluster, hpas: { ...this.cluster.hpas, [hpa.uid]: hpa } }
+      this.emit('you', 'user', 'HpaCreated', `kubectl autoscale deployment ${target} --cpu=${cpuPercent}% --min=${min} --max=${max}`, this.ref(hpa))
+      this.narrate({
+        tone: 'info',
+        title: 'Um controller novo',
+        body: `A cada poucos segundos, o HPA mede a CPU média dos Pods de ${target} — como porcentagem do que eles pedem (requests) — e ajusta as réplicas para mantê-la perto de ${cpuPercent}%, entre ${min} e ${max}.`,
+      })
+      this.schedule(TIMING.hpaSync, `o HPA mede a CPU de ${target}`, () => this.syncHpa(hpa.uid))
+    })
+    return 'created' as const
+  }
+
+  deleteHpa(name: string) {
+    const hpa = this.findHpa(name)
+    if (!hpa) return false
+    this.act(() => {
+      const { [hpa.uid]: _gone, ...rest } = this.cluster.hpas
+      this.cluster = { ...this.cluster, hpas: rest }
+      this.emit('you', 'user', 'Deleted', `kubectl delete hpa ${name}`, this.ref(hpa))
+    })
+    return true
+  }
+
+  private patchHpa(uid: string, patch: Partial<HorizontalPodAutoscaler>) {
+    const h = this.cluster.hpas[uid]
+    if (h) this.cluster = { ...this.cluster, hpas: { ...this.cluster.hpas, [uid]: { ...h, ...patch } } }
+  }
+
+  /** One HPA cycle: measure, compute the desired replicas, scale up now, scale down only once stable. */
+  private syncHpa(uid: string) {
+    const hpa = this.cluster.hpas[uid]
+    if (!hpa) return
+    const next = () => this.schedule(TIMING.hpaSync, `o HPA mede a CPU de ${hpa.target}`, () => this.syncHpa(uid))
+    const dep = this.findDeployment(hpa.target)
+    if (!dep) return next()
+    const pods = this.deploymentPods(dep).filter((p) => p.deletedAt === null && p.phase === 'Running' && p.ready)
+    const missing = pods.find((p) => !p.resources?.cpuRequest)
+    if (missing || !pods.length) {
+      if (missing && hpa.current !== null) this.patchHpa(uid, { current: null })
+      if (missing && !this.told.has(`hpa-missing:${uid}:${dep.revision}`)) {
+        this.told.add(`hpa-missing:${uid}:${dep.revision}`)
+        this.emit('horizontal-pod-autoscaler', 'warning', 'FailedGetResourceMetric', `failed to get cpu utilization: missing request for cpu in container backend of Pod ${missing.name}`, this.ref(hpa), 'Warning')
+        this.narrateOnce(`hpa-unknown:${uid}`, {
+          tone: 'warn',
+          title: 'O HPA não consegue calcular',
+          body: 'Ele mede a CPU como porcentagem das requests — e os containers não declaram nenhuma. Sem base, o TARGETS fica <unknown> e o HPA não age.',
+          command: `kubectl get hpa ${hpa.name}`,
+        })
+      }
+      return next()
+    }
+    const utilization = Math.round(pods.reduce((n, p) => n + this.podCpu(p) / p.resources!.cpuRequest, 0) / pods.length * 100)
+    const ratio = utilization / hpa.cpuPercent
+    // within 10% of the target, nothing changes (the default tolerance)
+    let desired = Math.abs(ratio - 1) <= 0.1 ? dep.replicas : Math.ceil(pods.length * ratio)
+    desired = Math.min(hpa.max, Math.max(hpa.min, desired))
+    const recommendations = [...hpa.recommendations, { at: this.now, desired }].filter((r) => r.at > this.now - TIMING.hpaDownWindow)
+    this.patchHpa(uid, { current: utilization, recommendations })
+    if (desired > dep.replicas) this.rescale(hpa, dep.replicas, desired, utilization, 'above')
+    else if (desired < dep.replicas) {
+      // scale down only to the highest recommendation of the recent window (stabilization)
+      const stable = Math.max(...recommendations.map((r) => r.desired))
+      if (stable < dep.replicas) this.rescale(hpa, dep.replicas, stable, utilization, 'below')
+    }
+    next()
+  }
+
+  private rescale(hpa: HorizontalPodAutoscaler, from: number, to: number, utilization: number, why: 'above' | 'below') {
+    this.emit('horizontal-pod-autoscaler', 'reconcile', 'SuccessfulRescale', `New size: ${to}; reason: cpu resource utilization (percentage of request) ${why} target`, this.ref(hpa))
+    this.fx({ kind: 'ping', uid: hpa.uid, tone: why === 'above' ? 'warn' : 'info' })
+    this.narrate({
+      tone: 'info',
+      title: why === 'above' ? 'O HPA escalou para cima' : 'O HPA escalou para baixo',
+      body:
+        why === 'above'
+          ? `CPU média em ${utilization}% das requests, acima da meta de ${hpa.cpuPercent}%. O HPA pede ${to} réplicas em vez de ${from} — e o Deployment cuida do resto.`
+          : `A CPU média caiu para ${utilization}%. Depois de esperar a carga se manter baixa, o HPA reduz de ${from} para ${to} réplicas.`,
+    })
+    this.scale(hpa.target, to, 'hpa')
   }
 
   // ── ConfigMaps ───────────────────────────────────────────────────────────
@@ -889,17 +1059,24 @@ export class Simulation {
         rollout: dep.paused ? dep.rollout : 'progressing',
       })
       const livenessChanged = !!template.liveness !== !!dep.template.liveness
+      const resourcesChanged = !sameResources(template.resources, dep.template.resources)
       this.emit(
         'you',
         'user',
         'TemplateChanged',
-        livenessChanged ? `kubectl apply — livenessProbe ${template.liveness ? 'added' : 'removed'}` : `kubectl apply — envFrom configMapRef ${template.configMap ?? '(removed)'}`,
+        resourcesChanged
+          ? `kubectl apply — resources: requests cpu=${template.resources?.cpuRequest ?? 0}m${template.resources?.cpuLimit ? `, limits cpu=${template.resources.cpuLimit}m` : ''}`
+          : livenessChanged
+            ? `kubectl apply — livenessProbe ${template.liveness ? 'added' : 'removed'}`
+            : `kubectl apply — envFrom configMapRef ${template.configMap ?? '(removed)'}`,
         this.ref(dep),
       )
       this.narrate({
         tone: 'info',
         title: 'Template novo',
-        body: livenessChanged
+        body: resourcesChanged
+          ? `Os containers de ${dep.name} agora declaram quanto CPU pedem (requests) e quanto podem usar (limits). O scheduler passa a reservar esse espaço nos nodes — e o HPA ganha uma base para calcular porcentagens.`
+          : livenessChanged
           ? template.liveness
             ? `Os Pods de ${dep.name} ganham uma liveness probe: se o container parar de responder, o kubelet o reinicia. Template novo, revisão nova — o Deployment troca os Pods aos poucos.`
             : `Os Pods de ${dep.name} perdem a liveness probe. É uma revisão nova do template.`
@@ -1123,6 +1300,7 @@ export class Simulation {
       restartedAt: dep.template.restartedAt,
       configMap: dep.template.configMap,
       liveness: dep.template.liveness,
+      resources: dep.template.resources,
       desired,
       selector: { ...dep.selector },
       createdAt: this.now,
@@ -1295,6 +1473,7 @@ export class Simulation {
       restarts: 0,
       ...(rs.configMap && { configMap: rs.configMap }),
       ...(rs.liveness && { liveness: true }),
+      ...(rs.resources && { resources: { ...rs.resources } }),
     }
     this.putPod(pod)
     this.dropVacancy(rsUid, slot)
@@ -1309,7 +1488,25 @@ export class Simulation {
     const pod = this.livePod(podUid)
     if (!pod) return
     const load = (node: string) => Object.values(this.cluster.pods).filter((p) => p.nodeName === node && p.deletedAt === null).length
-    const node = [...this.cluster.nodes].sort((a, b) => load(a.name) - load(b.name))[0]
+    // a node only takes the Pod if what's already requested there, plus this Pod's request, fits
+    const want = pod.resources?.cpuRequest ?? 0
+    const fits = this.cluster.nodes.filter((n) => this.requestedOn(n.name) + want <= NODE_CPU)
+    if (!fits.length) {
+      if (!this.unschedulable.has(podUid)) {
+        this.unschedulable.add(podUid)
+        this.emit('default-scheduler', 'warning', 'FailedScheduling', `0/${this.cluster.nodes.length} nodes are available: ${this.cluster.nodes.length} Insufficient cpu.`, this.ref(pod), 'Warning')
+        this.narrateOnce(`unschedulable:${pod.ownerUid ?? pod.uid}`, {
+          tone: 'warn',
+          title: 'Nenhum node tem espaço',
+          body: `${short(pod.name)} pede ${want}m de CPU, e a soma das requests já ocupa os nodes. Ele fica Pending até sobrar espaço — requests são uma reserva, mesmo que ninguém esteja usando.`,
+          command: `kubectl describe pod ${pod.name}`,
+        })
+      }
+      this.schedule(TIMING.scheduleRetry, `o scheduler tenta de novo encontrar um node para ${short(pod.name)}`, () => this.bind(podUid))
+      return
+    }
+    this.unschedulable.delete(podUid)
+    const node = [...fits].sort((a, b) => load(a.name) - load(b.name))[0]
     this.patchPod(podUid, { nodeName: node.name, phase: 'ContainerCreating' })
     this.emit('default-scheduler', 'schedule', 'Scheduled', `Successfully assigned default/${pod.name} to ${node.name}`, this.ref(pod))
     this.schedule(TIMING.pull, `o kubelet baixa a imagem de ${short(pod.name)}`, () => {

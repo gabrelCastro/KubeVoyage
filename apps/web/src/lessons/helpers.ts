@@ -28,13 +28,13 @@ export function storyFrom(
   events: ClusterEvent[],
   start: number,
   end: number,
-  beats: { reason: string; text: (e: ClusterEvent) => string; pick?: 'first' | 'last' }[],
+  beats: { reason: string; text: (e: ClusterEvent) => string; pick?: 'first' | 'last'; match?: (e: ClusterEvent) => boolean }[],
 ): StoryStep[] {
   const window = events.slice(start, end + 1)
   const t0 = events[start].at
   const steps = beats
     .map((b) => {
-      const list = window.filter((e) => e.reason === b.reason)
+      const list = window.filter((e) => e.reason === b.reason && (!b.match || b.match(e)))
       const e = b.pick === 'last' ? list.at(-1) : list[0]
       return e ? { t: (e.at - t0) / 1000, text: b.text(e), at: e.at } : null
     })

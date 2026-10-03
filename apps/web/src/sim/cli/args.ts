@@ -58,6 +58,8 @@ const ALIASES: Record<string, string> = {
   previous: 'p',
   container: 'c',
   follow: 'f-follow',
+  tty: 't',
+  stdin: 'i',
 }
 
 /** Flags that take a value, so `--replicas 3` works like `--replicas=3`. */
