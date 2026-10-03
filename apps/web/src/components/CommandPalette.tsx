@@ -64,6 +64,7 @@ function Palette({ close }: { close: () => void }) {
       ...Object.values(cluster.services).map((v) => ({ id: v.uid, group: 'Resources' as const, label: `Service ${v.name}`, icon: <KindIcon kind="Service" />, run: () => s.select(v.uid) })),
       ...Object.values(cluster.deployments).map((d) => ({ id: d.uid, group: 'Resources' as const, label: `Deployment ${d.name}`, icon: <KindIcon kind="Deployment" />, run: () => s.select(d.uid) })),
       ...Object.values(cluster.replicaSets).map((r) => ({ id: r.uid, group: 'Resources' as const, label: `ReplicaSet ${r.name}`, icon: <KindIcon kind="ReplicaSet" />, run: () => s.select(r.uid) })),
+      ...Object.values(cluster.daemonSets).map((d) => ({ id: d.uid, group: 'Resources' as const, label: `DaemonSet ${d.name}`, icon: <KindIcon kind="DaemonSet" />, run: () => s.select(d.uid) })),
       ...Object.values(cluster.pods).map((p) => ({
         id: p.uid,
         group: 'Resources' as const,

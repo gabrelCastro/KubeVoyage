@@ -6,7 +6,7 @@ import { computeLayout, edgePath, relatedTo, spring, type Layout } from '../../l
 import { useSim } from '../../store/useSim'
 import { Edges, type EdgeModel } from './Edges'
 import { Effects } from './Effects'
-import { DeploymentNode, JobNode, PodNode, ReplicaSetNode, ServiceNode, SlotPlaceholder, type Probe } from './Nodes'
+import { DaemonSetNode, DeploymentNode, JobNode, PodNode, ReplicaSetNode, ServiceNode, SlotPlaceholder, type Probe } from './Nodes'
 import { BootSkeleton, ConfigMapLane, HpaLane, EdgeTooltip, EmptyState, Legend, Narration, NodeLane, ReconcileHud } from './Overlays'
 import { Traffic } from './Traffic'
 
@@ -77,7 +77,7 @@ export function Stage() {
 
   const layout = useMemo(() => computeLayout(cluster), [cluster])
   const related = useMemo(() => relatedTo(cluster, selected), [cluster, selected])
-  const empty = Object.keys(cluster.deployments).length === 0 && Object.keys(cluster.pods).length === 0
+  const empty = Object.keys(cluster.deployments).length === 0 && Object.keys(cluster.jobs).length === 0 && Object.keys(cluster.daemonSets).length === 0 && Object.keys(cluster.pods).length === 0
   const services = useMemo(() => Object.values(cluster.services), [cluster.services])
 
   const edges = useMemo<EdgeModel[]>(() => {
@@ -210,6 +210,24 @@ export function Stage() {
               if (!b) return null
               const active = Object.values(cluster.pods).filter((p) => p.ownerUid === j.uid && p.deletedAt === null && p.phase !== 'Succeeded' && p.phase !== 'Error').length
               return <JobNode key={j.uid} job={j} geo={b} active={active} dim={dimmed(j.uid)} selected={selected === j.uid} hovered={hovered === j.uid} />
+            })}
+            {Object.values(cluster.daemonSets).map((ds) => {
+              const b = layout.boxes[ds.uid]
+              if (!b) return null
+              const pods = Object.values(cluster.pods).filter((p) => p.ownerUid === ds.uid && p.deletedAt === null)
+              return (
+                <DaemonSetNode
+                  key={ds.uid}
+                  daemonSet={ds}
+                  geo={b}
+                  desired={cluster.nodes.length}
+                  current={pods.length}
+                  ready={pods.filter((p) => p.ready).length}
+                  dim={dimmed(ds.uid)}
+                  selected={selected === ds.uid}
+                  hovered={hovered === ds.uid}
+                />
+              )
             })}
             {Object.values(cluster.pods).map((p) => {
               const b = layout.boxes[p.uid]

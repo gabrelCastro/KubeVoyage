@@ -164,7 +164,7 @@ export function LabelChip({ k, v, tone = 'neutral' }: { k: string; v: string; to
   )
 }
 
-export type Kind = 'Deployment' | 'ReplicaSet' | 'Pod' | 'Service' | 'Job'
+export type Kind = 'Deployment' | 'ReplicaSet' | 'Pod' | 'Service' | 'Job' | 'DaemonSet'
 
 export const KIND_COLOR: Record<Kind, string> = {
   Deployment: 'var(--color-deploy)',
@@ -172,6 +172,7 @@ export const KIND_COLOR: Record<Kind, string> = {
   Pod: 'var(--color-fg-muted)',
   Service: 'var(--color-svc)',
   Job: 'var(--color-creating)',
+  DaemonSet: 'var(--color-accent)',
 }
 
 export function KindBadge({ kind, className }: { kind: Kind; className?: string }) {
@@ -192,6 +193,15 @@ export function KindIcon({ kind, size = 14 }: { kind: Kind; size?: number }) {
         <>
           <rect x="2.5" y="3" width="11" height="10" rx="2" />
           <path d="M5.2 8.2 L7.1 10 L10.8 6.2" strokeLinecap="round" />
+        </>
+      )}
+      {kind === 'DaemonSet' && (
+        <>
+          <circle cx="8" cy="8" r="2.2" fill="currentColor" fillOpacity="0.35" />
+          <path d="M8 5.8V3.2M6.1 9.1 3.8 11M9.9 9.1l2.3 1.9" strokeLinecap="round" />
+          <rect x="6.4" y="1.4" width="3.2" height="2.4" rx="0.7" />
+          <rect x="1.8" y="10.3" width="3.2" height="2.4" rx="0.7" />
+          <rect x="11" y="10.3" width="3.2" height="2.4" rx="0.7" />
         </>
       )}
       {kind === 'Deployment' && (

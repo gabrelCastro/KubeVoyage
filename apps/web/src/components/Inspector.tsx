@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { ChevronRight, FileText, Minus, MousePointerClick, Plus, ScrollText, Trash2, Wrench, X } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { isBroken, matches, rsSelector, sameTemplate, short } from '../sim/engine'
-import type { ClusterEvent, ClusterState, Deployment, Job, Labels, Pod, ReplicaSet, Service } from '../sim/types'
+import type { ClusterEvent, ClusterState, DaemonSet, Deployment, Job, Labels, Pod, ReplicaSet, Service } from '../sim/types'
 import { cn, kindOf, podLabel, podVisual, VISUAL } from '../lib/visual'
 import { APP_EMOJIS, designForPod, LIMITS, useApp } from '../store/useApp'
 import { clockTime, useSim } from '../store/useSim'
@@ -49,6 +49,8 @@ export function Inspector() {
             <div className="min-h-0 overflow-auto px-4 pt-1 pb-4">
               {tab === 'yaml' ? (
                 <Yaml cluster={cluster} uid={selected} />
+              ) : kind === 'DaemonSet' ? (
+                <DaemonSetView daemonSet={cluster.daemonSets[selected]} cluster={cluster} />
               ) : kind === 'Job' ? (
                 <JobView job={cluster.jobs[selected]} />
               ) : kind === 'Pod' ? (
@@ -71,7 +73,7 @@ export function Inspector() {
 function Header({ uid, cluster, tab, setTab }: { uid: string; cluster: ClusterState; tab: string; setTab: (t: 'overview' | 'yaml') => void }) {
   const select = useSim((s) => s.select)
   const kind = kindOf(cluster, uid)!
-  const r = cluster.pods[uid] ?? cluster.replicaSets[uid] ?? cluster.deployments[uid] ?? cluster.services[uid] ?? cluster.jobs[uid]
+  const r = cluster.pods[uid] ?? cluster.replicaSets[uid] ?? cluster.deployments[uid] ?? cluster.services[uid] ?? cluster.jobs[uid] ?? cluster.daemonSets[uid]
   return (
     <div className="px-4 pt-3">
       <div className="flex items-center justify-between">
@@ -102,10 +104,10 @@ function Breadcrumb({ uid, cluster }: { uid: string; cluster: ClusterState }) {
   const chain: { uid: string; label: string }[] = []
   let cur: string | null = uid
   while (cur) {
-    const r = (cluster.pods[cur] ?? cluster.replicaSets[cur] ?? cluster.deployments[cur] ?? cluster.jobs[cur]) as Deployment | ReplicaSet | Pod | Job | undefined
+    const r = (cluster.pods[cur] ?? cluster.replicaSets[cur] ?? cluster.deployments[cur] ?? cluster.jobs[cur] ?? cluster.daemonSets[cur]) as Deployment | ReplicaSet | Pod | Job | DaemonSet | undefined
     if (!r) break
-    chain.unshift({ uid: cur, label: r.kind === 'Pod' ? short(r.name) : r.kind === 'ReplicaSet' ? `rs/${r.hash}` : r.kind === 'Job' ? `job/${r.name}` : `deploy/${r.name}` })
-    cur = r.kind === 'Deployment' || r.kind === 'Job' ? null : r.ownerUid
+    chain.unshift({ uid: cur, label: r.kind === 'Pod' ? short(r.name) : r.kind === 'ReplicaSet' ? `rs/${r.hash}` : r.kind === 'Job' ? `job/${r.name}` : r.kind === 'DaemonSet' ? `ds/${r.name}` : `deploy/${r.name}` })
+    cur = r.kind === 'Pod' || r.kind === 'ReplicaSet' ? r.ownerUid : null
   }
   if (chain.length < 2) return null
   return (
@@ -163,14 +165,15 @@ function PodView({ pod, cluster }: { pod: Pod; cluster: ClusterState }) {
   const v = podVisual(pod)
   const meta = VISUAL[v]
   const rs = pod.ownerUid ? cluster.replicaSets[pod.ownerUid] : undefined
+  const ds = pod.ownerUid ? cluster.daemonSets[pod.ownerUid] : undefined
   const mine = events.filter((e) => e.involved.uid === pod.uid)
   const at = (reason: string) => mine.find((e) => e.reason === reason)
 
   const steps: { label: string; e?: ClusterEvent; detail?: string }[] = [
-    { label: 'Criado', e: at('SuccessfulCreate'), detail: 'pelo ReplicaSet' },
+    { label: 'Criado', e: at('SuccessfulCreate'), detail: ds ? 'pelo DaemonSet' : rs ? 'pelo ReplicaSet' : undefined },
     { label: 'Agendado', e: at('Scheduled'), detail: pod.nodeName ?? undefined },
     { label: 'Iniciado', e: at('Started'), detail: pod.ip ?? undefined },
-    { label: 'Ready', e: at('Ready'), detail: 'readiness probe passou' },
+    { label: 'Ready', e: at('Ready'), detail: ds ? 'container pronto' : 'readiness probe passou' },
   ]
   const created = steps[0].e?.at ?? pod.createdAt
 
@@ -250,13 +253,15 @@ function PodView({ pod, cluster }: { pod: Pod; cluster: ClusterState }) {
       <Section title="Labels">
         <EditableLabels
           labels={pod.labels}
-          highlight={rs ? rsSelector(rs) : undefined}
+          highlight={rs ? rsSelector(rs) : ds?.labels}
           disabled={v === 'terminating'}
           onCommit={(k, val) => exec(`kubectl label pod ${pod.name} ${k}=${val} --overwrite`, 'ui')}
         />
         <p className="mt-1.5 text-[11px] leading-relaxed text-fg-faint">
           {rs
             ? 'As labels destacadas combinam com o selector do ReplicaSet — é assim que ele reconhece este Pod como seu. Clique num valor para mudar.'
+            : ds
+              ? `Este Pod pertence ao DaemonSet ${ds.name} e cobre o node ${pod.nodeName ?? 'ainda não definido'}.`
             : 'Este Pod não tem dono. Se ele morrer, nada o substitui. Clique num valor para mudar.'}
         </p>
       </Section>
@@ -524,8 +529,8 @@ function DeploymentView({ dep, cluster }: { dep: Deployment; cluster: ClusterSta
 function Yaml({ cluster, uid }: { cluster: ClusterState; uid: string }) {
   const setDraft = useSim((s) => s.setDraft)
   const lines = toYaml(cluster, uid)
-  const kind = cluster.pods[uid] ? 'pod' : cluster.replicaSets[uid] ? 'rs' : cluster.services[uid] ? 'svc' : cluster.jobs[uid] ? 'job' : 'deploy'
-  const name = (cluster.pods[uid] ?? cluster.replicaSets[uid] ?? cluster.services[uid] ?? cluster.deployments[uid] ?? cluster.jobs[uid])?.name
+  const kind = cluster.pods[uid] ? 'pod' : cluster.replicaSets[uid] ? 'rs' : cluster.services[uid] ? 'svc' : cluster.jobs[uid] ? 'job' : cluster.daemonSets[uid] ? 'daemonset' : 'deploy'
+  const name = (cluster.pods[uid] ?? cluster.replicaSets[uid] ?? cluster.services[uid] ?? cluster.deployments[uid] ?? cluster.jobs[uid] ?? cluster.daemonSets[uid])?.name
   const command = `kubectl get ${kind} ${name} -o yaml`
   return (
     <>
@@ -553,6 +558,7 @@ function toYaml(c: ClusterState, uid: string): { t: string; hl?: boolean }[] {
   const pod = c.pods[uid]
   if (pod) {
     const rs = pod.ownerUid ? c.replicaSets[pod.ownerUid] : undefined
+    const ds = pod.ownerUid ? c.daemonSets[pod.ownerUid] : undefined
     return [
       L('apiVersion: v1'),
       L('kind: Pod'),
@@ -562,6 +568,7 @@ function toYaml(c: ClusterState, uid: string): { t: string; hl?: boolean }[] {
       ...labels(pod.labels, '    '),
       ...(pod.deletedAt !== null ? [L('  deletionTimestamp: set', true)] : []),
       ...(rs ? [L('  ownerReferences:', true), L('    - kind: ReplicaSet', true), L(`      name: ${rs.name}`, true), L('      controller: true', true)] : []),
+      ...(ds ? [L('  ownerReferences:', true), L('    - kind: DaemonSet', true), L(`      name: ${ds.name}`, true), L('      controller: true', true)] : []),
       L('spec:'),
       L(`  nodeName: ${pod.nodeName ?? '""'}`),
       L('  containers:'),
@@ -615,6 +622,32 @@ function toYaml(c: ClusterState, uid: string): { t: string; hl?: boolean }[] {
       L(`      targetPort: ${svc.targetPort}`),
       L('# endpoints (managed by the endpoints controller):'),
       ...(svc.endpoints.length ? svc.endpoints.map((u) => L(`#   - ${c.pods[u]?.ip}:${svc.targetPort}`)) : [L('#   <none>', true)]),
+    ]
+  }
+  const ds = c.daemonSets[uid]
+  if (ds) {
+    const pods = Object.values(c.pods).filter((p) => p.ownerUid === ds.uid && p.deletedAt === null)
+    return [
+      L('apiVersion: apps/v1'),
+      L('kind: DaemonSet'),
+      L('metadata:'),
+      L(`  name: ${ds.name}`),
+      L('spec:'),
+      L('  selector:'),
+      L('    matchLabels:'),
+      ...labels(ds.labels, '      '),
+      L('  template:'),
+      L('    metadata:'),
+      L('      labels:'),
+      ...labels(ds.labels, '        '),
+      L('    spec:'),
+      L('      containers:'),
+      L(`        - name: ${ds.name}`),
+      L(`          image: ${ds.image}`),
+      L('status:'),
+      L(`  desiredNumberScheduled: ${c.nodes.length}`, true),
+      L(`  currentNumberScheduled: ${pods.length}`, true),
+      L(`  numberReady: ${pods.filter((p) => p.ready).length}`, true),
     ]
   }
   const dep = c.deployments[uid]
@@ -731,6 +764,53 @@ function HandEdit({ pod }: { pod: Pod }) {
         </form>
       )}
     </Section>
+  )
+}
+
+function DaemonSetView({ daemonSet, cluster }: { daemonSet: DaemonSet; cluster: ClusterState }) {
+  const exec = useSim((s) => s.exec)
+  const select = useSim((s) => s.select)
+  const pods = Object.values(cluster.pods).filter((p) => p.ownerUid === daemonSet.uid && p.deletedAt === null)
+  return (
+    <>
+      <p className="mt-3 text-[11.5px] leading-relaxed text-fg-muted">
+        O DaemonSet controller mantém uma cópia deste Pod em cada node. Um node em cordon continua com seu agente: esse tipo de Pod tolera a marca de não agendável.
+      </p>
+      <Section title="Cobertura dos nodes">
+        <ul className="space-y-1.5">
+          {cluster.nodes.map((node) => {
+            const pod = pods.find((p) => p.nodeName === node.name)
+            return (
+              <li key={node.name}>
+                <button disabled={!pod} onClick={() => pod && select(pod.uid)} className="flex w-full items-center gap-2 rounded-md border border-line px-2 py-1.5 text-left disabled:cursor-default">
+                  {pod ? <StatusGlyph state={podVisual(pod)} size={12} /> : <span className="size-3 rounded-full border border-dashed border-warn" />}
+                  <span className="font-mono text-[11.5px] text-fg">{node.name}</span>
+                  <span className="ml-auto truncate font-mono text-[10.5px] text-fg-faint">{pod ? short(pod.name) : 'sem Pod'}</span>
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      </Section>
+      <Section title="Detalhes">
+        <Props
+          rows={[
+            ['Desired', String(cluster.nodes.length)],
+            ['Current', String(pods.length)],
+            ['Ready', String(pods.filter((p) => p.ready).length)],
+            ['Imagem', daemonSet.image.split('/').pop() ?? daemonSet.image],
+          ]}
+        />
+      </Section>
+      <Section title="Selector">
+        <LabelList labels={daemonSet.labels} highlight={daemonSet.labels} />
+      </Section>
+      <div className="mt-4 flex gap-2">
+        <button onClick={() => exec(`kubectl describe daemonset ${daemonSet.name}`, 'ui')} className="flex items-center gap-1.5 rounded-lg border border-line-strong px-2.5 py-1.5 text-[12px] text-fg-muted transition hover:text-fg">
+          <FileText size={13} /> Describe
+        </button>
+      </div>
+    </>
   )
 }
 

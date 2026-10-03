@@ -2,7 +2,7 @@ import { AnimatePresence, motion, useAnimate } from 'motion/react'
 import { RefreshCw, Check, Plus, X } from 'lucide-react'
 import { memo, useEffect, useRef, type ReactNode } from 'react'
 import { isBroken, short, tag } from '../../sim/engine'
-import type { ControllerPhase, Deployment, Job, Pod, ReplicaSet, Service } from '../../sim/types'
+import type { ControllerPhase, DaemonSet, Deployment, Job, Pod, ReplicaSet, Service } from '../../sim/types'
 import { cn, LIFECYCLE, podLabel, podVisual, spring, VISUAL } from '../../lib/visual'
 import { designForPod, useApp } from '../../store/useApp'
 import { useSim } from '../../store/useSim'
@@ -148,6 +148,28 @@ export const JobNode = memo(function JobNode({ job, geo, active, ...e }: { job: 
           <Metric label={`Feitas de ${job.completions}`} value={job.succeeded} tone={job.status === 'Complete' ? 'ok' : 'neutral'} />
           <Metric label="Ativos" value={active} />
           <Metric label="Falhas" value={job.failed} tone={job.failed ? 'warn' : 'neutral'} />
+        </div>
+      </Card>
+    </Positioned>
+  )
+})
+
+// ── DaemonSet ─────────────────────────────────────────────────────────────
+
+export const DaemonSetNode = memo(function DaemonSetNode({ daemonSet, geo, desired, current, ready, ...e }: { daemonSet: DaemonSet; geo: Geo; desired: number; current: number; ready: number } & Emphasis) {
+  const select = useSim((s) => s.select)
+  return (
+    <Positioned {...geo}>
+      <Card emphasis={e} tint="var(--color-accent)" onClick={() => select(daemonSet.uid)} label={`DaemonSet ${daemonSet.name}, ${ready} de ${desired} prontos`} className="px-3.5 py-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <KindBadge kind="DaemonSet" />
+          <LabelChip k="app" v={daemonSet.labels.app ?? daemonSet.name} />
+        </div>
+        <div className="mt-1 truncate font-mono text-[12.5px] text-fg">{daemonSet.name}</div>
+        <div className="mt-2 flex gap-5">
+          <Metric label="Nodes" value={desired} />
+          <Metric label="Pods" value={current} tone={current === desired ? 'neutral' : 'warn'} />
+          <Metric label="Ready" value={ready} tone={ready === desired ? 'ok' : 'neutral'} />
         </div>
       </Card>
     </Positioned>

@@ -2,7 +2,7 @@ export type Labels = Record<string, string>
 
 export type PodPhase = 'Pending' | 'ContainerCreating' | 'Running' | 'Terminating' | 'Error' | 'CrashLoopBackOff' | 'Succeeded'
 
-export type ResourceKind = 'Deployment' | 'ReplicaSet' | 'Pod' | 'Service' | 'Node' | 'ConfigMap' | 'HorizontalPodAutoscaler' | 'Secret' | 'Job'
+export type ResourceKind = 'Deployment' | 'ReplicaSet' | 'Pod' | 'Service' | 'Node' | 'ConfigMap' | 'HorizontalPodAutoscaler' | 'Secret' | 'Job' | 'DaemonSet'
 
 export type RolloutState = 'complete' | 'progressing' | 'stalled'
 
@@ -157,6 +157,8 @@ export interface Pod {
   loadTarget?: string
   /** Owned by a Job (ownerUid is the Job's uid): runs to completion instead of serving. */
   job?: boolean
+  /** Owned by a DaemonSet: bound to one node, ignores cordons. */
+  daemon?: boolean
 }
 
 export interface Service {
@@ -175,6 +177,18 @@ export interface Service {
 export interface WorkerNode {
   kind: 'Node'
   name: string
+  /** `kubectl cordon`: no new Pods are scheduled here (DaemonSet Pods excepted). */
+  unschedulable?: boolean
+}
+
+/** One copy of a Pod on every node — log collectors, monitoring agents. */
+export interface DaemonSet {
+  kind: 'DaemonSet'
+  uid: string
+  name: string
+  image: string
+  labels: Labels
+  createdAt: number
 }
 
 /** A slot whose Pod vanished and has not been refilled yet — the visible "hole" self-healing fills. */
@@ -194,6 +208,7 @@ export interface ClusterState {
   hpas: Record<string, HorizontalPodAutoscaler>
   secrets: Record<string, Secret>
   jobs: Record<string, Job>
+  daemonSets: Record<string, DaemonSet>
   nodes: WorkerNode[]
   vacancies: Vacancy[]
 }
@@ -206,6 +221,8 @@ export type EventSource =
   | 'garbage-collector'
   | 'horizontal-pod-autoscaler'
   | 'job-controller'
+  | 'daemonset-controller'
+  | 'node-controller'
   | 'endpoints-controller'
   | 'default-scheduler'
   | 'kubelet'

@@ -1,0 +1,159 @@
+import { Callout, QuickQuestion } from '../../components/apostila/ApostilaBlocks'
+
+# Nodes e DaemonSets: manutenção sem surpresa
+
+Esta apostila acompanha a lição 12. Você colocou um agente de logs em todas as máquinas, tirou o `node-2` da escala, moveu o backend sem apagar o agente local e depois devolveu o node ao serviço.
+
+<section id="o-que-voce-vai-entender">
+
+## O que você vai entender
+
+- Quando usar um **DaemonSet** em vez de um Deployment.
+- A diferença entre **cordon**, **drain** e **uncordon**.
+- Por que Pods de DaemonSet ficam durante um drain e quando `--force` é necessário.
+- Como um **PodDisruptionBudget** protege a disponibilidade durante manutenção voluntária.
+
+</section>
+
+<section id="conceitos">
+
+## Conceitos
+
+<h3 id="daemonset">DaemonSet: trabalho ligado ao node</h3>
+
+Um **DaemonSet** garante que todos os nodes elegíveis — ou um subconjunto escolhido — executem uma cópia de um Pod. Quando entra um node elegível, o controller cria mais uma cópia; quando o node sai do cluster, aquela cópia deixa de ser necessária.
+
+Isso serve para funções locais à máquina: coletar logs em `/var/log`, exportar métricas do sistema ou oferecer componentes de rede. O manifesto `log-agent.yaml` monta os logs do host e executa exatamente um agente em cada um dos três nodes do simulador.
+
+Um Deployment responde “quantas cópias quero no cluster?”. Um DaemonSet responde “em quais nodes preciso de uma cópia?”. Por isso ele não tem um campo `replicas`.
+
+<h3 id="cordon">cordon: feche a porta para Pods novos</h3>
+
+`kubectl cordon node-2` marca o node como não agendável. Em `kubectl get nodes`, ele continua `Ready`, mas ganha o status `SchedulingDisabled`. Os Pods que já estavam nele continuam rodando: cordon não os despeja.
+
+Pods de DaemonSet são uma exceção importante. O DaemonSet controller adiciona automaticamente a toleration `node.kubernetes.io/unschedulable:NoSchedule`, então esses Pods podem ser agendados até em nodes marcados como não agendáveis. Um agente local não deixaria de ser necessário só porque a máquina entrou em manutenção.
+
+<h3 id="drain">drain: esvazie com segurança</h3>
+
+`kubectl drain` primeiro marca o node como não agendável e depois tenta despejar seus Pods. A eviction respeita o encerramento gracioso e os PodDisruptionBudgets.
+
+O comando não remove Pods administrados por DaemonSet. Sem `--ignore-daemonsets`, ele para e explica o bloqueio; com a flag, deixa esses Pods onde estão e continua com os demais. Apagá-los não ajudaria: o controller os recriaria no mesmo node, pois tolera a marca de não agendável.
+
+Um Pod avulso não tem controller para recriá-lo. Por isso o drain também para diante dele, a menos que você use `--force`. A flag autoriza a exclusão, mas não inventa um dono: o Pod não volta.
+
+</section>
+
+<section id="no-mundo-real">
+
+## No mundo real
+
+### O fluxo de manutenção
+
+```bash
+kubectl get nodes
+kubectl get pods -o wide
+
+kubectl drain node-2
+# error: cannot delete DaemonSet-managed Pods ...
+
+kubectl drain node-2 --ignore-daemonsets
+# pod/backend-... evicted
+# node/node-2 drained
+
+# faça a manutenção da máquina
+
+kubectl uncordon node-2
+# node/node-2 uncordoned
+```
+
+Quando o primeiro drain falha por causa do DaemonSet, o node já está em cordon. Isso é seguro: ninguém foi despejado ainda, mas nenhum Pod comum novo chega enquanto você decide como continuar.
+
+Depois do drain, os Pods administrados saem de forma graciosa. ReplicaSets e outros controllers criam substitutos, e o scheduler escolhe nodes ainda disponíveis. Só então é seguro desligar ou reiniciar a máquina.
+
+`kubectl uncordon` torna o node agendável novamente. Ele não rebalanceia o cluster: os Pods que já foram recriados em outros nodes continuam saudáveis onde estão; apenas criações futuras podem usar a máquina liberada.
+
+<Callout title="Disponibilidade tem um orçamento">
+  Um PodDisruptionBudget define quantas réplicas precisam continuar disponíveis durante interrupções voluntárias. Se outro despejo ultrapassar esse orçamento, o drain espera. Ele protege a disponibilidade, mas não cria capacidade: ainda é preciso haver outro node capaz de receber os substitutos.
+</Callout>
+
+</section>
+
+<section id="o-que-simplificamos">
+
+## O que simplificamos
+
+- Os três nodes já existem e permanecem `Ready`; não simulamos desligamento físico, kubelet indisponível nem remoção do objeto Node.
+- Todo node é elegível para o `log-agent`; não simulamos `nodeSelector`, affinity nem taints personalizados.
+- A eviction e a recriação acontecem em segundos para ficarem visíveis na atividade.
+- O simulador ensina o efeito de PodDisruptionBudgets, mas ainda não cria objetos PDB nem bloqueia uma eviction por orçamento.
+- Não simulamos volumes `emptyDir`, mirror Pods, static Pods nem as outras flags avançadas do drain.
+
+</section>
+
+<section id="erros-comuns">
+
+## Erros comuns
+
+### Confundir cordon com drain
+
+Cordon só impede agendamentos novos. Se a manutenção exige desligar a máquina, ainda é preciso fazer drain e esperar o comando terminar.
+
+### Achar que --ignore-daemonsets apaga os agentes
+
+O nome significa “ignore o bloqueio causado por eles”. Os Pods de DaemonSet ficam no node; a flag permite que o drain prossiga com os outros Pods.
+
+### Usar --force sem olhar os Pods avulsos
+
+`--force` permite apagar Pods sem controller. Antes de usar, descubra por que eles existem e aceite que não serão recriados automaticamente.
+
+### Liberar o node e esperar que tudo volte
+
+Uncordon não é rebalanceamento. Kubernetes evita movimentar Pods saudáveis sem necessidade; o node liberado recebe trabalho quando houver novas criações ou substituições.
+
+</section>
+
+<section id="teste-rapido">
+
+## Teste rápido
+
+<QuickQuestion
+  question="O que acontece ao executar kubectl cordon node-2?"
+  options={[
+    { label: 'Todos os Pods são despejados.', explanation: 'Isso é responsabilidade do drain. Cordon não remove os Pods existentes.' },
+    { label: 'O node deixa de receber Pods comuns novos.', correct: true, explanation: 'Correto. Ele continua Ready, mas fica SchedulingDisabled.' },
+    { label: 'O objeto Node é apagado.', explanation: 'O node continua registrado no cluster.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="Por que o drain exige --ignore-daemonsets quando há um agente no node?"
+  options={[
+    { label: 'Para mover o agente a outro node.', explanation: 'O agente precisa cobrir este node e não é movido pelo drain.' },
+    { label: 'Para deixar o agente onde está e continuar com os outros Pods.', correct: true, explanation: 'Correto. Drain não apaga Pods de DaemonSet; a flag apenas ignora esse bloqueio.' },
+    { label: 'Para transformar o DaemonSet em Deployment.', explanation: 'A flag não altera o tipo do recurso.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="Um node tem um Pod criado diretamente, sem controller. O que --force muda no drain?"
+  options={[
+    { label: 'Autoriza apagar o Pod, que não será recriado.', correct: true, explanation: 'Correto. Sem um controller, não há desired state que faça o Pod voltar.' },
+    { label: 'Cria um ReplicaSet antes de apagar.', explanation: 'Drain não cria controllers para Pods avulsos.' },
+    { label: 'Ignora o Pod e o deixa no node.', explanation: 'Esse é o comportamento reservado aos Pods de DaemonSet com --ignore-daemonsets.' },
+  ]}
+/>
+
+</section>
+
+<section id="para-ir-alem">
+
+## Para ir além
+
+- Use labels, `nodeSelector` e affinity quando um DaemonSet deve cobrir só certos nodes.
+- Defina PodDisruptionBudgets para aplicações que precisam manter um mínimo de réplicas disponível.
+- Confirme capacidade nos outros nodes antes de drenar: um substituto sem espaço fica `Pending`.
+- [DaemonSet — conceito](https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/)
+- [Drenar um node com segurança](https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/)
+- [Referência do kubectl drain](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_drain/)
+
+</section>

@@ -27,6 +27,8 @@ const SOURCE: Record<ClusterEvent['source'], string> = {
   'garbage-collector': 'garbage collector',
   'horizontal-pod-autoscaler': 'horizontal pod autoscaler',
   'job-controller': 'job controller',
+  'daemonset-controller': 'daemonset controller',
+  'node-controller': 'node controller',
   'default-scheduler': 'scheduler',
   kubelet: 'kubelet',
 }
@@ -87,6 +89,14 @@ function phrase(e: ClusterEvent): { lead: string; obj?: string; tail?: string } 
       return { lead: 'Job', obj: n, tail: 'concluído — todas as tarefas terminaram' }
     case 'JobCreated':
       return { lead: 'Você criou', obj: `job/${n}` }
+    case 'DaemonSetCreated':
+      return { lead: 'Você criou', obj: `daemonset/${n}`, tail: '— um Pod por node' }
+    case 'NodeNotSchedulable':
+      return { lead: 'Node', obj: n, tail: 'em cordon — SchedulingDisabled' }
+    case 'NodeSchedulable':
+      return { lead: 'Node', obj: n, tail: 'liberado para novos Pods' }
+    case 'Evicted':
+      return { lead: 'Pod', obj: n, tail: 'despejado para manutenção' }
     case 'TaskSucceeded':
       return { lead: 'Pod', obj: n, tail: 'terminou a tarefa — Completed' }
     case 'TaskFailed':

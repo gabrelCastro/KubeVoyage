@@ -227,8 +227,9 @@ export function NodeLane({ cluster }: { cluster: ClusterState }) {
       {cluster.nodes.map((n) => {
         const pods = Object.values(cluster.pods).filter((p) => p.nodeName === n.name)
         return (
-          <div key={n.name} className="flex h-[18px] items-center gap-1.5">
-            <span className="font-mono text-[11px] text-fg-muted">{n.name}</span>
+          <div key={n.name} className={cn('flex h-[22px] items-center gap-1.5 rounded-md px-1.5', n.unschedulable && 'bg-warn/10 ring-1 ring-warn/30')} title={n.unschedulable ? 'SchedulingDisabled — nenhum Pod novo será agendado aqui' : 'Node agendável'}>
+            <span className={cn('font-mono text-[11px]', n.unschedulable ? 'text-warn' : 'text-fg-muted')}>{n.name}</span>
+            {n.unschedulable && <span className="rounded bg-warn/15 px-1 text-[9px] font-medium text-warn">cordon</span>}
             <div className="flex min-w-[14px] gap-0.5">
               <AnimatePresence initial={false}>
                 {pods.map((p) => (

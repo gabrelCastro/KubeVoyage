@@ -2,6 +2,7 @@ import { parseArgs, parseSelector, selects, suggest, TAKES_VALUE, tokenize, type
 import {
   apiPhase,
   configMapObject,
+  daemonSetObject,
   jobObject,
   secretObject,
   hpaObject,
@@ -23,7 +24,7 @@ import {
 import { pipe } from './cli/pipe'
 import { isBroken, labelString, NODE_CPU, rsSelector, short, tag, type Simulation } from './engine'
 import { FILES, IMAGE } from './manifests'
-import type { ClusterEvent, ConfigMap, Deployment, HorizontalPodAutoscaler, Job, Labels, Pod, ReplicaSet, Secret, Service, WorkerNode } from './types'
+import type { ClusterEvent, ConfigMap, DaemonSet, Deployment, HorizontalPodAutoscaler, Job, Labels, Pod, ReplicaSet, Secret, Service, WorkerNode } from './types'
 
 export { FILES, IMAGE, MANIFEST, MANIFEST_YAML } from './manifests'
 
@@ -49,7 +50,7 @@ export interface RunPresentation {
   images?: string[]
 }
 
-export type WatchKind = 'pods' | 'deployments' | 'replicasets' | 'services' | 'endpoints' | 'endpointslices' | 'events' | 'nodes' | 'configmaps' | 'horizontalpodautoscalers' | 'secrets' | 'jobs'
+export type WatchKind = 'pods' | 'deployments' | 'replicasets' | 'services' | 'endpoints' | 'endpointslices' | 'events' | 'nodes' | 'configmaps' | 'horizontalpodautoscalers' | 'secrets' | 'jobs' | 'daemonsets'
 
 export interface WatchSpec {
   kind: WatchKind
@@ -148,13 +149,14 @@ const KIND_ALIASES: Record<string, KindId | 'all'> = {
   cm: 'configmaps', configmap: 'configmaps', configmaps: 'configmaps',
   secret: 'secrets', secrets: 'secrets',
   job: 'jobs', jobs: 'jobs', 'job.batch': 'jobs', 'jobs.batch': 'jobs',
+  ds: 'daemonsets', daemonset: 'daemonsets', daemonsets: 'daemonsets', 'daemonset.apps': 'daemonsets',
   hpa: 'horizontalpodautoscalers', horizontalpodautoscaler: 'horizontalpodautoscalers', horizontalpodautoscalers: 'horizontalpodautoscalers', 'horizontalpodautoscaler.autoscaling': 'horizontalpodautoscalers',
   no: 'nodes', node: 'nodes', nodes: 'nodes',
   all: 'all',
 }
 
 /** Real kinds this cluster doesn't simulate: say so instead of "no such type". */
-const UNSIMULATED_KINDS = ['namespaces', 'ns', 'ingress', 'ingresses', 'ing', 'statefulsets', 'sts', 'daemonsets', 'ds', 'cronjobs', 'cj', 'persistentvolumeclaims', 'pvc', 'persistentvolumes', 'pv', 'serviceaccounts', 'sa', 'namespace']
+const UNSIMULATED_KINDS = ['namespaces', 'ns', 'ingress', 'ingresses', 'ing', 'statefulsets', 'sts', 'cronjobs', 'cj', 'persistentvolumeclaims', 'pvc', 'persistentvolumes', 'pv', 'serviceaccounts', 'sa', 'namespace']
 
 type Item = { name: string; uid?: string }
 
@@ -330,6 +332,30 @@ const SPECS: { [K in KindId]: Spec<any> } = {
       { t: age(sim.now - h.createdAt) },
     ],
   } satisfies Spec<HorizontalPodAutoscaler>,
+  daemonsets: {
+    resource: 'daemonsets.apps',
+    prefix: 'daemonset.apps',
+    namespaced: true,
+    items: (sim) => Object.values(sim.cluster.daemonSets).sort((a, b) => a.createdAt - b.createdAt),
+    labels: (_sim, d: DaemonSet) => d.labels,
+    object: (sim, d: DaemonSet) => daemonSetObject(sim, d),
+    header: () => ['NAME', 'DESIRED', 'CURRENT', 'READY', 'UP-TO-DATE', 'AVAILABLE', 'NODE SELECTOR', 'AGE'],
+    row: (sim, d: DaemonSet) => {
+      const pods = sim.podsOf(d.uid).filter((p) => p.deletedAt === null)
+      const ready = pods.filter((p) => p.ready).length
+      const want = sim.cluster.nodes.length
+      return [
+        { t: d.name, c: 'strong' },
+        { t: String(want) },
+        { t: String(pods.filter((p) => p.nodeName).length) },
+        { t: String(ready), c: ready === want ? 'success' : 'warn' },
+        { t: String(pods.length) },
+        { t: String(ready) },
+        { t: '<none>', c: 'muted' },
+        { t: age(sim.now - d.createdAt) },
+      ]
+    },
+  } satisfies Spec<DaemonSet>,
   jobs: {
     resource: 'jobs.batch',
     prefix: 'job.batch',
@@ -376,7 +402,7 @@ const SPECS: { [K in KindId]: Spec<any> } = {
     header: (wide) => ['NAME', 'STATUS', 'ROLES', 'AGE', 'VERSION', ...(wide ? ['INTERNAL-IP', 'OS-IMAGE', 'CONTAINER-RUNTIME'] : [])],
     row: (_sim, n: WorkerNode, wide) => [
       { t: n.name, c: 'strong' },
-      { t: 'Ready', c: 'success' },
+      { t: n.unschedulable ? 'Ready,SchedulingDisabled' : 'Ready', c: n.unschedulable ? 'warn' : 'success' },
       { t: '<none>', c: 'muted' },
       { t: '42d' },
       { t: 'v1.34.1' },
@@ -394,7 +420,7 @@ function resolveKind(raw: string): KindId[] | { error: Line[] } {
     if (k === 'all') out.push(...ALL)
     else if (k) out.push(k)
     else if (UNSIMULATED_KINDS.includes(part.toLowerCase()))
-      return { error: [plain(`"${part}" existe no Kubernetes real, mas este cluster de treino só simula Pods, Deployments, ReplicaSets, Jobs, Services, ConfigMaps, Secrets, HPAs, EndpointSlices, Events e Nodes.`, 'warn')] }
+      return { error: [plain(`"${part}" existe no Kubernetes real, mas este cluster de treino só simula Pods, Deployments, ReplicaSets, Jobs, DaemonSets, Services, ConfigMaps, Secrets, HPAs, EndpointSlices, Events e Nodes.`, 'warn')] }
     else {
       const guess = suggest(part, Object.keys(KIND_ALIASES).filter((a) => !a.includes('.')))[0]
       return { error: [plain(`error: the server doesn't have a resource type "${part}"`, 'error'), ...(guess ? [note(`você quis dizer "${guess}"?`)] : [])] }
@@ -446,6 +472,9 @@ const VERB_FLAGS: Record<string, string[]> = {
   create: ['image', 'replicas', 'from-literal', 'cert', 'key'],
   patch: ['patch', 'type'],
   autoscale: ['cpu', 'cpu-percent', 'min', 'max', 'name'],
+  cordon: [],
+  uncordon: [],
+  drain: ['ignore-daemonsets', 'force', 'delete-emptydir-data', 'grace-period', 'timeout'],
   top: [],
 }
 
@@ -476,7 +505,7 @@ function checkFlags(verb: string, p: Parsed): Line[] | null {
 
 // ── verbs ──────────────────────────────────────────────────────────────────
 
-const VERBS = ['apply', 'get', 'describe', 'delete', 'scale', 'expose', 'label', 'set', 'rollout', 'logs', 'run', 'edit', 'create', 'patch', 'autoscale', 'top']
+const VERBS = ['apply', 'get', 'describe', 'delete', 'scale', 'expose', 'label', 'set', 'rollout', 'logs', 'run', 'edit', 'create', 'patch', 'autoscale', 'top', 'cordon', 'uncordon', 'drain']
 
 /** Real verbs that aren't simulated (yet): what they do, so the learner isn't told they don't exist. */
 const UNSIMULATED_VERBS: Record<string, string> = {
@@ -488,9 +517,6 @@ const UNSIMULATED_VERBS: Record<string, string> = {
   cp: 'copiar arquivos de e para containers',
   attach: 'conectar ao processo de um container',
   debug: 'criar containers de depuração',
-  cordon: 'marcar um nó como não agendável',
-  uncordon: 'voltar a agendar Pods em um nó',
-  drain: 'esvaziar um nó para manutenção',
   taint: 'restringir quais Pods um nó aceita',
   wait: 'esperar uma condição de um recurso',
   diff: 'comparar um manifesto com o que está no cluster',
@@ -645,8 +671,8 @@ function runOne(sim: Simulation, tokens: string[], presentation: RunPresentation
       if (!sim.files.includes(file)) return err(`error: the path "${file}" does not exist`)
       const m = FILES[file].manifest
       const result = sim.apply(m)
-      const kind = m.kind === 'Service' ? 'service' : m.kind === 'ConfigMap' ? 'configmap' : m.kind === 'Job' ? 'job.batch' : 'deployment.apps'
-      const uid = m.kind === 'Service' ? sim.findService(m.name)?.uid : m.kind === 'ConfigMap' ? sim.findConfigMap(m.name)?.uid : m.kind === 'Job' ? sim.findJob(m.name)?.uid : sim.findDeployment(m.name)?.uid
+      const kind = m.kind === 'Service' ? 'service' : m.kind === 'ConfigMap' ? 'configmap' : m.kind === 'Job' ? 'job.batch' : m.kind === 'DaemonSet' ? 'daemonset.apps' : 'deployment.apps'
+      const uid = m.kind === 'Service' ? sim.findService(m.name)?.uid : m.kind === 'ConfigMap' ? sim.findConfigMap(m.name)?.uid : m.kind === 'Job' ? sim.findJob(m.name)?.uid : m.kind === 'DaemonSet' ? sim.findDaemonSet(m.name)?.uid : sim.findDeployment(m.name)?.uid
       return { lines: [plain(`${kind}/${m.name} ${result}`, result === 'unchanged' ? 'muted' : 'success')], focusUid: uid }
     }
     case 'get':
@@ -714,6 +740,11 @@ function runOne(sim: Simulation, tokens: string[], presentation: RunPresentation
       return autoscale(sim, args, flags)
     case 'top':
       return top(sim, args)
+    case 'cordon':
+    case 'uncordon':
+      return cordon(sim, args, verb === 'cordon')
+    case 'drain':
+      return drain(sim, args, flags)
     case 'create': {
       const [kind, names] = splitKind(args)
       const name = names[0]
@@ -807,6 +838,11 @@ function remove(sim: Simulation, args: string[], flags: Flags): CommandResult {
     if (!names[0]) return err('error: resource(s) were provided, but no name was specified')
     if (sim.deleteHpa(names[0])) return { lines: [plain(`horizontalpodautoscaler.autoscaling "${names[0]}" deleted`, 'warn')] }
     return flags['ignore-not-found'] ? { lines: [] } : err(`Error from server (NotFound): horizontalpodautoscalers.autoscaling "${names[0]}" not found`)
+  }
+  if (k === 'daemonsets') {
+    if (!names[0]) return err('error: resource(s) were provided, but no name was specified')
+    if (sim.deleteDaemonSet(names[0])) return { lines: [plain(`daemonset.apps "${names[0]}" deleted`, 'warn')] }
+    return flags['ignore-not-found'] ? { lines: [] } : err(`Error from server (NotFound): daemonsets.apps "${names[0]}" not found`)
   }
   if (k === 'jobs') {
     if (!names[0]) return err('error: resource(s) were provided, but no name was specified')
@@ -1011,6 +1047,7 @@ const watchState = (sim: Simulation, kind: WatchKind, item: Item) => {
   }
   if (kind === 'events') return [(item as Item & ClusterEvent).id]
   if (kind === 'configmaps') return [(item as ConfigMap).data]
+  if (kind === 'daemonsets') return [sim.podsOf((item as DaemonSet).uid).map((p) => [p.phase, p.ready, p.deletedAt])]
   if (kind === 'jobs') {
     const j = item as Job
     return [j.status, j.succeeded, j.failed]
@@ -1199,7 +1236,7 @@ function describe(sim: Simulation, args: string[], flags: Flags): CommandResult 
   if ('error' in kinds) return { lines: kinds.error }
   if (kinds.length !== 1) return err('Usage: kubectl describe pod|deployment|rs|service|node <name>')
   const kind = kinds[0]
-  if (!['pods', 'deployments', 'replicasets', 'services', 'nodes', 'configmaps', 'horizontalpodautoscalers', 'secrets', 'jobs'].includes(kind)) return { lines: [plain(`describe de ${rawKind} ainda não está disponível aqui — tente kubectl get ${rawKind} -o yaml`, 'warn')] }
+  if (!['pods', 'deployments', 'replicasets', 'services', 'nodes', 'configmaps', 'horizontalpodautoscalers', 'secrets', 'jobs', 'daemonsets'].includes(kind)) return { lines: [plain(`describe de ${rawKind} ainda não está disponível aqui — tente kubectl get ${rawKind} -o yaml`, 'warn')] }
   const spec = SPECS[kind] as Spec<Item>
   let names = rawNames
   const sel = selectorFlag(flags)
@@ -1244,6 +1281,7 @@ function describeOne(sim: Simulation, kind: KindId, name: string): CommandResult
     if (!p) return err(`Error from server (NotFound): pods "${name}" not found`)
     const rs = p.ownerUid ? sim.cluster.replicaSets[p.ownerUid] : undefined
     const job = p.ownerUid ? sim.cluster.jobs[p.ownerUid] : undefined
+    const daemonSet = p.ownerUid ? sim.cluster.daemonSets[p.ownerUid] : undefined
     const crashing = !p.job && (p.phase === 'Error' || p.phase === 'CrashLoopBackOff')
     return {
       focusUid: p.uid,
@@ -1254,7 +1292,7 @@ function describeOne(sim: Simulation, kind: KindId, name: string): CommandResult
         kv('Labels', labelString(p.labels) || '<none>', 'accent'),
         kv('Status', p.phase === 'Terminating' ? 'Terminating' : apiPhase(p), statusTone(p)),
         kv('IP', p.ip ?? '<none>'),
-        kv('Controlled By', rs ? `ReplicaSet/${rs.name}` : job ? `Job/${job.name}` : '<none>', rs || job ? 'info' : 'warn', rs?.uid ?? job?.uid),
+        kv('Controlled By', rs ? `ReplicaSet/${rs.name}` : job ? `Job/${job.name}` : daemonSet ? `DaemonSet/${daemonSet.name}` : '<none>', rs || job || daemonSet ? 'info' : 'warn', rs?.uid ?? job?.uid ?? daemonSet?.uid),
         ...(p.job && (p.phase === 'Succeeded' || p.phase === 'Error') ? [kv('State', `Terminated (Reason: ${p.phase === 'Succeeded' ? 'Completed' : 'Error'}, Exit Code: ${p.phase === 'Succeeded' ? 0 : 1})`, p.phase === 'Succeeded' ? 'muted' : 'error')] : []),
         kv('Image', p.image, isBroken(p.image) ? 'error' : undefined),
         ...(crashing
@@ -1262,7 +1300,7 @@ function describeOne(sim: Simulation, kind: KindId, name: string): CommandResult
           : []),
         kv('Restart Count', String(p.restarts), p.restarts ? 'warn' : undefined),
         ...(p.resources ? [kv('Requests', `cpu: ${p.resources.cpuRequest}m`), kv('Limits', p.resources.cpuLimit ? `cpu: ${p.resources.cpuLimit}m` : '<none>')] : []),
-        kv('Readiness', 'http-get http://:8080/healthz period=10s #failure=3', 'muted'),
+        kv('Readiness', p.daemon ? '<none>' : 'http-get http://:8080/healthz period=10s #failure=3', p.daemon ? undefined : 'muted'),
         kv('Liveness', p.liveness ? 'http-get http://:8080/healthz period=10s #failure=3' : '<none>', p.liveness ? 'muted' : 'warn'),
         kv('Ready', p.ready ? 'True' : 'False', p.ready ? 'success' : 'warn'),
         ...eventsFor(p.uid),
@@ -1357,6 +1395,29 @@ function describeOne(sim: Simulation, kind: KindId, name: string): CommandResult
       ],
     }
   }
+  if (kind === 'daemonsets') {
+    const d = sim.findDaemonSet(name)
+    if (!d) return err(`Error from server (NotFound): daemonsets.apps "${name}" not found`)
+    const pods = sim.podsOf(d.uid).filter((p) => p.deletedAt === null)
+    return {
+      focusUid: d.uid,
+      lines: [
+        kv('Name', d.name, 'strong', d.uid),
+        kv('Selector', labelString(d.labels), 'accent'),
+        kv('Desired Number of Nodes Scheduled', String(sim.cluster.nodes.length)),
+        kv('Current Number of Nodes Scheduled', String(pods.filter((p) => p.nodeName).length)),
+        kv('Number Ready', String(pods.filter((p) => p.ready).length)),
+        kv('Image', d.image),
+        [],
+        plain('Pods por node:', 'muted'),
+        ...sim.cluster.nodes.map((n): Line => {
+          const p = pods.find((x) => x.labels['kubelearn.dev/node'] === n.name)
+          return [{ t: `  ${n.name.padEnd(8)}`, c: 'muted' }, p ? { t: p.name, c: 'strong', ref: p.uid } : { t: '<nenhum>', c: 'warn' }]
+        }),
+        ...eventsFor(d.uid),
+      ],
+    }
+  }
   if (kind === 'jobs') {
     const j = sim.findJob(name)
     if (!j) return err(`Error from server (NotFound): jobs.batch "${name}" not found`)
@@ -1418,6 +1479,8 @@ function describeOne(sim: Simulation, kind: KindId, name: string): CommandResult
       kv('Name', n.name, 'strong'),
       kv('Roles', '<none>'),
       kv('Labels', `kubernetes.io/hostname=${n.name},kubernetes.io/os=linux`, 'accent'),
+      kv('Unschedulable', n.unschedulable ? 'true' : 'false', n.unschedulable ? 'warn' : undefined),
+      kv('Taints', n.unschedulable ? 'node.kubernetes.io/unschedulable:NoSchedule' : '<none>', n.unschedulable ? 'warn' : undefined),
       kv('Conditions', 'Ready=True (KubeletReady)', 'success'),
       kv('Kubelet Version', 'v1.34.1'),
       [],
@@ -1453,6 +1516,8 @@ function help(): CommandResult {
       row('kubectl run <nome> --image=<imagem>', 'criar um Pod avulso (sem dono)'),
       row('kubectl top pods | nodes', 'consumo de CPU e memória'),
       row('kubectl autoscale deploy backend --cpu=50% --min=2 --max=8', 'criar um HPA'),
+      row('kubectl cordon|uncordon <node>', 'fechar ou reabrir um node para novos Pods'),
+      row('kubectl drain <node> --ignore-daemonsets', 'esvaziar um node para manutenção'),
       row('kubectl run t --rm -it --image=busybox -- wget -qO- http://backend', 'testar um Service de dentro do cluster'),
       row('… | grep · head · tail · wc -l · sort', 'filtrar a saída'),
       row('explicar <comando>', 'explica cada parte de um comando, sem executar'),
@@ -1464,14 +1529,14 @@ function help(): CommandResult {
 
 // ── completion ─────────────────────────────────────────────────────────────
 
-const KIND_WORDS = ['pods', 'deployments', 'replicasets', 'services', 'endpoints', 'endpointslices', 'events', 'nodes', 'configmaps', 'secrets', 'jobs', 'hpa', 'all', 'po', 'deploy', 'rs', 'svc', 'ep', 'no', 'cm']
+const KIND_WORDS = ['pods', 'deployments', 'replicasets', 'services', 'endpoints', 'endpointslices', 'events', 'nodes', 'configmaps', 'secrets', 'jobs', 'daemonsets', 'hpa', 'all', 'po', 'deploy', 'rs', 'svc', 'ep', 'no', 'cm', 'ds']
 
 /** How each flag is offered: `=` means "a value follows, right here". */
 const FLAG_WORDS: Record<string, string> = {
-  cpu: '--cpu=', 'cpu-percent': '--cpu-percent=', min: '--min=', max: '--max=',
+  cpu: '--cpu=', 'cpu-percent': '--cpu-percent=', min: '--min=', max: '--max=', 'ignore-daemonsets': '--ignore-daemonsets', 'delete-emptydir-data': '--delete-emptydir-data',
   o: '-o', l: '-l', L: '-L', w: '-w', A: '-A', f: '-f', n: '-n', c: '-c', p: '--previous',
   'show-labels': '--show-labels', 'sort-by': '--sort-by=', 'field-selector': '--field-selector=', 'no-headers': '--no-headers', 'ignore-not-found': '--ignore-not-found',
-  'grace-period': '--grace-period=', force: '--force', now: '--now', wait: '--wait', replicas: '--replicas=', port: '--port=', 'target-port': '--target-port=', name: '--name=', type: '--type=',
+  'grace-period': '--grace-period=', timeout: '--timeout=', force: '--force', now: '--now', wait: '--wait', replicas: '--replicas=', port: '--port=', 'target-port': '--target-port=', name: '--name=', type: '--type=',
   overwrite: '--overwrite', list: '--list', 'to-revision': '--to-revision=', follow: '--follow', tail: '--tail=',
 }
 
@@ -1547,8 +1612,12 @@ function candidatesFor(sim: Simulation, words: string[], last: string, images: s
       return positional.length === 0 ? ['deployment'] : positional.length === 1 ? namesOf(sim, 'deployments') : []
     case 'top':
       return positional.length === 0 ? ['pods', 'nodes'] : namesOf(sim, 'pods', true)
+    case 'cordon':
+    case 'uncordon':
+    case 'drain':
+      return positional.length === 0 ? sim.cluster.nodes.map((n) => n.name) : []
     case 'delete':
-      return positional.length === 0 ? ['pod', 'pods', 'service', 'svc', 'deployment', 'deploy', 'replicaset', 'rs'] : namesOf(sim, kindOf(positional[0]), true)
+      return positional.length === 0 ? ['pod', 'pods', 'service', 'svc', 'deployment', 'deploy', 'replicaset', 'rs', 'job', 'daemonset', 'ds'] : namesOf(sim, kindOf(positional[0]), true)
     case 'logs':
       return positional.length === 0 ? namesOf(sim, 'pods', true) : []
     case 'scale':
@@ -1605,6 +1674,7 @@ const KIND_DOCS: Record<KindId | 'all', string> = {
   configmaps: 'ConfigMaps — configuração guardada fora da imagem',
   secrets: 'Secrets — valores sensíveis, guardados em base64 (não criptografados por padrão)',
   jobs: 'Jobs — rodam uma tarefa até terminar',
+  daemonsets: 'DaemonSets — um Pod em cada node',
   horizontalpodautoscalers: 'HorizontalPodAutoscalers — ajustam as réplicas pela CPU',
   all: 'os tipos principais: Pods, Services, Deployments e ReplicaSets',
 }
@@ -1626,6 +1696,9 @@ const VERB_DOCS: Record<string, string> = {
   patch: 'altera só os campos indicados de um recurso',
   autoscale: 'cria um HorizontalPodAutoscaler para um Deployment',
   top: 'mostra o consumo de CPU e memória agora (dados do metrics-server)',
+  cordon: 'tira o node da escala: nenhum Pod novo vai para lá',
+  uncordon: 'devolve o node à escala',
+  drain: 'tira o node da escala e despeja os Pods dele, para manutenção',
 }
 
 function describeSelector(v: string): string {
@@ -1668,6 +1741,8 @@ const FLAG_DOCS: Record<string, (v: string) => string> = {
   wait: () => 'espera a exclusão terminar',
   image: (v) => `a imagem do container: ${v}`,
   'from-literal': (v) => `uma chave e seu valor: ${v}`,
+  'ignore-daemonsets': () => 'deixa os Pods de DaemonSet onde estão (eles existem para estar em cada node)',
+  timeout: (v) => `desiste se o drain não terminar em ${v}`,
   cpu: (v) => `a meta: CPU média em ${v} das requests`,
   'cpu-percent': (v) => `a meta: CPU média em ${v}% das requests`,
   min: (v) => `nunca menos que ${v} réplica${v === '1' ? '' : 's'}`,
@@ -2058,4 +2133,45 @@ function renderJsonPath(value: Json, template: string): { text: string } | { err
     rest = rest.slice(close + 1)
   }
   return { text: out.replace(/\\n/g, '\n') }
+}
+
+// ── nodes ──────────────────────────────────────────────────────────────────
+
+function cordon(sim: Simulation, args: string[], on: boolean): CommandResult {
+  const name = args[0]?.replace(/^nodes?\//, '')
+  if (!name) return err(`error: USAGE: ${on ? 'cordon' : 'uncordon'} NODE [flags]`)
+  const r = sim.setSchedulable(name, !on)
+  if (r === 'notfound') return err(`Error from server (NotFound): nodes "${name}" not found`)
+  const verb = on ? 'cordoned' : 'uncordoned'
+  return { lines: [plain(`node/${name} ${r === 'unchanged' ? `already ${verb}` : verb}`, r === 'unchanged' ? 'muted' : 'success')] }
+}
+
+function drain(sim: Simulation, args: string[], flags: Flags): CommandResult {
+  const name = args[0]?.replace(/^nodes?\//, '')
+  if (!name) return err('error: USAGE: drain NODE [flags]')
+  const r = sim.drain(name, { ignoreDaemonsets: flags['ignore-daemonsets'] === true, force: flags.force === true })
+  if (r.result === 'notfound') return err(`Error from server (NotFound): nodes "${name}" not found`)
+  const lines: Line[] = [plain(`node/${name} ${r.cordoned ? 'cordoned' : 'already cordoned'}`, 'success')]
+  const list = (pods: Pod[]) => pods.map((p) => `default/${p.name}`).join(', ')
+  if (r.result === 'blocked') {
+    const reasons = [
+      ...(r.daemons.length && !flags['ignore-daemonsets'] ? [`cannot delete DaemonSet-managed Pods (use --ignore-daemonsets to ignore): ${list(r.daemons)}`] : []),
+      ...(r.unmanaged.length && !flags.force ? [`cannot delete Pods that declare no controller (use --force to override): ${list(r.unmanaged)}`] : []),
+    ]
+    return {
+      lines: [
+        ...lines,
+        plain(`error: unable to drain node "${name}" due to error: ${reasons.join(', ')}, continuing command...`, 'error'),
+        plain('There are pending nodes to be drained:', 'muted'),
+        plain(` ${name}`, 'muted'),
+        ...reasons.map((x) => plain(x, 'error')),
+        note(`o node já ficou fora da escala (cordon) — nada novo vai para lá, mas ninguém saiu ainda`),
+      ],
+    }
+  }
+  if (r.daemons.length) lines.push(plain(`Warning: ignoring DaemonSet-managed Pods: ${list(r.daemons)}`, 'warn'))
+  for (const p of r.evicted) lines.push(plain(`evicting pod default/${p.name}`, 'muted'))
+  for (const p of r.evicted) lines.push([{ t: 'pod/' }, { t: p.name, ref: p.uid }, { t: ' evicted' }])
+  lines.push(plain(`node/${name} drained`, 'success'))
+  return { lines }
 }

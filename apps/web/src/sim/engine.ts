@@ -1,4 +1,6 @@
 import type {
+  WorkerNode,
+  DaemonSet,
   Job,
   Secret,
   HorizontalPodAutoscaler,
@@ -76,6 +78,12 @@ export interface DeploymentManifest {
   secret?: string
 }
 
+export interface DaemonSetManifest {
+  name: string
+  image: string
+  labels: Labels
+}
+
 export interface JobManifest {
   name: string
   image: string
@@ -96,7 +104,7 @@ export interface ServiceManifest {
   targetPort: number
 }
 
-export type Manifest = ({ kind: 'Deployment' } & DeploymentManifest) | ({ kind: 'Service' } & ServiceManifest) | ({ kind: 'ConfigMap' } & ConfigMapManifest) | ({ kind: 'Job' } & JobManifest)
+export type Manifest = ({ kind: 'Deployment' } & DeploymentManifest) | ({ kind: 'Service' } & ServiceManifest) | ({ kind: 'ConfigMap' } & ConfigMapManifest) | ({ kind: 'Job' } & JobManifest) | ({ kind: 'DaemonSet' } & DaemonSetManifest)
 
 /** A cluster that already exists when a lesson starts. */
 export interface Setup {
@@ -182,6 +190,7 @@ export class Simulation {
     hpas: {},
     secrets: {},
     jobs: {},
+    daemonSets: {},
     nodes: [
       { kind: 'Node', name: 'node-1' },
       { kind: 'Node', name: 'node-2' },
@@ -542,6 +551,7 @@ export class Simulation {
     if (m.kind === 'ConfigMap') return this.putConfigMap(m.name, m.data, 'apply')
     // a Job's spec can't change after it's created (the real API rejects it): applying again changes nothing
     if (m.kind === 'Job') return this.findJob(m.name) ? 'unchanged' : (this.createJob(m, 'apply'), 'created')
+    if (m.kind === 'DaemonSet') return this.findDaemonSet(m.name) ? 'unchanged' : (this.createDaemonSet(m), 'created')
     if (m.kind === 'Service') {
       const existing = this.findService(m.name)
       if (!existing) {
@@ -1239,6 +1249,122 @@ export class Simulation {
     this.schedule(TIMING.controllerNotice / 2, `o Job controller conta as tarefas de ${job.name}`, () => this.syncJob(job.uid))
   }
 
+  // ── Nodes and DaemonSets ─────────────────────────────────────────────────
+
+  findDaemonSet(name: string) {
+    return Object.values(this.cluster.daemonSets).find((d) => d.name === name)
+  }
+
+  createDaemonSet(m: DaemonSetManifest) {
+    if (this.findDaemonSet(m.name)) return 'exists' as const
+    this.act(() => {
+      const ds: DaemonSet = { kind: 'DaemonSet', uid: `ds-${++this.seq}`, name: m.name, image: m.image, labels: { ...m.labels }, createdAt: this.now }
+      this.cluster = { ...this.cluster, daemonSets: { ...this.cluster.daemonSets, [ds.uid]: ds } }
+      this.emit('you', 'user', 'DaemonSetCreated', `kubectl apply — daemonset.apps/${ds.name} created`, this.ref(ds))
+      this.narrate({
+        tone: 'info',
+        title: 'Um Pod por node',
+        body: `${ds.name} não tem réplicas: o DaemonSet controller cria um Pod em cada node do cluster — e mais um quando surge um node novo.`,
+      })
+      this.schedule(TIMING.scaleNotice, `o DaemonSet controller distribui ${ds.name}`, () => this.syncDaemonSet(ds.uid))
+    })
+    return 'created' as const
+  }
+
+  deleteDaemonSet(name: string) {
+    const ds = this.findDaemonSet(name)
+    if (!ds) return false
+    this.act(() => {
+      const { [ds.uid]: _gone, ...rest } = this.cluster.daemonSets
+      this.cluster = { ...this.cluster, daemonSets: rest }
+      this.emit('you', 'user', 'Deleted', `kubectl delete daemonset ${name}`, this.ref(ds))
+      for (const p of this.podsOf(ds.uid)) if (p.deletedAt === null) this.terminate(p, 'gc')
+    })
+    return true
+  }
+
+  private syncDaemonSet(uid: string) {
+    const ds = this.cluster.daemonSets[uid]
+    if (!ds) return
+    for (const node of this.cluster.nodes) {
+      const has = this.podsOf(uid).some((p) => p.deletedAt === null && p.labels['kubelearn.dev/node'] === node.name)
+      if (has) continue
+      const pod: Pod = {
+        kind: 'Pod',
+        uid: `pod-${++this.seq}`,
+        name: `${ds.name}-${randomSuffix(5)}`,
+        ownerUid: ds.uid,
+        labels: { ...ds.labels, 'kubelearn.dev/node': node.name },
+        image: ds.image,
+        phase: 'Pending',
+        ready: false,
+        nodeName: null,
+        ip: null,
+        slot: this.freeSlot(ds.uid),
+        createdAt: this.now,
+        deletedAt: null,
+        restarts: 0,
+        daemon: true,
+      }
+      this.putPod(pod)
+      this.emit('daemonset-controller', 'create', 'SuccessfulCreate', `Created pod: ${pod.name} for ${node.name}`, this.ref(pod))
+      this.fx({ kind: 'pulse', chain: [ds.uid, pod.uid], tone: 'create' })
+      this.schedule(TIMING.schedule, `${short(pod.name)} vai para ${node.name}`, () => this.bind(pod.uid))
+    }
+  }
+
+  private patchNode(name: string, patch: Partial<WorkerNode>) {
+    this.cluster = { ...this.cluster, nodes: this.cluster.nodes.map((n) => (n.name === name ? { ...n, ...patch } : n)) }
+  }
+
+  /** `kubectl cordon|uncordon`. */
+  setSchedulable(name: string, schedulable: boolean) {
+    const node = this.cluster.nodes.find((n) => n.name === name)
+    if (!node) return 'notfound' as const
+    if (!node.unschedulable === schedulable) return 'unchanged' as const
+    this.act(() => {
+      this.patchNode(name, { unschedulable: !schedulable })
+      this.emit('node-controller', schedulable ? 'success' : 'warning', schedulable ? 'NodeSchedulable' : 'NodeNotSchedulable', `Node ${name} status is now: ${schedulable ? 'NodeSchedulable' : 'NodeNotSchedulable'}`, { kind: 'Node', uid: `node:${name}`, name })
+      this.narrate(
+        schedulable
+          ? { tone: 'info', title: `${name} volta a receber Pods`, body: 'Os Pods que saíram não voltam sozinhos: eles continuam onde estão. Só os Pods criados daqui para frente podem cair aqui.' }
+          : { tone: 'warn', title: `${name} fora da escala`, body: 'Nenhum Pod novo será agendado aqui. Os que já estão continuam rodando — cordon não tira ninguém.' },
+      )
+    })
+    return 'updated' as const
+  }
+
+  /** `kubectl drain`: cordon, then evict what can be evicted. Returns what blocked it, if anything. */
+  drain(name: string, opts: { ignoreDaemonsets: boolean; force: boolean }) {
+    const node = this.cluster.nodes.find((n) => n.name === name)
+    if (!node) return { result: 'notfound' as const }
+    const cordoned = !node.unschedulable
+    if (cordoned) this.setSchedulable(name, false)
+    const here = Object.values(this.cluster.pods).filter((p) => p.nodeName === name && p.deletedAt === null && p.phase !== 'Succeeded')
+    const daemons = here.filter((p) => p.daemon)
+    const unmanaged = here.filter((p) => !p.ownerUid)
+    if ((daemons.length && !opts.ignoreDaemonsets) || (unmanaged.length && !opts.force)) return { result: 'blocked' as const, cordoned, daemons, unmanaged }
+    const evict = here.filter((p) => !p.daemon)
+    this.act(() => {
+      evict.forEach((p, i) =>
+        this.schedule(i * TIMING.scaleDownStagger, `${short(p.name)} é despejado de ${name}`, () => {
+          const live = this.livePod(p.uid)
+          if (!live) return
+          this.emit('you', 'user', 'Evicted', `kubectl drain ${name} — evicting pod ${live.name}`, this.ref(live))
+          this.terminate(live, 'controller')
+        }),
+      )
+      this.narrate({
+        tone: 'info',
+        title: `Esvaziando ${name}`,
+        body: evict.length
+          ? `${evict.length} Pod${evict.length === 1 ? '' : 's'} ${evict.length === 1 ? 'sai' : 'saem'} de ${name}. Os que têm dono são recriados — em outros nodes, porque ${name} está fora da escala.${daemons.length ? ' Os Pods de DaemonSet ficam: eles existem para estar justamente aqui.' : ''}`
+          : `Não há o que despejar em ${name}.`,
+      })
+    })
+    return { result: 'drained' as const, cordoned, daemons, evicted: evict }
+  }
+
   /** The kubelet can't build the container's environment: wait, report, try again. */
   private missingConfig(pod: Pod, kind: 'configmap' | 'secret' = 'configmap', ref = pod.configMap) {
     const first = pod.waiting !== 'CreateContainerConfigError'
@@ -1401,6 +1527,12 @@ export class Simulation {
       ]
     }
     if (pod.phase === 'Pending' || pod.phase === 'ContainerCreating') return []
+    if (pod.daemon)
+      return [
+        `level=info msg="log agent started" node=${pod.nodeName ?? 'unknown'}`,
+        'level=info msg="watching container logs" path=/var/log/containers',
+        `level=info msg="records forwarded" count=${Math.max(1, Math.floor((this.now - pod.createdAt) / 1200))}`,
+      ]
     if (!pod.image.includes('kubelearn/backend')) {
       if (/nginx/.test(pod.image))
         return [
@@ -1715,7 +1847,11 @@ export class Simulation {
     const load = (node: string) => Object.values(this.cluster.pods).filter((p) => p.nodeName === node && p.deletedAt === null).length
     // a node only takes the Pod if what's already requested there, plus this Pod's request, fits
     const want = pod.resources?.cpuRequest ?? 0
-    const fits = this.cluster.nodes.filter((n) => this.requestedOn(n.name) + want <= NODE_CPU)
+    if (pod.daemon && pod.nodeName === null && pod.labels['kubelearn.dev/node']) {
+      // a DaemonSet Pod is made for one node — and tolerates that node being cordoned
+      return this.placeOn(podUid, pod.labels['kubelearn.dev/node'])
+    }
+    const fits = this.cluster.nodes.filter((n) => !n.unschedulable && this.requestedOn(n.name) + want <= NODE_CPU)
     if (!fits.length) {
       if (!this.unschedulable.has(podUid)) {
         this.unschedulable.add(podUid)
@@ -1732,6 +1868,13 @@ export class Simulation {
     }
     this.unschedulable.delete(podUid)
     const node = [...fits].sort((a, b) => load(a.name) - load(b.name))[0]
+    this.placeOn(podUid, node.name)
+  }
+
+  private placeOn(podUid: string, nodeName: string) {
+    const pod = this.livePod(podUid)
+    if (!pod) return
+    const node = { name: nodeName }
     this.patchPod(podUid, { nodeName: node.name, phase: 'ContainerCreating' })
     this.emit('default-scheduler', 'schedule', 'Scheduled', `Successfully assigned default/${pod.name} to ${node.name}`, this.ref(pod))
     this.schedule(TIMING.pull, `o kubelet baixa a imagem de ${short(pod.name)}`, () => {
@@ -1764,16 +1907,16 @@ export class Simulation {
       return
     }
     this.patchPod(podUid, { phase: 'Running', ip: pod.ip ?? this.nextIp(pod.nodeName), waiting: undefined, ...(env && { env }) })
-    this.emit('kubelet', 'progress', 'Started', 'Started container backend', this.ref(pod))
+    this.emit('kubelet', 'progress', 'Started', `Started container ${pod.daemon ? pod.name.split('-').slice(0, -1).join('-') : 'backend'}`, this.ref(pod))
     if (isBroken(pod.image) && !env?.DATABASE_URL) {
       this.schedule(TIMING.crash, `o container de ${short(pod.name)} encerra com erro`, () => this.crash(podUid))
       return
     }
-    this.schedule(TIMING.ready, `a readiness probe de ${short(pod.name)} passa`, () => {
+    this.schedule(TIMING.ready, pod.daemon ? `o container de ${short(pod.name)} fica pronto` : `a readiness probe de ${short(pod.name)} passa`, () => {
       const p = this.livePod(podUid)
       if (!p) return
       this.patchPod(podUid, { ready: true, hung: false })
-      this.emit('kubelet', 'ready', 'Ready', 'Readiness probe succeeded — Pod is Ready', this.ref(p))
+      this.emit('kubelet', 'ready', 'Ready', pod.daemon ? 'Container is running — Pod is Ready' : 'Readiness probe succeeded — Pod is Ready', this.ref(p))
       if (hangs(p.image)) this.schedule(TIMING.hangAfter + Math.random() * TIMING.hangJitter, `${short(p.name)} trava`, () => this.hang(podUid))
       if (p.ownerUid) {
         this.checkReconciled(p.ownerUid)
@@ -1829,7 +1972,7 @@ export class Simulation {
 
   private terminate(pod: Pod, by: 'you' | 'controller' | 'gc') {
     this.patchPod(pod.uid, { phase: 'Terminating', ready: false, deletedAt: this.now })
-    this.emit('kubelet', 'delete', 'Killing', 'Stopping container backend', this.ref(pod))
+    this.emit('kubelet', 'delete', 'Killing', `Stopping container ${pod.daemon ? pod.name.split('-').slice(0, -1).join('-') : 'backend'}`, this.ref(pod))
     this.fx({ kind: 'ping', uid: pod.uid, tone: 'warn' })
 
     const rs = pod.ownerUid ? this.cluster.replicaSets[pod.ownerUid] : undefined
@@ -1853,6 +1996,13 @@ export class Simulation {
                 body: job?.status === 'Running' ? `${short(pod.name)} saiu antes de terminar. O Job controller vai criar outro Pod para fazer o trabalho.` : `${short(pod.name)} está saindo.`,
               },
         )
+      } else if (pod.daemon) {
+        const daemonSet = pod.ownerUid ? this.cluster.daemonSets[pod.ownerUid] : undefined
+        this.narrate({
+          tone: 'warn',
+          title: 'O agente será recriado',
+          body: `${short(pod.name)} cobria ${pod.nodeName}. O DaemonSet ${daemonSet?.name ?? ''} vai criar outro Pod para manter um agente nesse node.`,
+        })
       } else {
         this.narrate({
           tone: 'warn',
@@ -1872,7 +2022,13 @@ export class Simulation {
       }
       this.emit('kubelet', 'delete', 'Removed', `Pod ${pod.name} removed from the API server`, this.ref(current))
       const job = current.job && current.ownerUid ? this.cluster.jobs[current.ownerUid] : undefined
-      if (job) {
+      const ds = current.daemon && current.ownerUid ? this.cluster.daemonSets[current.ownerUid] : undefined
+      if (current.daemon) {
+        if (ds) {
+          this.compact(ds.uid)
+          this.schedule(TIMING.controllerNotice, `o DaemonSet controller confere ${ds.name}`, () => this.syncDaemonSet(ds.uid))
+        }
+      } else if (job) {
         this.compact(job.uid)
         if (job.deletedAt && !this.podsOf(job.uid).length) this.removeJob(job.uid)
         else if (job.status === 'Running') this.schedule(TIMING.controllerNotice, `o Job controller confere ${job.name}`, () => this.syncJob(job.uid))

@@ -46,6 +46,7 @@ export const SIZE = {
   Pod: { w: 158, h: 104 },
   Service: { w: 256, h: 96 },
   Job: { w: 252, h: 96 },
+  DaemonSet: { w: 252, h: 96 },
 } as const
 
 const SLOT_W = 178
@@ -54,7 +55,7 @@ const PAD_X = 40
 const GROUP_GAP = 36
 const DEPLOY_GAP = 90
 
-export type BoxKind = 'Deployment' | 'ReplicaSet' | 'Pod' | 'Service' | 'Job'
+export type BoxKind = 'Deployment' | 'ReplicaSet' | 'Pod' | 'Service' | 'Job' | 'DaemonSet'
 
 export interface Box {
   uid: string
@@ -145,6 +146,18 @@ export function computeLayout(c: ClusterState): Layout {
     cursor += groupW + DEPLOY_GAP
   }
 
+  // DaemonSets: one Pod for each node, grouped under their controller
+  for (const ds of Object.values(c.daemonSets).sort((a, b) => a.createdAt - b.createdAt)) {
+    const pods = Object.values(c.pods).filter((p) => p.ownerUid === ds.uid)
+    const slotCount = Math.max(c.nodes.length, ...pods.map((p) => p.slot + 1), 1)
+    const groupW = Math.max(slotCount * SLOT_W, SIZE.DaemonSet.w + 20)
+    const cx = cursor + groupW / 2
+    const rowLeft = cx - (slotCount * SLOT_W) / 2
+    boxes[ds.uid] = { uid: ds.uid, kind: 'DaemonSet', x: cx, y: ROW.ReplicaSet, ...SIZE.DaemonSet }
+    for (const p of pods) boxes[p.uid] = { uid: p.uid, kind: 'Pod', x: rowLeft + p.slot * SLOT_W + SLOT_W / 2, y: ROW.Pod, ...SIZE.Pod }
+    cursor += groupW + DEPLOY_GAP
+  }
+
   const loners = Object.values(c.pods).filter((p) => p.ownerUid === null)
   if (loners.length) {
     const count = Math.max(...loners.map((p) => p.slot + 1))
@@ -207,7 +220,7 @@ export function relatedTo(c: ClusterState, uid: string | null): Set<string> | nu
 }
 
 export const kindOf = (c: ClusterState, uid: string): BoxKind | null =>
-  c.deployments[uid] ? 'Deployment' : c.replicaSets[uid] ? 'ReplicaSet' : c.pods[uid] ? 'Pod' : c.services[uid] ? 'Service' : c.jobs[uid] ? 'Job' : null
+  c.deployments[uid] ? 'Deployment' : c.replicaSets[uid] ? 'ReplicaSet' : c.pods[uid] ? 'Pod' : c.services[uid] ? 'Service' : c.jobs[uid] ? 'Job' : c.daemonSets[uid] ? 'DaemonSet' : null
 
 export const spring = { type: 'spring', stiffness: 260, damping: 30, mass: 0.9 } as const
 export const softSpring = { type: 'spring', stiffness: 170, damping: 24 } as const

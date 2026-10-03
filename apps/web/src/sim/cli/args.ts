@@ -63,7 +63,7 @@ const ALIASES: Record<string, string> = {
 }
 
 /** Flags that take a value, so `--replicas 3` works like `--replicas=3`. */
-export const TAKES_VALUE = new Set(['o', 'l', 'n', 'f', 'L', 'c', 'replicas', 'port', 'target-port', 'name', 'image', 'to-revision', 'sort-by', 'field-selector', 'tail', 'type', 'labels', 'restart', 'from-literal', 'patch'])
+export const TAKES_VALUE = new Set(['o', 'l', 'n', 'f', 'L', 'c', 'replicas', 'port', 'target-port', 'name', 'image', 'to-revision', 'sort-by', 'field-selector', 'tail', 'type', 'labels', 'restart', 'from-literal', 'patch', 'grace-period', 'timeout'])
 
 /** Short flags that are booleans (everything else short takes the next token). */
 const SHORT_BOOLEAN = new Set(['w', 'A', 'p', 'h', 'i', 't', 'it'])

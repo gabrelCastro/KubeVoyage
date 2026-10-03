@@ -198,6 +198,35 @@ spec:
           image: ghcr.io/kubelearn/relatorio:1.1`,
 }
 
+// Lesson 12: an agent on every node
+FILES['log-agent.yaml'] = {
+  manifest: { kind: 'DaemonSet', name: 'log-agent', image: 'ghcr.io/kubelearn/log-agent:1.0', labels: { app: 'log-agent' } },
+  yaml: `apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: log-agent
+spec:
+  selector:
+    matchLabels:
+      app: log-agent
+  template:
+    metadata:
+      labels:
+        app: log-agent
+    spec:
+      containers:
+        - name: log-agent
+          image: ghcr.io/kubelearn/log-agent:1.0
+          volumeMounts:
+            - name: logs
+              mountPath: /var/log
+              readOnly: true
+      volumes:
+        - name: logs
+          hostPath:
+            path: /var/log`,
+}
+
 /** Kept for the first lesson and tests. */
 export const MANIFEST = { file: 'backend.yaml', manifest: FILES['backend.yaml'].manifest }
 export const MANIFEST_YAML = FILES['backend.yaml'].yaml

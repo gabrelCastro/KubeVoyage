@@ -77,6 +77,23 @@ test('Jobs: tasks end Completed and the Job finishes', async ({ page, errors }) 
   await expect(page.locator('[data-tour=pod][aria-label$=", Completed"]')).toHaveCount(5)
 })
 
+test('Nodes: drain cordons the node, moves the backend and keeps the DaemonSet agent', async ({ page, errors }) => {
+  void errors
+  await page.goto('/#/nodes')
+  await fast(page)
+  await kubectl(page, 'kubectl apply -f log-agent.yaml')
+  await expect(page.getByLabel(/DaemonSet log-agent, 3 de 3 prontos/)).toBeVisible({ timeout: 30_000 })
+
+  await kubectl(page, 'kubectl drain node-2')
+  await expect(terminal(page)).toContainText('cannot delete DaemonSet-managed Pods')
+  await expect(page.getByTitle('SchedulingDisabled — nenhum Pod novo será agendado aqui')).toContainText('node-2')
+
+  await kubectl(page, 'kubectl drain node-2 --ignore-daemonsets')
+  await expect(terminal(page)).toContainText('node/node-2 drained')
+  await expect(page.locator('[data-tour=pod][aria-label^="Pod backend-"][aria-label$=", Ready"]')).toHaveCount(3, { timeout: 30_000 })
+  await expect(page.locator('[data-tour=pod][aria-label^="Pod log-agent-"][aria-label$=", Ready"]')).toHaveCount(3)
+})
+
 test('apostila: opens with its sections, and a glossary link jumps to the right one', async ({ page, errors }) => {
   void errors
   await page.goto('/#/services')

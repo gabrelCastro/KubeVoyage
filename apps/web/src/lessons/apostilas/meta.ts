@@ -13,4 +13,5 @@ export const READING_MINUTES: Record<ApostilaId, number> = {
   autoscaling: 5,
   secrets: 4,
   jobs: 4,
+  nodes: 6,
 }

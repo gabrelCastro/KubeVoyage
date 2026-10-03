@@ -253,6 +253,25 @@ export const GLOSSARY: GlossaryEntry[] = [
     lessonId: 'jobs',
     anchor: 'cronjob',
   },
+  {
+    term: 'DaemonSet',
+    aliases: ['DaemonSets'],
+    definition: 'Controller que mantém uma cópia de um Pod em cada node elegível.',
+    lessonId: 'nodes',
+    anchor: 'daemonset',
+  },
+  {
+    term: 'cordon',
+    definition: 'Marca um node como não agendável, sem remover os Pods que já estão nele.',
+    lessonId: 'nodes',
+    anchor: 'cordon',
+  },
+  {
+    term: 'drain',
+    definition: 'Marca um node como não agendável e despeja com segurança os Pods que podem sair.',
+    lessonId: 'nodes',
+    anchor: 'drain',
+  },
 ]
 
 export const GLOSSARY_MATCHES = GLOSSARY.flatMap((entry) => [entry.term, ...(entry.aliases ?? [])].map((alias) => ({ alias, entry }))).sort(

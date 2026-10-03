@@ -1,5 +1,5 @@
 import { rsSelector, type Simulation } from '../engine'
-import type { ConfigMap, Deployment, HorizontalPodAutoscaler, Job, Resources, Secret, Pod, ReplicaSet, Service, WorkerNode } from '../types'
+import type { ConfigMap, DaemonSet, Deployment, HorizontalPodAutoscaler, Job, Resources, Secret, Pod, ReplicaSet, Service, WorkerNode } from '../types'
 
 /**
  * The simulated objects as the API server would return them — what `-o yaml`, `-o json`
@@ -20,14 +20,14 @@ const restartAnnotation = (sim: Simulation, at?: number): Obj => (at === undefin
 
 const owner = (apiVersion: string, kind: string, name: string, uid: string): Obj => ({ apiVersion, kind, name, uid, controller: true, blockOwnerDeletion: true })
 
-const container = (image: string, name = CONTAINER, configMap?: string, liveness?: boolean, resources?: Resources, secret?: string): Obj => ({
+const container = (image: string, name = CONTAINER, configMap?: string, liveness?: boolean, resources?: Resources, secret?: string, readiness = true): Obj => ({
   name,
   image,
   ...(resources && { resources: { requests: { cpu: `${resources.cpuRequest}m` }, ...(resources.cpuLimit && { limits: { cpu: `${resources.cpuLimit}m` } }) } }),
   ...((configMap || secret) && { envFrom: [...(configMap ? [{ configMapRef: { name: configMap } }] : []), ...(secret ? [{ secretRef: { name: secret } }] : [])] }),
   imagePullPolicy: 'IfNotPresent',
   ports: [{ containerPort: CONTAINER_PORT, protocol: 'TCP' }],
-  readinessProbe: { httpGet: { path: '/healthz', port: CONTAINER_PORT, scheme: 'HTTP' }, periodSeconds: 10, failureThreshold: 3 },
+  ...(readiness && { readinessProbe: { httpGet: { path: '/healthz', port: CONTAINER_PORT, scheme: 'HTTP' }, periodSeconds: 10, failureThreshold: 3 } }),
   ...(liveness && { livenessProbe: { httpGet: { path: '/healthz', port: CONTAINER_PORT, scheme: 'HTTP' }, periodSeconds: 10, failureThreshold: 3 } }),
 })
 
@@ -38,6 +38,8 @@ export const apiPhase = (p: Pod) =>
 export function podObject(sim: Simulation, p: Pod): Obj {
   const rs = p.ownerUid ? sim.cluster.replicaSets[p.ownerUid] : undefined
   const job = p.ownerUid ? sim.cluster.jobs[p.ownerUid] : undefined
+  const daemonSet = p.ownerUid ? sim.cluster.daemonSets[p.ownerUid] : undefined
+  const containerName = job?.name ?? daemonSet?.name ?? (p.image.includes('kubelearn/backend') ? CONTAINER : p.name)
   const scheduled = p.nodeName !== null
   const crashing = p.phase === 'Error' || p.phase === 'CrashLoopBackOff'
   const state: Obj =
@@ -64,11 +66,13 @@ export function podObject(sim: Simulation, p: Pod): Obj {
       labels: { ...p.labels },
       ...(rs && { generateName: `${rs.name}-`, ownerReferences: [owner('apps/v1', 'ReplicaSet', rs.name, rs.uid)] }),
       ...(job && { generateName: `${job.name}-`, ownerReferences: [owner('batch/v1', 'Job', job.name, job.uid)] }),
+      ...(daemonSet && { generateName: `${daemonSet.name}-`, ownerReferences: [owner('apps/v1', 'DaemonSet', daemonSet.name, daemonSet.uid)] }),
       ...(p.deletedAt !== null && { deletionTimestamp: stamp(sim, p.deletedAt + 30_000), deletionGracePeriodSeconds: 30 }),
     },
     spec: {
-      containers: [container(p.image, p.image.includes('kubelearn/backend') ? CONTAINER : p.name, p.configMap, p.liveness, p.resources, p.secret)],
+      containers: [container(p.image, containerName, p.configMap, p.liveness, p.resources, p.secret, !p.daemon && !p.job)],
       ...(p.nodeName && { nodeName: p.nodeName }),
+      ...(p.daemon && { tolerations: [{ key: 'node.kubernetes.io/unschedulable', operator: 'Exists', effect: 'NoSchedule' }] }),
       restartPolicy: p.job ? 'Never' : 'Always',
       terminationGracePeriodSeconds: 30,
     },
@@ -79,7 +83,7 @@ export function podObject(sim: Simulation, p: Pod): Obj {
       ...(scheduled && {
         containerStatuses: [
           {
-            name: CONTAINER,
+            name: containerName,
             image: p.image,
             ready: p.ready,
             started: p.phase === 'Running' || p.phase === 'Terminating',
@@ -186,7 +190,7 @@ export function nodeObject(n: WorkerNode): Obj {
     apiVersion: 'v1',
     kind: 'Node',
     metadata: { name: n.name, labels: { 'kubernetes.io/hostname': n.name, 'kubernetes.io/os': 'linux' } },
-    spec: {},
+    spec: n.unschedulable ? { unschedulable: true, taints: [{ key: 'node.kubernetes.io/unschedulable', effect: 'NoSchedule' }] } : {},
     status: {
       conditions: [{ type: 'Ready', status: 'True', reason: 'KubeletReady', message: 'kubelet is posting ready status' }],
       nodeInfo: { kubeletVersion: K8S_VERSION, operatingSystem: 'linux', containerRuntimeVersion: 'containerd://2.1.4' },
@@ -374,6 +378,30 @@ export function jobObject(sim: Simulation, j: Job): Obj {
             : { type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded', message: 'Job has reached the specified backoff limit' },
         ],
       }),
+    },
+  }
+}
+
+export function daemonSetObject(sim: Simulation, d: DaemonSet): Obj {
+  const pods = sim.podsOf(d.uid).filter((p) => p.deletedAt === null)
+  const ready = pods.filter((p) => p.ready).length
+  const desired = sim.cluster.nodes.length
+  return {
+    apiVersion: 'apps/v1',
+    kind: 'DaemonSet',
+    metadata: { name: d.name, namespace: 'default', uid: d.uid, creationTimestamp: stamp(sim, d.createdAt) },
+    spec: {
+      selector: { matchLabels: { ...d.labels } },
+      template: { metadata: { labels: { ...d.labels } }, spec: { containers: [{ name: d.name, image: d.image }] } },
+    },
+    status: {
+      desiredNumberScheduled: desired,
+      currentNumberScheduled: pods.filter((p) => p.nodeName).length,
+      updatedNumberScheduled: pods.length,
+      numberAvailable: ready,
+      numberReady: ready,
+      numberUnavailable: Math.max(0, desired - ready),
+      numberMisscheduled: 0,
     },
   }
 }
