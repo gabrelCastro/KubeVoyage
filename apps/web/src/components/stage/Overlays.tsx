@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { CircleCheck, FileCode2, Lightbulb, Play, RefreshCw, Server, TriangleAlert } from 'lucide-react'
 import { useRef, useState } from 'react'
-import { MANIFEST_YAML } from '../../sim/kubectl'
+import { MANIFEST_YAML } from '../../sim/manifests'
 import { labelString } from '../../sim/engine'
 import type { ClusterState, ControllerPhase } from '../../sim/types'
 import { cn, podVisual, VISUAL, type Layout, type PodVisual } from '../../lib/visual'
@@ -16,7 +16,7 @@ const panel = 'rounded-xl border border-line bg-panel/90 shadow-[0_12px_40px_-16
 // ── Desired vs Actual ──────────────────────────────────────────────────────
 
 export function ReconcileHud({ cluster, layout, replicaControl }: { cluster: ClusterState; layout: Layout; replicaControl: boolean }) {
-  const dep = Object.values(cluster.deployments)[0]
+  const dep = Object.values(cluster.deployments).find((d) => d.name === 'backend') ?? Object.values(cluster.deployments)[0]
   if (!dep) return null
   const rss = Object.values(cluster.replicaSets).filter((r) => r.ownerUid === dep.uid)
   const ids = new Set(rss.map((r) => r.uid))

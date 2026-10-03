@@ -1,5 +1,5 @@
 import { isBroken, short } from '../sim/engine'
-import { IMAGE } from '../sim/kubectl'
+import { IMAGE } from '../sim/manifests'
 import { firstIndex, ran, storyFrom } from './helpers'
 import type { Lesson, LessonCtx } from './types'
 

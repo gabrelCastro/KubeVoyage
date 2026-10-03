@@ -2,8 +2,9 @@ import { create } from 'zustand'
 import { getLesson } from '../lessons'
 import { lastLesson } from '../progress/browser'
 import type { Lesson } from '../lessons/types'
+import { deploymentEditYaml } from '../lib/deploymentEditYaml'
 import { Simulation } from '../sim/engine'
-import { podHeader, podRow, run, type Line } from '../sim/kubectl'
+import type { Line, WatchSpec } from '../sim/kubectl'
 import type { ClusterEvent, ClusterState, Effect, Narration, PendingTask } from '../sim/types'
 
 export interface TermEntry {
@@ -44,10 +45,11 @@ interface SimStore {
 
   term: TermEntry[]
   history: string[]
-  watching: boolean
+  watching: string | null
   paletteOpen: boolean
   /** Text pushed into the terminal prompt from elsewhere (lesson hints, palette). */
   draft: { text: string; n: number } | null
+  editing: { name: string; yaml: string; error: string | null } | null
 
   exec: (input: string, origin?: TermEntry['origin']) => void
   stopWatch: () => void
@@ -63,6 +65,9 @@ interface SimStore {
   revealHint: (objectiveId: string) => void
   setPalette: (open: boolean) => void
   setDraft: (text: string) => void
+  updateEditYaml: (yaml: string) => void
+  saveEdit: () => Promise<void>
+  cancelEdit: () => void
 }
 
 /** Lessons are addressed as #/<id>. Anything else in the hash (e.g. a sign-in token) isn't a lesson. */
@@ -70,6 +75,10 @@ const lessonFromHash = () => (typeof location !== 'undefined' && location.hash.s
 
 let termSeq = 0
 let lastWatch = new Map<string, string>()
+let activeWatch: WatchSpec | null = null
+let watchRows: typeof import('../sim/kubectl')['watchRows'] | null = null
+let kubectlModule: Promise<typeof import('../sim/kubectl')> | null = null
+const loadKubectl = () => (kubectlModule ??= import('../sim/kubectl'))
 /** While a command runs, hold streamed watch rows so the command's echo is printed first. */
 let holdWatch = false
 
@@ -112,22 +121,19 @@ export const useSim = create<SimStore>((set, get) => {
     })
 
   const appendWatchRows = (sim: Simulation) => {
+    if (!activeWatch || !watchRows) return
     const rows: Line[] = []
     const seen = new Set<string>()
-    for (const p of Object.values(sim.cluster.pods)) {
-      seen.add(p.uid)
-      const sig = `${p.phase}|${p.ready}|${p.restarts}`
-      if (lastWatch.get(p.uid) !== sig) {
-        rows.push(podRow(sim, p))
-        lastWatch.set(p.uid, sig)
+    for (const current of watchRows(sim, activeWatch)) {
+      seen.add(current.key)
+      if (lastWatch.get(current.key) !== current.signature) {
+        rows.push(current.line)
+        lastWatch.set(current.key, current.signature)
       }
     }
-    for (const uid of [...lastWatch.keys()]) if (!seen.has(uid)) lastWatch.delete(uid)
+    for (const key of [...lastWatch.keys()]) if (!seen.has(key)) lastWatch.delete(key)
     if (!rows.length) return
-    // Pad against the header width so streamed rows line up with the initial table.
-    const widths = [28, 8, 20, 11]
-    const aligned = rows.map((r) => r.map((s, i) => ({ ...s, t: i < widths.length ? s.t.padEnd(Math.max(widths[i], s.t.length + 3)) : s.t })))
-    set((s) => ({ term: [...s.term, { id: ++termSeq, lines: aligned }] }))
+    set((s) => ({ term: [...s.term, { id: ++termSeq, lines: rows }] }))
   }
 
   // an explicit #/lesson wins; otherwise resume where this learner left off
@@ -172,11 +178,12 @@ export const useSim = create<SimStore>((set, get) => {
     attention: null,
     term: welcome(initial),
     history: [],
-    watching: false,
+    watching: null,
     paletteOpen: false,
     draft: null,
+    editing: null,
 
-    exec(input, origin) {
+    async exec(input, origin) {
       const trimmed = input.trim()
       const state = get()
       // Typing in the terminal interrupts a watch (like Ctrl+C); acting on the stage doesn't, so you can watch rows stream in.
@@ -185,30 +192,39 @@ export const useSim = create<SimStore>((set, get) => {
         set((s) => ({ term: [...s.term, { id: ++termSeq, input: '', lines: [] }] }))
         return
       }
+      const kubectl = await loadKubectl()
+      watchRows = kubectl.watchRows
+      const current = get()
       holdWatch = true
-      const result = run(state.sim, trimmed)
+      const result = kubectl.run(current.sim, trimmed)
       holdWatch = false
       if (result.clear) {
-        set({ term: [], history: [...state.history, trimmed] })
+        set({ term: [], history: [...current.history, trimmed] })
         return
       }
       if (result.watch) {
-        lastWatch = new Map(Object.values(state.sim.cluster.pods).map((p) => [p.uid, `${p.phase}|${p.ready}|${p.restarts}`]))
-        if (!Object.keys(state.sim.cluster.pods).length)
-          result.lines = [podHeader().map((h) => ({ t: h.padEnd(h === 'NAME' ? 28 : h === 'STATUS' ? 20 : h === 'READY' ? 8 : 11), c: 'muted' as const }))]
+        activeWatch = result.watch
+        lastWatch = new Map(watchRows(current.sim, result.watch).map((row) => [row.key, row.signature]))
       }
       set((s) => ({
         term: [...s.term, { id: ++termSeq, input: trimmed, lines: result.lines, origin }],
         history: [...s.history, trimmed],
-        watching: !!result.watch || (s.watching && !!origin),
+        watching: result.watch?.kind ?? (s.watching && origin ? s.watching : null),
         attention: result.focusUid ? { uid: result.focusUid, n: (s.attention?.n ?? 0) + 1 } : s.attention,
+        editing: result.edit
+          ? (() => {
+              const dep = current.sim.findDeployment(result.edit.name)
+              return dep ? { name: dep.name, yaml: deploymentEditYaml(dep), error: null } : null
+            })()
+          : s.editing,
       }))
-      if (get().watching && !result.watch) appendWatchRows(state.sim)
+      if (get().watching && !result.watch) appendWatchRows(current.sim)
     },
 
     stopWatch() {
       if (!get().watching) return
-      set((s) => ({ watching: false, term: [...s.term, { id: ++termSeq, lines: [[{ t: '^C', c: 'muted' }]] }] }))
+      activeWatch = null
+      set((s) => ({ watching: null, term: [...s.term, { id: ++termSeq, lines: [[{ t: '^C', c: 'muted' }]] }] }))
     },
 
     select: (uid) => set((s) => ({ selected: uid, seen: uid && !s.seen.includes(uid) ? [...s.seen, uid] : s.seen })),
@@ -222,6 +238,37 @@ export const useSim = create<SimStore>((set, get) => {
     setReducedMotion: (reducedMotion) => set({ reducedMotion }),
     setPalette: (paletteOpen) => set({ paletteOpen }),
     setDraft: (text) => set((s) => ({ draft: { text, n: (s.draft?.n ?? 0) + 1 } })),
+    updateEditYaml: (yaml) => set((s) => ({ editing: s.editing ? { ...s.editing, yaml, error: null } : null })),
+    async saveEdit() {
+      const editor = get().editing
+      if (!editor) return
+      const { parseDeploymentEdit } = await import('../lib/deploymentEdit')
+      if (get().editing !== editor) return
+      const dep = get().sim.findDeployment(editor.name)
+      if (!dep) {
+        set({ editing: { ...editor, error: `Error from server (NotFound): deployments.apps "${editor.name}" not found` } })
+        return
+      }
+      const parsed = parseDeploymentEdit(editor.yaml, dep)
+      if ('error' in parsed) {
+        set({ editing: { ...editor, error: parsed.error } })
+        return
+      }
+      const scaleChanged = dep.replicas !== parsed.replicas
+      holdWatch = true
+      if (scaleChanged) get().sim.scale(dep.name, parsed.replicas, 'edit')
+      const changed = get().sim.setImage(dep.name, 'backend', parsed.image, 'edit', parsed.labels)
+      holdWatch = false
+      const line: Line = !scaleChanged && changed === 'unchanged'
+        ? [{ t: 'Edit cancelled, no changes made.', c: 'muted' }]
+        : [{ t: `deployment.apps/${dep.name} edited`, c: 'success' }]
+      set((s) => ({ editing: null, term: [...s.term, { id: ++termSeq, lines: [line] }] }))
+      if (get().watching) appendWatchRows(get().sim)
+    },
+    cancelEdit() {
+      if (!get().editing) return
+      set((s) => ({ editing: null, term: [...s.term, { id: ++termSeq, lines: [[{ t: 'Edit cancelled, no changes made.', c: 'muted' }]] }] }))
+    },
     markDone: (ids) => set((s) => ({ done: [...s.done, ...ids.filter((id) => !s.done.includes(id))] })),
     revealHint: (id) => set((s) => ({ hints: s.hints.includes(id) ? s.hints : [...s.hints, id] })),
 
@@ -231,6 +278,7 @@ export const useSim = create<SimStore>((set, get) => {
       sim = createSim(lesson)
       unsub = wire(sim)
       lastWatch = new Map()
+      activeWatch = null
       set((s) => ({
         sim,
         ...snapshot(sim),
@@ -245,7 +293,8 @@ export const useSim = create<SimStore>((set, get) => {
         attention: null,
         term: welcome(lesson),
         history: [],
-        watching: false,
+        watching: null,
+        editing: null,
       }))
     },
 

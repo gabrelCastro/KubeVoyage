@@ -9,6 +9,7 @@ export type RolloutState = 'complete' | 'progressing' | 'stalled'
 /** What makes one revision of a Pod template different from another. */
 export interface Template {
   image: string
+  labels: Labels
   /** `kubectl rollout restart` stamps the template: same image, new revision. */
   restartedAt?: number
 }
@@ -19,7 +20,7 @@ export interface Deployment {
   name: string
   replicas: number
   selector: Labels
-  template: Template & { labels: Labels }
+  template: Template
   createdAt: number
   revision: number
   /** Every revision's template, oldest first — what `rollout undo` walks back through. */
@@ -39,6 +40,8 @@ export interface ReplicaSet {
   ownerUid: string
   hash: string
   image: string
+  /** Pod labels captured by this revision's template. */
+  templateLabels: Labels
   revision: number
   restartedAt?: number
   desired: number

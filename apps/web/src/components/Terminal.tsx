@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { CornerDownLeft, Eye, SquareTerminal } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { complete, type Line, type Seg, type Tone } from '../sim/kubectl'
+import type { Line, Seg, Tone } from '../sim/kubectl'
 import { shellHistory } from '../lib/shellHistory'
 import { cn } from '../lib/visual'
 import { useLesson } from '../lessons/useLesson'
@@ -186,9 +186,13 @@ export function Terminal() {
     }
     if (e.key === 'Tab') {
       e.preventDefault()
-      const r = complete(useSim.getState().sim, value)
-      setValue(r.value)
-      setCandidates(r.candidates)
+      const before = value
+      void import('../sim/kubectl').then(({ complete }) => {
+        if (input.current?.value !== before) return
+        const result = complete(useSim.getState().sim, before)
+        setValue(result.value)
+        setCandidates(result.candidates)
+      })
       return
     }
     if ((e.key === 'c' && e.ctrlKey) || e.key === 'Escape') {
@@ -237,7 +241,7 @@ export function Terminal() {
               exit={{ opacity: 0 }}
               className="flex shrink-0 items-center gap-1.5 rounded-full bg-creating/10 px-2 py-0.5 text-[11px] whitespace-nowrap text-creating"
             >
-              <Eye size={12} /> acompanhando pods <Kbd className="h-4 border-creating/30 bg-transparent text-creating">esc</Kbd>
+              <Eye size={12} /> acompanhando {watching} <Kbd className="h-4 border-creating/30 bg-transparent text-creating">esc</Kbd>
             </motion.span>
           )}
         </AnimatePresence>

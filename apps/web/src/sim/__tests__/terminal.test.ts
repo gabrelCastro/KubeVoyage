@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { parseArgs, parseSelector, selects, suggest, tokenize } from '../cli/args'
 import { toYaml } from '../cli/objects'
 import { Simulation } from '../engine'
-import { complete, run } from '../kubectl'
+import { complete, IMAGE, run, watchRows } from '../kubectl'
 import { settle } from './helpers'
 
 const text = (r: ReturnType<typeof run>) => r.lines.map((l) => l.map((s) => s.t).join('')).join('\n')
@@ -132,11 +132,35 @@ describe('kubectl get', () => {
     expect(out(sim, 'kubectl delete pod x -n prod')).toContain('namespaces "prod" not found')
   })
 
-  it('only watches Pods, and says so', () => {
-    expect(run(sim, 'kubectl get pods -w').watch).toBe('pods')
-    const r = run(sim, 'kubectl get deploy -w')
-    expect(r.watch).toBeUndefined()
-    expect(text(r)).toContain('-w só acompanha')
+  it('watches every simulated resource kind and keeps table options', () => {
+    for (const kind of ['pods', 'deployments', 'replicasets', 'services', 'endpoints', 'endpointslices', 'events', 'nodes']) {
+      expect(run(sim, `kubectl get ${kind} -w`).watch?.kind).toBe(kind)
+    }
+    const watch = run(sim, 'kubectl get deployments backend -o wide --no-headers -w').watch!
+    const before = watchRows(sim, watch)
+    expect(before).toHaveLength(1)
+    expect(before[0].line.map((s) => s.t).join('')).toContain('ghcr.io/kubelearn/backend:1.4')
+    sim.scale('backend', 5)
+    const after = watchRows(sim, watch)
+    expect(after[0].signature).not.toBe(before[0].signature)
+
+    const serviceWatch = run(sim, 'kubectl get service backend -w').watch!
+    const serviceBefore = watchRows(sim, serviceWatch)[0]
+    sim.setSelector('backend', { app: 'other' })
+    expect(watchRows(sim, serviceWatch)[0].signature).not.toBe(serviceBefore.signature)
+
+    const eventWatch = run(sim, 'kubectl get events -w').watch!
+    const eventKeys = watchRows(sim, eventWatch).map((row) => row.key)
+    sim.scale('backend', 4)
+    settle(sim, 1000)
+    expect(watchRows(sim, eventWatch).map((row) => row.key)).not.toEqual(eventKeys)
+
+    const empty = new Simulation()
+    const emptyEndpoints = run(empty, 'kubectl get endpoints -w')
+    expect(text(emptyEndpoints)).toMatch(/Warning:.*\nNAME\s+ENDPOINTS\s+AGE/)
+    expect(run(sim, 'kubectl get pods,services -w').watch).toBeUndefined()
+    expect(out(sim, 'kubectl get pods,services -w')).toContain('-w acompanha um tipo')
+    expect(out(sim, 'kubectl get deployments -o yaml -w')).toContain('-w acompanha apenas saídas em tabela')
   })
 })
 
@@ -188,6 +212,27 @@ describe('commands', () => {
     expect(out(sim, 'kubectl set env deployment/backend A=b')).toContain('ainda não é simulado')
   })
 
+  it('opens a Deployment in the editor', () => {
+    expect(run(sim, 'kubectl edit deployment/backend').edit).toEqual({ kind: 'deployment', name: 'backend' })
+    expect(out(sim, 'kubectl edit deployment/nope')).toContain('deployments.apps "nope" not found')
+    expect(out(sim, 'kubectl edit service/backend')).toContain('Usage: kubectl edit deployment')
+  })
+
+  it('creates another Deployment from arguments', () => {
+    expect(out(sim, 'kubectl create deployment worker --image=busybox:1.36')).toBe('deployment.apps/worker created')
+    const worker = sim.findDeployment('worker')!
+    expect(worker.replicas).toBe(1)
+    expect(worker.selector).toEqual({ app: 'worker' })
+    expect(worker.template.labels).toEqual({ app: 'worker' })
+    settle(sim)
+    expect(sim.deploymentPods(worker).filter((pod) => pod.ready)).toHaveLength(1)
+    expect(out(sim, 'kubectl create deployment worker --image=busybox')).toContain('AlreadyExists')
+    expect(out(sim, 'kubectl create deployment jobs --image=busybox --replicas=2')).toContain('deployment.apps/jobs created')
+    expect(sim.findDeployment('jobs')?.replicas).toBe(2)
+    expect(out(sim, 'kubectl create deployment Missing --image=busybox')).toContain('metadata.name: Invalid value')
+    expect(out(sim, 'kubectl create deployment no-image')).toContain('required flag(s) "image" not set')
+  })
+
   it('pipes through grep, wc, head', () => {
     expect(out(sim, 'kubectl get pods | grep Running | wc -l')).toBe('3')
     expect(out(sim, 'kubectl get pods | grep -c NAME')).toBe('1')
@@ -234,6 +279,8 @@ describe('tab completion', () => {
     expect(tab('kubectl describe svc b').value).toBe('kubectl describe svc backend ')
     expect(tab('kubectl scale deploy b').value).toBe('kubectl scale deploy backend ')
     expect(tab('kubectl rollout undo d').value).toBe('kubectl rollout undo deployment/backend ')
+    expect(tab('kubectl edit deployment/b').value).toBe('kubectl edit deployment/backend ')
+    expect(tab('kubectl create dep').value).toBe('kubectl create deployment ')
   })
 
   it('completes names in kind/name form and pod names for logs', () => {
@@ -345,6 +392,21 @@ describe('rollout restart, pause and resume', () => {
     expect(out(sim, 'kubectl rollout resume deployment/backend')).toBe('deployment.apps/backend resumed')
     settle(sim, 25000)
     expect(Object.values(sim.cluster.pods).filter((p) => p.ready && p.image.endsWith(':1.6'))).toHaveLength(4)
+  })
+})
+
+describe('editing a Deployment template', () => {
+  it('rolls out label changes and restores them on undo', () => {
+    const sim = cluster()
+    expect(sim.setImage('backend', 'backend', IMAGE, 'edit', { app: 'backend', track: 'canary' })).toBe('updated')
+    settle(sim, 20000)
+    const dep = sim.findDeployment('backend')!
+    expect(dep.template.labels).toEqual({ app: 'backend', track: 'canary' })
+    expect(sim.replicaSetOf(dep)?.templateLabels).toEqual({ app: 'backend', track: 'canary' })
+    expect(Object.values(sim.cluster.pods).filter((pod) => pod.ready).every((pod) => pod.labels.track === 'canary')).toBe(true)
+    expect(out(sim, 'kubectl rollout undo deployment/backend')).toContain('rolled back')
+    settle(sim, 20000)
+    expect(sim.findDeployment('backend')!.template.labels).toEqual({ app: 'backend' })
   })
 })
 

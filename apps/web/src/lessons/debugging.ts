@@ -1,5 +1,5 @@
-import { IMAGE } from '../sim/kubectl'
-import { firstIndex, ran } from './helpers'
+import { IMAGE } from '../sim/manifests'
+import { firstIndex, ran, ranServiceRequest } from './helpers'
 import type { Lesson, LessonCtx } from './types'
 
 const svc = (ctx: LessonCtx) => Object.values(ctx.cluster.services)[0]
@@ -26,8 +26,8 @@ export const debugging: Lesson = {
       title: 'Pergunte ao Service',
       detail: 'As requisições para o Service backend estão falhando. Para onde o Service acha que deveria mandá-las?',
       suggest: () => 'kubectl describe service backend',
-      uiHint: 'ou selecione o Service no palco',
-      done: (ctx) => ran(ctx.history, /^kubectl\s+(describe\s+(svc|service)|get\s+(ep|endpoints?|endpointslices?|svc|services?))\b/) || ctx.seen.some((u) => ctx.cluster.services[u]),
+      uiHint: 'ou teste com kubectl run … -- wget http://backend',
+      done: (ctx) => ranServiceRequest(ctx.history, 'backend') || ran(ctx.history, /^kubectl\s+(describe\s+(svc|service)|get\s+(ep|endpoints?|endpointslices?|svc|services?))\b/) || ctx.seen.some((u) => ctx.cluster.services[u]),
     },
     {
       id: 'compare',

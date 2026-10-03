@@ -74,9 +74,6 @@ export interface Setup {
 /** Images that crash on start. Version 1.5 "forgot" a required environment variable. */
 export const isBroken = (image: string) => /:1\.5$/.test(image)
 
-/** Does this ReplicaSet run this template? (Same image and, after a restart, the same stamp.) */
-export const sameTemplate = (rs: { image: string; restartedAt?: number }, t: Template) => rs.image === t.image && (rs.restartedAt ?? 0) === (t.restartedAt ?? 0)
-
 // Same alphabet Kubernetes uses for generated name suffixes (no vowels, no ambiguous chars).
 const ALPHABET = 'bcdfghjklmnpqrstvwxz2456789'
 const randomSuffix = (n: number) => Array.from({ length: n }, () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)]).join('')
@@ -89,6 +86,18 @@ export const labelString = (l: Labels) =>
   Object.entries(l)
     .map(([k, v]) => `${k}=${v}`)
     .join(',')
+
+const sameLabels = (a: Labels, b: Labels) => {
+  const ak = Object.keys(a).sort()
+  const bk = Object.keys(b).sort()
+  return ak.length === bk.length && ak.every((key, i) => key === bk[i] && a[key] === b[key])
+}
+
+const sameTemplateData = (a: Template, b: Template) => a.image === b.image && (a.restartedAt ?? 0) === (b.restartedAt ?? 0) && sameLabels(a.labels, b.labels)
+
+/** Does this ReplicaSet run this template? */
+export const sameTemplate = (rs: { image: string; templateLabels: Labels; restartedAt?: number }, t: Template) =>
+  sameTemplateData({ image: rs.image, labels: rs.templateLabels, restartedAt: rs.restartedAt }, t)
 
 /** The selector a ReplicaSet really uses: the Deployment's, pinned to its own template hash. */
 export const rsSelector = (rs: ReplicaSet): Labels => ({ ...rs.selector, 'pod-template-hash': rs.hash })
@@ -335,7 +344,7 @@ export class Simulation {
         template: { labels: { ...d.labels }, image: d.image },
         createdAt: born,
         revision: 1,
-        history: [{ image: d.image }],
+        history: [{ image: d.image, labels: { ...d.labels } }],
         rollout: 'complete',
       }
       const hash = randomHash()
@@ -346,6 +355,7 @@ export class Simulation {
         ownerUid: dep.uid,
         hash,
         image: d.image,
+        templateLabels: { ...d.labels },
         revision: 1,
         desired: d.replicas,
         selector: { ...d.labels },
@@ -413,6 +423,35 @@ export class Simulation {
 
   // ── user actions ─────────────────────────────────────────────────────────
 
+  /** `kubectl create deployment`: register desired state, then let controllers materialize it. */
+  createDeployment(name: string, image: string, replicas = 1) {
+    if (this.findDeployment(name)) return 'exists' as const
+    return this.act(() => {
+      const labels = { app: name }
+      const dep: Deployment = {
+        kind: 'Deployment',
+        uid: `dep-${++this.seq}`,
+        name,
+        replicas,
+        selector: { ...labels },
+        template: { labels: { ...labels }, image },
+        createdAt: this.now,
+        revision: 1,
+        history: [{ image, labels: { ...labels } }],
+        rollout: 'progressing',
+      }
+      this.cluster = { ...this.cluster, deployments: { ...this.cluster.deployments, [dep.uid]: dep } }
+      this.emit('you', 'user', 'Created', `kubectl create deployment ${name} --image=${image}`, this.ref(dep))
+      this.narrate({
+        tone: 'info',
+        title: `Deployment ${name} criado`,
+        body: `O desired state pede ${replicas} ${replicas === 1 ? 'réplica' : 'réplicas'} com app=${name}. O Deployment controller agora cria o ReplicaSet.`,
+      })
+      this.schedule(TIMING.rsCreate, 'o Deployment controller cria um ReplicaSet', () => this.syncDeployment(dep.uid))
+      return 'created' as const
+    })
+  }
+
   apply(m: Manifest): 'created' | 'configured' | 'unchanged' {
     if (m.kind === 'Service') {
       const existing = this.findService(m.name)
@@ -444,7 +483,7 @@ export class Simulation {
         template: { labels: { ...m.labels }, image: m.image },
         createdAt: this.now,
         revision: 1,
-        history: [{ image: m.image }],
+        history: [{ image: m.image, labels: { ...m.labels } }],
         rollout: 'complete',
       }
       this.cluster = { ...this.cluster, deployments: { ...this.cluster.deployments, [dep.uid]: dep } }
@@ -459,14 +498,14 @@ export class Simulation {
     })
   }
 
-  scale(name: string, replicas: number, via: 'scale' | 'apply' | 'ui' = 'scale') {
+  scale(name: string, replicas: number, via: 'scale' | 'apply' | 'ui' | 'edit' = 'scale') {
     const dep = this.findDeployment(name)
     if (!dep) return false
     if (dep.replicas === replicas) return true
     this.act(() => {
       const from = dep.replicas
       this.patchDep(dep.uid, { replicas })
-      this.emit('you', 'user', 'Scaled', `${via === 'apply' ? 'kubectl apply' : 'kubectl scale'} — replicas ${from} → ${replicas}`, this.ref(dep))
+      this.emit('you', 'user', 'Scaled', `${via === 'apply' ? 'kubectl apply' : via === 'edit' ? 'kubectl edit' : 'kubectl scale'} — replicas ${from} → ${replicas}`, this.ref(dep))
       this.narrate({
         tone: 'info',
         title: 'Você mudou o desired state',
@@ -481,24 +520,31 @@ export class Simulation {
     return true
   }
 
-  setImage(name: string, container: string, image: string, via: 'set' | 'apply' = 'set') {
+  setImage(name: string, container: string, image: string, via: 'set' | 'apply' | 'edit' = 'set', labels?: Labels) {
     const dep = this.findDeployment(name)
     if (!dep) return 'notfound' as const
     if (container !== 'backend') return 'nocontainer' as const
-    if (dep.template.image === image) return 'unchanged' as const
+    const nextLabels = labels ?? dep.template.labels
+    if (!matches(dep.selector, nextLabels)) return 'selector' as const
+    const imageChanged = dep.template.image !== image
+    const labelsChanged = !sameLabels(dep.template.labels, nextLabels)
+    if (!imageChanged && !labelsChanged) return 'unchanged' as const
     this.act(() => {
       const from = dep.template.image
+      const template = { ...dep.template, image, labels: { ...nextLabels } }
       this.patchDep(dep.uid, {
-        template: { ...dep.template, image },
+        template,
         revision: dep.revision + 1,
-        history: [...dep.history, { image, restartedAt: dep.template.restartedAt }],
+        history: [...dep.history, { ...template, labels: { ...template.labels } }],
         rollout: dep.paused ? dep.rollout : 'progressing',
       })
-      this.emit('you', 'user', 'ImageChanged', `${via === 'apply' ? 'kubectl apply' : 'kubectl set image'} — ${tag(from)} → ${tag(image)}`, this.ref(dep))
+      const command = via === 'apply' ? 'kubectl apply' : via === 'edit' ? 'kubectl edit' : 'kubectl set image'
+      const change = imageChanged && labelsChanged ? `${tag(from)} → ${tag(image)}; labels → ${labelString(nextLabels)}` : imageChanged ? `${tag(from)} → ${tag(image)}` : `labels → ${labelString(nextLabels)}`
+      this.emit('you', 'user', imageChanged ? 'ImageChanged' : 'LabelsChanged', `${command} — ${change}`, this.ref(dep))
       this.narrate({
         tone: 'info',
-        title: 'Nova versão solicitada',
-        body: `Template novo significa ReplicaSet novo. O Deployment troca os Pods um de cada vez — os antigos continuam atendendo até os novos ficarem Ready.`,
+        title: imageChanged ? 'Nova versão solicitada' : 'Template atualizado',
+        body: 'Template novo significa ReplicaSet novo. O Deployment troca os Pods um de cada vez — os antigos continuam atendendo até os novos ficarem Ready.',
       })
       this.schedule(TIMING.scaleNotice, 'o Deployment controller inicia o rollout', () => this.syncDeployment(dep.uid))
     })
@@ -512,10 +558,10 @@ export class Simulation {
     if (toRevision !== undefined && !dep.history[toRevision - 1]) return 'norevision' as const
     const previous = toRevision !== undefined ? dep.history[toRevision - 1] : dep.history.length > 1 ? dep.history[dep.history.length - 2] : undefined
     if (!previous) return 'nohistory' as const
-    if (previous.image === dep.template.image && (previous.restartedAt ?? 0) === (dep.template.restartedAt ?? 0)) return 'skipped' as const
+    if (sameTemplateData(previous, dep.template)) return 'skipped' as const
     this.act(() => {
       this.patchDep(dep.uid, {
-        template: { ...dep.template, image: previous.image, restartedAt: previous.restartedAt },
+        template: { image: previous.image, labels: { ...previous.labels }, restartedAt: previous.restartedAt },
         revision: dep.revision + 1,
         history: [...dep.history, previous],
         rollout: dep.paused ? dep.rollout : 'progressing',
@@ -538,7 +584,7 @@ export class Simulation {
     if (dep.paused) return 'paused' as const
     this.act(() => {
       const template = { ...dep.template, restartedAt: this.now }
-      this.patchDep(dep.uid, { template, revision: dep.revision + 1, history: [...dep.history, { image: template.image, restartedAt: template.restartedAt }], rollout: 'progressing' })
+      this.patchDep(dep.uid, { template, revision: dep.revision + 1, history: [...dep.history, { ...template, labels: { ...template.labels } }], rollout: 'progressing' })
       this.emit('you', 'user', 'Restarted', `kubectl rollout restart deployment/${dep.name}`, this.ref(dep))
       this.narrate({
         tone: 'info',
@@ -885,6 +931,7 @@ export class Simulation {
       ownerUid: dep.uid,
       hash,
       image: dep.template.image,
+      templateLabels: { ...dep.template.labels },
       revision: dep.revision,
       restartedAt: dep.template.restartedAt,
       desired,
@@ -1041,14 +1088,13 @@ export class Simulation {
     this.inflight[rsUid] = Math.max(0, (this.inflight[rsUid] ?? 1) - 1)
     const rs = this.cluster.replicaSets[rsUid]
     if (!rs || !this.cluster.deployments[rs.ownerUid]) return
-    const dep = this.cluster.deployments[rs.ownerUid]
     const slot = this.freeSlot(rsUid)
     const pod: Pod = {
       kind: 'Pod',
       uid: `pod-${++this.seq}`,
       name: `${rs.name}-${randomSuffix(5)}`,
       ownerUid: rs.uid,
-      labels: { ...dep.template.labels, 'pod-template-hash': rs.hash },
+      labels: { ...rs.templateLabels, 'pod-template-hash': rs.hash },
       image: rs.image,
       phase: 'Pending',
       ready: false,

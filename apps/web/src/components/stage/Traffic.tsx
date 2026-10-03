@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'motion/react'
 import { memo, useEffect, useRef, useState } from 'react'
 import type { Service } from '../../sim/types'
 import type { Box, Layout } from '../../lib/visual'
+import { useApp } from '../../store/useApp'
 import { useSim } from '../../store/useSim'
 
 const INTERVAL = 460 // ms between simulated requests per Service, at 1×
@@ -41,6 +42,7 @@ export const Traffic = memo(function Traffic({ layout, services }: { layout: Lay
   useEffect(() => {
     setServed({})
     setFailed({})
+    useApp.getState().resetVisits()
   }, [epoch])
 
   // freeze in-flight requests with the rest of the cluster
@@ -53,17 +55,26 @@ export const Traffic = memo(function Traffic({ layout, services }: { layout: Lay
     if (paused || !hasServices) return
     const spawn = () => {
       const { layout, services } = latest.current
+      // the app window shows what visitors of the app's Service get
+      const appSvc = services.find((s) => s.name === 'backend') ?? services[0]
+      const { visit } = useApp.getState()
       for (const svc of services) {
         const sBox = layout.boxes[svc.uid]
         if (!sBox) continue
         const targets = svc.endpoints.filter((uid) => layout.boxes[uid])
         if (!targets.length) {
-          fly(failPath(sBox), true, () => setFailed((f) => ({ ...f, [svc.uid]: (f[svc.uid] ?? 0) + 1 })))
+          fly(failPath(sBox), true, () => {
+            setFailed((f) => ({ ...f, [svc.uid]: (f[svc.uid] ?? 0) + 1 }))
+            if (svc === appSvc) visit({ ok: false })
+          })
           continue
         }
         const i = (rr.current[svc.uid] = ((rr.current[svc.uid] ?? -1) + 1) % targets.length)
         const pod = targets[i]
-        fly(requestPath(sBox, layout.boxes[pod]), false, () => setServed((s) => ({ ...s, [pod]: (s[pod] ?? 0) + 1 })))
+        fly(requestPath(sBox, layout.boxes[pod]), false, () => {
+          setServed((s) => ({ ...s, [pod]: (s[pod] ?? 0) + 1 }))
+          if (svc === appSvc) visit({ ok: true, podUid: pod, podName: useSim.getState().cluster.pods[pod]?.name })
+        })
       }
     }
     const fly = (d: string, fail: boolean, done: () => void) => {
@@ -110,7 +121,7 @@ export const Traffic = memo(function Traffic({ layout, services }: { layout: Lay
               <AnimatePresence>
                 {none && (failed[svc.uid] ?? 0) > 0 && (
                   <motion.span key="fail" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-crash">
-                    · 503 × {failed[svc.uid]}
+                    · recusadas × {failed[svc.uid]}
                   </motion.span>
                 )}
               </AnimatePresence>

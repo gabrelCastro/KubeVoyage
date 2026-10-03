@@ -106,6 +106,20 @@ kubectl run teste --rm -it --image=busybox:1.36 --restart=Never -- wget -qO- htt
 
 Testa de dentro do cluster, passando pelo DNS e pelo kube-proxy como qualquer outro Pod faria.
 
+Se a dúvida for só a resolução do nome, isole a primeira etapa:
+
+```console
+kubectl run dns --rm -it --image=busybox:1.36 --restart=Never -- nslookup backend
+```
+
+No terminal da simulação, os dois testes acima funcionam. Se quiser entender cada argumento antes de executar, use:
+
+```console
+explicar kubectl run teste --rm -it --image=busybox:1.36 --restart=Never -- wget -qO- http://backend
+```
+
+`explicar` é uma ajuda didática do KubeLearn: ele decompõe o comando, mas não o executa. No kubectl real, `kubectl explain` tem outro papel — consultar os campos e a estrutura dos recursos.
+
 </section>
 
 <section id="o-que-simplificamos">
@@ -114,7 +128,7 @@ Testa de dentro do cluster, passando pelo DNS e pelo kube-proxy como qualquer ou
 
 - O exercício tem uma única causa. Na prática, NetworkPolicies, DNS, namespaces e o próprio app também entram na lista de suspeitos.
 - O “503” aparece no próprio Service, para o sintoma ficar visível. Sem um Ingress na frente, um cliente real normalmente veria a conexão falhar.
-- Os comandos de teste por dentro do cluster (`kubectl run`, `port-forward`) não existem no terminal da simulação.
+- `kubectl run` simula `wget`, `curl` e `nslookup` de dentro do cluster. `port-forward` e um shell interativo ainda não são simulados.
 
 </section>
 
@@ -180,6 +194,7 @@ Uma correção feita com `kubectl set` ou `kubectl edit` some no próximo deploy
 - [Depurando Services — documentação oficial](https://kubernetes.io/docs/tasks/debug/debug-application/debug-service/)
 - [Depurando Pods — documentação oficial](https://kubernetes.io/docs/tasks/debug/debug-application/debug-pods/)
 - [kubectl set selector — referência](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_set/kubectl_set_selector/)
+- [kubectl explain — referência](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_explain/)
 - [Service — documentação oficial](https://kubernetes.io/docs/concepts/services-networking/service/)
 
 </section>

@@ -16,8 +16,11 @@ import {
   type Obj,
 } from './cli/objects'
 import { pipe } from './cli/pipe'
-import { isBroken, labelString, rsSelector, short, tag, type Manifest, type Simulation } from './engine'
+import { isBroken, labelString, rsSelector, short, tag, type Simulation } from './engine'
+import { FILES, IMAGE } from './manifests'
 import type { ClusterEvent, Deployment, Labels, Pod, ReplicaSet, Service, WorkerNode } from './types'
+
+export { FILES, IMAGE, MANIFEST, MANIFEST_YAML } from './manifests'
 
 export type Tone = 'muted' | 'error' | 'success' | 'warn' | 'accent' | 'info' | 'strong'
 /** `ref`: uid of the resource this text names — the terminal links it to the stage. */
@@ -27,55 +30,31 @@ export type Line = Seg[]
 export interface CommandResult {
   lines: Line[]
   clear?: boolean
-  watch?: 'pods'
+  watch?: WatchSpec
+  edit?: { kind: 'deployment'; name: string }
   /** Resource the command was "about" — lets the stage acknowledge terminal activity. */
   focusUid?: string
 }
 
-export const IMAGE = 'ghcr.io/kubelearn/backend:1.4'
+export type WatchKind = 'pods' | 'deployments' | 'replicasets' | 'services' | 'endpoints' | 'endpointslices' | 'events' | 'nodes'
 
-/** Manifests a lesson can put in the terminal's working directory. */
-export const FILES: Record<string, { manifest: Manifest; yaml: string }> = {
-  'backend.yaml': {
-    manifest: { kind: 'Deployment', name: 'backend', replicas: 3, labels: { app: 'backend' }, image: IMAGE },
-    yaml: `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: backend
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: backend
-  template:
-    metadata:
-      labels:
-        app: backend
-    spec:
-      containers:
-        - name: backend
-          image: ${IMAGE}
-          readinessProbe:
-            httpGet: { path: /healthz, port: 8080 }`,
-  },
-  'service.yaml': {
-    manifest: { kind: 'Service', name: 'backend', selector: { app: 'backend' }, port: 80, targetPort: 8080 },
-    yaml: `apiVersion: v1
-kind: Service
-metadata:
-  name: backend
-spec:
-  selector:
-    app: backend
-  ports:
-    - port: 80
-      targetPort: 8080`,
-  },
+export interface WatchSpec {
+  kind: WatchKind
+  names: string[]
+  selector: Requirement[] | null
+  fields: { key: string; op: '=' | '!='; value: string }[]
+  sortBy?: string
+  wide: boolean
+  labelCols: string[]
+  showLabels: boolean
+  allNamespaces: boolean
 }
 
-/** Kept for the first lesson and tests. */
-export const MANIFEST = { file: 'backend.yaml', manifest: FILES['backend.yaml'].manifest }
-export const MANIFEST_YAML = FILES['backend.yaml'].yaml
+export interface WatchRow {
+  key: string
+  signature: string
+  line: Line
+}
 
 const plain = (t: string, c?: Tone): Line => [{ t, c }]
 const err = (t: string): CommandResult => ({ lines: [plain(t, 'error')] })
@@ -143,7 +122,7 @@ function parseLabels(parts: string[]): Record<string, string | null> | null {
 
 // ── resource kinds ─────────────────────────────────────────────────────────
 
-type KindId = 'pods' | 'deployments' | 'replicasets' | 'services' | 'endpoints' | 'endpointslices' | 'events' | 'nodes'
+type KindId = WatchKind
 
 const KIND_ALIASES: Record<string, KindId | 'all'> = {
   po: 'pods', pod: 'pods', pods: 'pods',
@@ -220,7 +199,7 @@ const SPECS: { [K in KindId]: Spec<any> } = {
     prefix: 'replicaset.apps',
     namespaced: true,
     items: (sim) => Object.values(sim.cluster.replicaSets).sort((a, b) => a.createdAt - b.createdAt),
-    labels: (sim, rs: ReplicaSet) => ({ ...rs.selector, ...(sim.cluster.deployments[rs.ownerUid]?.template.labels ?? {}), 'pod-template-hash': rs.hash }),
+    labels: (_sim, rs: ReplicaSet) => ({ ...rs.templateLabels, 'pod-template-hash': rs.hash }),
     object: (sim, rs: ReplicaSet) => replicaSetObject(sim, rs),
     header: (wide) => ['NAME', 'DESIRED', 'CURRENT', 'READY', 'AGE', ...(wide ? ['CONTAINERS', 'IMAGES', 'SELECTOR'] : [])],
     row: (sim, rs: ReplicaSet, wide) => {
@@ -392,6 +371,8 @@ const VERB_FLAGS: Record<string, string[]> = {
   rollout: ['to-revision', 'w'],
   logs: ['p', 'follow', 'tail', 'c', 'l'],
   run: ['image', 'labels', 'restart', 'rm', 'i', 't', 'it', 'port'],
+  edit: [],
+  create: ['image', 'replicas'],
 }
 
 /** Real kubectl flags this playground doesn't simulate: refuse rather than half-do the command. */
@@ -421,16 +402,14 @@ function checkFlags(verb: string, p: Parsed): Line[] | null {
 
 // ── verbs ──────────────────────────────────────────────────────────────────
 
-const VERBS = ['apply', 'get', 'describe', 'delete', 'scale', 'expose', 'label', 'set', 'rollout', 'logs', 'run']
+const VERBS = ['apply', 'get', 'describe', 'delete', 'scale', 'expose', 'label', 'set', 'rollout', 'logs', 'run', 'edit', 'create']
 
 /** Real verbs that aren't simulated (yet): what they do, so the learner isn't told they don't exist. */
 const UNSIMULATED_VERBS: Record<string, string> = {
   exec: 'executar um comando dentro de um container',
   'port-forward': 'abrir um túnel da sua máquina até um Pod ou Service',
   top: 'mostrar o consumo de CPU e memória (precisa do metrics-server)',
-  edit: 'abrir um recurso no editor e aplicar o que você mudar',
   explain: 'explicar os campos de cada tipo de recurso',
-  create: 'criar um recurso a partir de argumentos',
   annotate: 'mudar as annotations de um recurso',
   patch: 'alterar campos específicos de um recurso',
   replace: 'substituir um recurso inteiro',
@@ -462,7 +441,7 @@ const USAGE: Record<string, { use: string[]; what: string; examples?: string[] }
   apply: { use: ['kubectl apply -f <arquivo>'], what: 'Cria ou atualiza recursos a partir de um manifesto.', examples: ['kubectl apply -f backend.yaml'] },
   get: {
     use: ['kubectl get <tipo>[,<tipo>...] [nome...] [-l selector] [-o wide|yaml|json|name] [-w]', 'kubectl get <tipo>/<nome> [<tipo>/<nome>...]'],
-    what: 'Lista recursos. Flags: -l, --field-selector, -L, --show-labels, -A, -o, --sort-by, --no-headers, -w (só Pods).',
+    what: 'Lista recursos. Flags: -l, --field-selector, -L, --show-labels, -A, -o, --sort-by, --no-headers, -w.',
     examples: ['kubectl get pods -o wide', 'kubectl get pods -l app=backend --show-labels', 'kubectl get deploy backend -o yaml', 'kubectl get endpointslices -l kubernetes.io/service-name=backend'],
   },
   describe: { use: ['kubectl describe <tipo> [nome] [-l selector]'], what: 'Mostra detalhes e os eventos recentes de um recurso.', examples: ['kubectl describe pod <nome>', 'kubectl describe svc backend'] },
@@ -486,6 +465,8 @@ const USAGE: Record<string, { use: string[]; what: string; examples?: string[] }
     examples: ['kubectl run teste --image=nginx', 'kubectl run teste --rm -it --image=busybox:1.36 --restart=Never -- wget -qO- http://backend', 'kubectl run dns --rm -it --image=busybox:1.36 --restart=Never -- nslookup backend'],
   },
   logs: { use: ['kubectl logs <pod> [--previous] [--tail=N]', 'kubectl logs -l <selector>'], what: 'Mostra a saída do container. --previous mostra a execução anterior ao último restart.', examples: ['kubectl logs <pod> --previous'] },
+  edit: { use: ['kubectl edit deployment/<nome>'], what: 'Abre um resumo YAML do Deployment e aplica as mudanças salvas.', examples: ['kubectl edit deployment/backend'] },
+  create: { use: ['kubectl create deployment <nome> --image=<imagem> [--replicas=N]'], what: 'Cria um Deployment a partir dos argumentos.', examples: ['kubectl create deployment web --image=nginx:1.27'] },
 }
 
 function usage(verb: string): CommandResult {
@@ -639,6 +620,27 @@ function runOne(sim: Simulation, tokens: string[]): CommandResult {
       return logs(sim, args, flags)
     case 'run':
       return runPod(sim, args, flags)
+    case 'edit': {
+      const [kind, names] = splitKind(args)
+      if (!kind || KIND_ALIASES[kind] !== 'deployments' || !names[0]) return err('Usage: kubectl edit deployment/<name>')
+      const dep = sim.findDeployment(names[0])
+      if (!dep) return err(`Error from server (NotFound): deployments.apps "${names[0]}" not found`)
+      return { lines: [], edit: { kind: 'deployment', name: dep.name }, focusUid: dep.uid }
+    }
+    case 'create': {
+      const [kind, names] = splitKind(args)
+      const name = names[0]
+      if (!kind || KIND_ALIASES[kind] !== 'deployments' || !name) return err('Usage: kubectl create deployment <name> --image=<image> [--replicas=N]')
+      if (!/^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$/.test(name) || name.length > 253)
+        return err(`error: failed to create deployment: Deployment.apps "${name}" is invalid: metadata.name: Invalid value`)
+      if (typeof flags.image !== 'string' || !flags.image.trim()) return err('error: required flag(s) "image" not set')
+      const replicas = flags.replicas === undefined ? 1 : Number(flags.replicas)
+      if (!Number.isInteger(replicas) || replicas < 0) return err(`error: invalid argument "${flags.replicas}" for "--replicas" flag`)
+      if (replicas > 8) return err('Este cluster de treino é pequeno — use no máximo 8 réplicas.')
+      const result = sim.createDeployment(name, flags.image.trim(), replicas)
+      if (result === 'exists') return err(`Error from server (AlreadyExists): deployments.apps "${name}" already exists`)
+      return ok(`deployment.apps/${name} created`, sim.findDeployment(name)?.uid)
+    }
   }
   return help()
 }
@@ -809,7 +811,7 @@ function rollout(sim: Simulation, args: string[], flags: Flags): CommandResult {
           ['REVISION', 'IMAGE', 'CHANGE'],
           dep.history.map((rev, i) => {
             const prev = dep.history[i - 1]
-            const change = i === 0 ? 'criação' : prev && prev.image === rev.image && prev.restartedAt !== rev.restartedAt ? 'rollout restart' : prev && prev.image !== rev.image ? `imagem ${tag(prev.image)} → ${tag(rev.image)}` : 'rollback'
+            const change = i === 0 ? 'criação' : prev && prev.image === rev.image && prev.restartedAt !== rev.restartedAt ? 'rollout restart' : prev && prev.image !== rev.image ? `imagem ${tag(prev.image)} → ${tag(rev.image)}` : prev && labelString(prev.labels) !== labelString(rev.labels) ? 'labels do template' : 'rollback'
             return [{ t: String(i + 1), c: i === dep.history.length - 1 ? 'accent' : undefined }, { t: tag(rev.image), c: isBroken(rev.image) ? ('error' as Tone) : undefined }, { t: change, c: 'muted' as Tone }]
           }),
         ),
@@ -851,6 +853,75 @@ function yamlLines(obj: Obj): Line[] {
     const m = l.match(/^(\s*(?:- )*[^:\s][^:]*:)(.*)$/)
     return m ? [{ t: m[1] }, { t: m[2], c: 'strong' as Tone }] : plain(l, 'strong')
   })
+}
+
+const watchHeader = (watch: WatchSpec) => {
+  const spec = SPECS[watch.kind] as Spec<Item>
+  return [...(watch.allNamespaces && spec.namespaced ? ['NAMESPACE'] : []), ...spec.header(watch.wide), ...watch.labelCols.map((c) => c.toUpperCase()), ...(watch.showLabels ? ['LABELS'] : [])]
+}
+
+const watchState = (sim: Simulation, kind: WatchKind, item: Item) => {
+  if (kind === 'pods') {
+    const p = item as Pod
+    return [p.phase, p.ready, p.restarts, p.nodeName, p.ip, p.image, p.labels, p.ownerUid, p.deletedAt]
+  }
+  if (kind === 'deployments') {
+    const d = item as Deployment
+    const pods = sim.deploymentPods(d).filter((p) => p.deletedAt === null)
+    return [d.replicas, d.template, d.selector, d.revision, d.rollout, d.paused, pods.length, pods.filter((p) => p.ready).length]
+  }
+  if (kind === 'replicasets') {
+    const rs = item as ReplicaSet
+    const pods = sim.activePods(rs.uid)
+    return [rs.desired, rs.image, rs.selector, rs.revision, rs.phase, rs.deletedAt, pods.length, pods.filter((p) => p.ready).length]
+  }
+  if (kind === 'services') {
+    const service = item as Service
+    return [service.selector, service.port, service.targetPort, service.clusterIP]
+  }
+  if (kind === 'endpoints' || kind === 'endpointslices') {
+    const service = item as Service
+    return [service.selector, service.port, service.targetPort, sim.selectedBy(service).map((p) => [p.uid, p.ip, p.ready, p.deletedAt]), service.endpoints]
+  }
+  if (kind === 'events') return [(item as Item & ClusterEvent).id]
+  return [item.name]
+}
+
+/** Current table rows for an active `kubectl get -w`, without time-only changes. */
+export function watchRows(sim: Simulation, watch: WatchSpec): WatchRow[] {
+  const spec = SPECS[watch.kind] as Spec<Item>
+  let items = spec.items(sim)
+  if (watch.selector) items = items.filter((t) => selects(watch.selector!, spec.labels(sim, t)))
+  for (const field of watch.fields) {
+    const read = field.key === 'metadata.name' ? (t: Item) => t.name : field.key === 'metadata.namespace' ? () => 'default' : spec.fields?.[field.key]
+    if (read) items = items.filter((t) => (read(t) === field.value) === (field.op === '='))
+  }
+  if (watch.names.length) items = watch.names.flatMap((name) => items.filter((t) => t.name === name))
+  if (watch.sortBy) {
+    const keyed = items.map((t) => ({ t, v: readPath(spec.object(sim, t), watch.sortBy!) }))
+    keyed.sort((a, b) => (typeof a.v === 'number' && typeof b.v === 'number' ? a.v - b.v : String(a.v ?? '').localeCompare(String(b.v ?? ''))))
+    items = keyed.map(({ t }) => t)
+  }
+
+  const header = watchHeader(watch)
+  const raw = items.map((item) => {
+    const row = spec.row(sim, item, watch.wide)
+    if (item.uid && watch.kind !== 'events' && watch.kind !== 'nodes') row[0] = { ...row[0], ref: item.uid }
+    const labels = spec.labels(sim, item)
+    return [
+      ...(watch.allNamespaces && spec.namespaced ? [{ t: 'default' }] : []),
+      ...row,
+      ...watch.labelCols.map((column) => ({ t: labels[column] ?? '', c: 'accent' as Tone })),
+      ...(watch.showLabels ? [{ t: labelString(labels) || '<none>', c: 'accent' as Tone }] : []),
+    ]
+  })
+  const formatted = table(header, raw).slice(1)
+  const meaningful = header.map((column, index) => ({ column, index })).filter(({ column }) => column !== 'AGE' && column !== 'LAST SEEN')
+  return items.map((item, index) => ({
+    key: `${watch.kind}:${item.uid ?? item.name}`,
+    signature: JSON.stringify([watchState(sim, watch.kind, item), meaningful.map(({ index: i }) => raw[index][i]?.t ?? '')]),
+    line: formatted[index],
+  }))
 }
 
 function get(sim: Simulation, args: string[], flags: Flags): CommandResult {
@@ -950,16 +1021,28 @@ function get(sim: Simulation, args: string[], flags: Flags): CommandResult {
   if (allNs) notes.push(note('este cluster de treino só simula o namespace default'))
   if (sel && !found && kinds.includes('deployments'))
     notes.push(note('os Deployments daqui não têm labels próprias — app=backend está no template dos Pods (veja -o yaml)'))
-  const watch = (flags.w === true) && !output?.match(/yaml|json|name/) && kinds.length === 1 && kinds[0] === 'pods'
-  if (flags.w && !watch) notes.push(note('-w só acompanha a tabela de Pods neste terminal'))
+  const watch = (flags.w === true) && !output?.match(/yaml|json|name/) && groups.length === 1
+    ? {
+        kind: groups[0].kind,
+        names: groups[0].names,
+        selector: sel && !('error' in sel) ? sel : null,
+        fields: field,
+        sortBy: typeof flags['sort-by'] === 'string' ? flags['sort-by'] : undefined,
+        wide,
+        labelCols,
+        showLabels,
+        allNamespaces: allNs,
+      } satisfies WatchSpec
+    : undefined
+  if (flags.w && !watch) notes.push(note(output?.match(/yaml|json|name/) ? '-w acompanha apenas saídas em tabela neste terminal' : '-w acompanha um tipo de recurso por vez neste terminal'))
 
   if (!found && !errors.length && !watch) {
     if (output === 'yaml' || output === 'json') return { lines: [...lines, ...notes] }
     return { lines: [plain(kinds.every((k) => !SPECS[k].namespaced) ? 'No resources found' : 'No resources found in default namespace.', 'muted'), ...notes] }
   }
   if (watch) {
-    const rows = lines.length ? lines : table(podHeader(wide), []).slice(0, 1)
-    return { lines: [...rows, ...errors, ...notes], watch: 'pods' }
+    const rows = found || flags['no-headers'] ? lines : [...lines, ...table(watchHeader(watch), []).slice(0, 1)]
+    return { lines: [...rows, ...errors, ...notes], watch }
   }
   return { lines: [...lines, ...errors, ...notes], focusUid }
 }
@@ -1138,6 +1221,8 @@ function help(): CommandResult {
       row('kubectl label pod <name> key=value --overwrite', 'mudar uma label de Pod (key- remove)'),
       row('kubectl set selector svc <name> key=value', 'mudar o selector de um Service'),
       row('kubectl set image deploy/backend backend=<image>', 'publicar uma versão nova'),
+      row('kubectl edit deployment/backend', 'editar réplicas, imagem e labels em YAML'),
+      row('kubectl create deployment <nome> --image=<imagem>', 'criar outro Deployment'),
       row('kubectl rollout status|history|undo deploy/backend', 'acompanhar ou desfazer um rollout'),
       row('kubectl rollout restart|pause|resume deploy/backend', 'trocar todos os Pods · pausar mudanças'),
       row('kubectl logs <pod> [--previous] [--tail=N]', 'ler a saída de um container'),
@@ -1225,6 +1310,10 @@ function candidatesFor(sim: Simulation, words: string[], last: string): string[]
     case 'get':
     case 'describe':
       return positional.length === 0 ? KIND_WORDS : namesOf(sim, kindOf(positional[0]))
+    case 'edit':
+      return positional.length === 0 ? ['deployment', 'deploy'] : namesOf(sim, 'deployments')
+    case 'create':
+      return positional.length === 0 ? ['deployment'] : []
     case 'delete':
       return positional.length === 0 ? ['pod', 'pods', 'service', 'svc', 'deployment', 'deploy', 'replicaset', 'rs'] : namesOf(sim, kindOf(positional[0]), true)
     case 'logs':
@@ -1295,6 +1384,8 @@ const VERB_DOCS: Record<string, string> = {
   rollout: 'trata dos rollouts de um Deployment',
   logs: 'mostra a saída do container',
   run: 'cria um Pod avulso, sem dono',
+  edit: 'abre o recurso em YAML para você alterar e salvar',
+  create: 'cria um recurso novo a partir dos argumentos',
 }
 
 function describeSelector(v: string): string {
@@ -1395,6 +1486,7 @@ function explain(sim: Simulation, tokens: string[]): CommandResult {
     case 'delete':
     case 'scale':
     case 'expose':
+    case 'edit':
       positional(args)
       break
     case 'logs':
@@ -1413,6 +1505,12 @@ function explain(sim: Simulation, tokens: string[]): CommandResult {
       if (what) rows.push([what, what === 'image' ? 'troca a imagem do container — gera uma revisão nova e um rollout' : what === 'selector' ? 'troca o selector do Service — muda quais Pods recebem tráfego' : 'subcomando'])
       if (target) positional([target])
       if (spec) rows.push([spec, what === 'image' ? `container ${spec.split('=')[0]} passa a usar ${spec.split('=')[1] ?? ''}` : `selector novo: ${spec}`])
+      break
+    }
+    case 'create': {
+      const [kind, name] = args
+      if (kind) rows.push([kind, kind === 'deployment' || kind === 'deploy' ? KIND_DOCS.deployments : 'tipo de recurso não simulado', kind === 'deployment' || kind === 'deploy' ? undefined : 'warn'])
+      if (name) rows.push([name, 'o nome do Deployment novo'])
       break
     }
     case 'run': {

@@ -133,6 +133,14 @@ kubectl delete pod backend-...
 
 Solicita a exclusão de um Pod específico. Como o Deployment continua declarando três réplicas, o ReplicaSet cria outro Pod. Para mudar a quantidade de forma duradoura, altere o desired state do Deployment.
 
+Apagar o dono é diferente:
+
+```console
+kubectl delete deployment backend
+```
+
+Por padrão, a exclusão em cascata acontece em segundo plano: o objeto Deployment some e o garbage collector remove os ReplicaSets dependentes; ao perderem seu dono, os Pods desses ReplicaSets também são removidos. A cadeia é decidida por `ownerReferences`, não pelas labels. Para experimentar sem executar o comando, use `explicar kubectl delete deployment backend` no terminal da simulação.
+
 ```console
 kubectl describe pod backend-...
 ```
@@ -147,6 +155,7 @@ Mostra detalhes do recurso e seus eventos recentes. É útil para descobrir onde
 
 - No cluster real, muitas dessas mudanças levam milissegundos. A simulação desacelera o tempo para que cada etapa fique visível.
 - O ReplicaSet cria o substituto assim que percebe a falta; ele não espera o Pod antigo terminar de encerrar.
+- A exclusão em cascata é condensada para caber na animação. Num cluster real, o garbage collector processa os dependentes em segundo plano por padrão.
 - Os “slots” desenhados no palco são apenas didáticos. O Kubernetes não reserva posições visuais para réplicas.
 - A simulação mostra os componentes importantes para a lição, mas omite detalhes de rede, armazenamento, admission e outros controllers.
 
@@ -167,6 +176,10 @@ O Pod novo será criado a partir do template do Deployment, não das mudanças m
 ### Confundir Deployment com ReplicaSet
 
 O Deployment cuida de versões, rollout e rollback. Cada versão normalmente corresponde a um ReplicaSet; o ReplicaSet cuida da quantidade de Pods daquela versão.
+
+### Apagar o Deployment esperando que os Pods voltem
+
+Ao apagar só um Pod, seu ReplicaSet continua existindo e cria outro. Ao apagar o Deployment, a coleta de lixo em cascata também remove seus ReplicaSets e Pods; não sobra controller para recriá-los.
 
 ### Achar que Running significa pronto
 
@@ -216,5 +229,6 @@ Running só informa que o container está executando. Ready depende da readiness
 - [Ciclo de vida do Pod — documentação oficial](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/)
 - [Probes de liveness, readiness e startup — documentação oficial](https://kubernetes.io/docs/concepts/workloads/pods/probes/)
 - [Controllers e control loops — documentação oficial](https://kubernetes.io/docs/concepts/architecture/controller/)
+- [Garbage collection e exclusão em cascata — documentação oficial](https://kubernetes.io/docs/concepts/architecture/garbage-collection/)
 
 </section>

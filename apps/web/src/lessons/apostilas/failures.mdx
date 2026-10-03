@@ -51,6 +51,12 @@ CrashLoopBackOff não é um problema do cluster: é o cluster avisando que **o s
 
 O Deployment não desiste sozinho. Depois de `progressDeadlineSeconds` (600 segundos por padrão) sem progresso, ele marca a condição `Progressing=False` com o motivo **ProgressDeadlineExceeded**, mas **continua tentando**. Não há rollback automático: decidir o que fazer é com você.
 
+<h3 id="controlando-o-rollout">Reiniciar, pausar e retomar</h3>
+
+`kubectl rollout restart` inicia uma nova substituição gradual sem exigir uma imagem diferente. É útil quando a configuração externa mudou e os Pods precisam nascer de novo, mas continua sendo um rollout: readiness e limites de disponibilidade ainda importam.
+
+`kubectl rollout pause` congela novos rollouts do Deployment. Mudanças feitas no template durante a pausa ficam registradas, mas não criam ReplicaSets até `kubectl rollout resume`; ao retomar, elas saem juntas. Um Deployment pausado também não pode receber rollback até ser retomado.
+
 <h3 id="rollback">Rollback</h3>
 
 O ReplicaSet antigo não foi apagado: ficou guardado com 0 réplicas (o Deployment guarda até 10 revisões antigas, por padrão). Um **rollback** devolve o template anterior ao Deployment, que reaproveita aquele ReplicaSet — escalando-o de volta e o quebrado para zero. Por isso é rápido.
@@ -108,7 +114,29 @@ kubectl rollout history deployment/backend
 kubectl rollout undo deployment/backend --to-revision=1
 ```
 
-Desfaz para a revisão anterior, lista o histórico e volta a uma revisão específica.
+Desfaz para a revisão anterior, lista o histórico e volta a uma revisão específica. Consulte o histórico antes: `--to-revision=1` escolhe a revisão 1, não “uma revisão para trás”.
+
+### Reiniciando ou agrupando mudanças
+
+```console
+kubectl rollout restart deployment/backend
+```
+
+Troca todos os Pods gradualmente sem mudar a imagem. Para acumular mudanças no template e disparar um único rollout:
+
+```console
+kubectl rollout pause deployment/backend
+kubectl set image deployment/backend backend=ghcr.io/kubelearn/backend:1.5
+kubectl rollout resume deployment/backend
+```
+
+No terminal da simulação, `rollout history` identifica também uma revisão criada por `rollout restart`. Para inspecionar qualquer um desses comandos sem alterar o cluster:
+
+```console
+explicar kubectl rollout undo deployment/backend --to-revision=1
+```
+
+`explicar` é um recurso didático do KubeLearn e não executa o comando.
 
 ### Corrigindo para frente
 
@@ -149,6 +177,7 @@ Se o valor tiver senha, use um **Secret** (`secretKeyRef`) no lugar do ConfigMap
 - O back-off da simulação vai de 1,5 s a 8 s; no cluster real, de 10 s a 5 minutos.
 - O rollout é marcado como “travado” logo no primeiro crash. No real, isso só aparece no status depois do `progressDeadlineSeconds`.
 - Os logs são fixos e ilustrativos.
+- O restart usa um marcador interno no template; no cluster real, o kubectl registra o momento do restart em uma annotation do template.
 - Não há ConfigMaps na simulação, então a correção para frente fica só nesta apostila.
 
 </section>
@@ -219,6 +248,7 @@ Uma liveness probe que falha durante um início lento faz o kubelet matar o cont
 - [Deployments: rolling update e rollback — documentação oficial](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)
 - [Ciclo de vida do Pod e reinícios de containers — documentação oficial](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/)
 - [kubectl rollout — referência](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_rollout/)
+- [Atualizar, pausar e reverter um Deployment — documentação oficial](https://kubernetes.io/docs/tasks/run-application/update-deployment-rolling/)
 - [Configurar um Pod com ConfigMap — documentação oficial](https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/)
 - [Depurando Pods em execução — documentação oficial](https://kubernetes.io/docs/tasks/debug/debug-application/debug-running-pod/)
 

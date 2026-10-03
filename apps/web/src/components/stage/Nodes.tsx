@@ -4,6 +4,7 @@ import { memo, useEffect, useRef, type ReactNode } from 'react'
 import { isBroken, short, tag } from '../../sim/engine'
 import type { ControllerPhase, Deployment, Pod, ReplicaSet, Service } from '../../sim/types'
 import { cn, LIFECYCLE, podLabel, podVisual, spring, VISUAL } from '../../lib/visual'
+import { useApp } from '../../store/useApp'
 import { useSim } from '../../store/useSim'
 import { KindBadge, LabelChip, Metric, Rolling, StatusGlyph } from '../primitives'
 
@@ -252,6 +253,7 @@ export interface Probe {
 
 export const PodNode = memo(function PodNode({ pod, geo, probe, ...e }: { pod: Pod; geo: Geo; probe: Probe | null } & Emphasis) {
   const select = useSim((s) => s.select)
+  const appEmoji = useApp((s) => s.design.emoji)
   const reduced = useSim((s) => s.reducedMotion)
   const v = podVisual(pod)
   const meta = VISUAL[v]
@@ -288,6 +290,12 @@ export const PodNode = memo(function PodNode({ pod, geo, probe, ...e }: { pod: P
           <span className="flex min-w-0 items-center gap-1.5 text-[11.5px] font-medium" style={{ color: meta.color }}>
             <StatusGlyph state={v} size={14} />
             <Rolling value={podLabel(pod)} className="truncate" />
+            {/* the learner's app, running inside: only once the container is up */}
+            {appEmoji && (pod.phase === 'Running' || pod.phase === 'Terminating') && pod.image.includes('kubelearn/backend') && !isBroken(pod.image) && (
+              <span className="ml-auto text-[13px] leading-none" aria-hidden title="Seu app roda aqui">
+                {appEmoji}
+              </span>
+            )}
           </span>
 
           <div className="mt-2 truncate font-mono text-[9.5px] leading-tight text-fg-faint">{prefix}</div>

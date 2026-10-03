@@ -1,4 +1,4 @@
-import { IMAGE } from '../sim/kubectl'
+import { IMAGE } from '../sim/manifests'
 import { deployment, firstIndex, ran, storyFrom } from './helpers'
 import type { Lesson, LessonCtx } from './types'
 

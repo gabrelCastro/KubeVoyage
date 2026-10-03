@@ -2,6 +2,8 @@ import { MotionConfig } from 'motion/react'
 import { useEffect } from 'react'
 import { CommandPalette } from './components/CommandPalette'
 import { Completion } from './components/Completion'
+import { AppStudio } from './components/app/AppStudio'
+import { AppWindow } from './components/app/AppWindow'
 import { Inspector } from './components/Inspector'
 import { LessonPanel } from './components/LessonPanel'
 import { Stage } from './components/stage/Stage'
@@ -17,6 +19,7 @@ import { ShortcutsDialog, useHelp } from './tour/HelpMenu'
 import { Tips } from './tour/Tips'
 import { Tour } from './tour/Tour'
 import { ApostilaPanel } from './components/apostila/ApostilaPanel'
+import { DeploymentEditor } from './components/DeploymentEditor'
 import { LessonTracker } from './lessons/useLesson'
 import { useSim } from './store/useSim'
 
@@ -82,6 +85,7 @@ export default function App() {
           </main>
           <aside className="order-3 flex h-[640px] shrink-0 flex-col border-t border-line bg-panel lg:order-none lg:h-auto lg:min-h-0 lg:border-t-0 lg:border-l">
             <Inspector />
+            <AppWindow />
             <Timeline />
           </aside>
         </div>
@@ -91,6 +95,8 @@ export default function App() {
       <SignInDialog />
       <VerifyDialog />
       <ApostilaPanel />
+      <DeploymentEditor />
+      <AppStudio />
       <Tour />
       <Tips />
       <ShortcutsDialog />

@@ -129,6 +129,14 @@ kubectl run teste --rm -it --image=busybox:1.36 --restart=Never -- wget -qO- htt
 
 Sobe um Pod temporário, faz uma requisição pelo nome do Service e se apaga ao terminar.
 
+Esse teste percorre o caminho que interessa: DNS do cluster, ClusterIP, regras do kube-proxy e um endpoint Ready. No terminal da simulação, repita o comando para ver qual Pod respondeu; para entender as flags sem executar nada, prefixe-o com `explicar`:
+
+```console
+explicar kubectl run teste --rm -it --image=busybox:1.36 --restart=Never -- wget -qO- http://backend
+```
+
+`explicar` pertence ao KubeLearn. O comando real `kubectl explain` consulta o esquema dos recursos da API.
+
 </section>
 
 <section id="o-que-simplificamos">
@@ -139,6 +147,7 @@ Sobe um Pod temporário, faz uma requisição pelo nome do Service e se apaga ao
 - Não há rede de verdade: as bolinhas são uma ilustração, não pacotes.
 - Na simulação, `kubectl expose` usa a porta 8080 como `targetPort` por padrão. No kubectl real, o padrão é o mesmo valor de `--port`.
 - A simulação guarda os endpoints como uma lista simples, à moda da API antiga; não há EndpointSlices nem namespaces.
+- O Pod criado por `kubectl run` é representado no palco, mas a requisição e a resposta são simuladas; não há tráfego HTTP real.
 
 </section>
 
@@ -205,5 +214,6 @@ Com keep-alive ou gRPC, um Pod pode receber quase tudo. Isso não é defeito do 
 - [EndpointSlices — documentação oficial](https://kubernetes.io/docs/concepts/services-networking/endpoint-slices/)
 - [DNS para Services e Pods — documentação oficial](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/)
 - [IPs virtuais e o kube-proxy — documentação oficial](https://kubernetes.io/docs/reference/networking/virtual-ips/)
+- [kubectl run — referência](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_run/)
 
 </section>

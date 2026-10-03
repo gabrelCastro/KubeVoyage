@@ -1,5 +1,5 @@
 import { short } from '../sim/engine'
-import { IMAGE } from '../sim/kubectl'
+import { IMAGE } from '../sim/manifests'
 import { firstIndex, ownedPods, ran, storyFrom, podShort } from './helpers'
 import type { Lesson, LessonCtx } from './types'
 

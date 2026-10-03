@@ -129,10 +129,10 @@ export function deploymentObject(sim: Simulation, d: Deployment): Obj {
 }
 
 export function replicaSetObject(sim: Simulation, rs: ReplicaSet): Obj {
-  const dep = sim.cluster.deployments[rs.ownerUid]
   const active = sim.activePods(rs.uid)
   const ready = active.filter((p) => p.ready).length
-  const labels = { ...rs.selector, ...(dep?.template.labels ?? {}), 'pod-template-hash': rs.hash }
+  const dep = sim.cluster.deployments[rs.ownerUid]
+  const labels = { ...rs.templateLabels, 'pod-template-hash': rs.hash }
   return {
     apiVersion: 'apps/v1',
     kind: 'ReplicaSet',

@@ -11,12 +11,17 @@ export const ownedPods = (c: ClusterState) => livePods(c).filter((p) => p.ownerU
 
 export const ran = (history: string[], re: RegExp) => history.some((h) => re.test(h.replace(/^k\s/, 'kubectl ')))
 
+export const ranServiceRequest = (history: string[], name: string) => {
+  const host = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return ran(history, new RegExp(`^kubectl\\s+run\\b.*\\s--\\s+(?:wget|curl)\\b.*https?://${host}(?::\\d+)?(?:[/\\s]|$)`))
+}
+
 export const firstIndex = (events: ClusterEvent[], pred: (e: ClusterEvent) => boolean, from = 0) => {
   for (let i = Math.max(0, from); i < events.length; i++) if (pred(events[i])) return i
   return -1
 }
 
-export const deployment = (c: ClusterState) => Object.values(c.deployments)[0]
+export const deployment = (c: ClusterState) => Object.values(c.deployments).find((d) => d.name === 'backend') ?? Object.values(c.deployments)[0]
 
 /** Build a story from an event window: pick a few reasons, in order, with a sentence each. */
 export function storyFrom(

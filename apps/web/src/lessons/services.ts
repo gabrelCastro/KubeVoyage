@@ -1,5 +1,5 @@
-import { IMAGE } from '../sim/kubectl'
-import { firstIndex, livePods, podShort, ran, storyFrom } from './helpers'
+import { IMAGE } from '../sim/manifests'
+import { firstIndex, livePods, podShort, ran, ranServiceRequest, storyFrom } from './helpers'
 import type { Lesson, LessonCtx } from './types'
 
 const deleteUnderService = (ctx: LessonCtx) => {
@@ -31,11 +31,11 @@ export const services: Lesson = {
     },
     {
       id: 'endpoints',
-      title: 'Encontre os endpoints',
-      detail: 'O Service mantém uma lista atualizada dos IPs dos Pods por trás dele. Veja essa lista — e compare com o palco.',
+      title: 'Pergunte ao Service',
+      detail: 'Veja a lista de endpoints ou faça uma requisição de dentro do cluster — e compare a resposta com o palco.',
       suggest: () => 'kubectl get endpoints backend',
-      uiHint: 'ou selecione o Service no palco',
-      done: (ctx) => ran(ctx.history, /^kubectl\s+(get\s+(ep|endpoints?|endpointslices?)|describe\s+(svc|service))\b/) || ctx.seen.some((u) => ctx.cluster.services[u]),
+      uiHint: 'ou teste com kubectl run … -- wget http://backend',
+      done: (ctx) => ranServiceRequest(ctx.history, 'backend') || ran(ctx.history, /^kubectl\s+(get\s+(ep|endpoints?|endpointslices?)|describe\s+(svc|service))\b/) || ctx.seen.some((u) => ctx.cluster.services[u]),
     },
     {
       id: 'reroute',
