@@ -10,6 +10,19 @@ const api = { target: 'http://localhost:8080', xfwd: true }
 
 export default defineConfig({
   plugins: [mdx({ remarkPlugins: [remarkGfm] }), react(), tailwindcss()],
+  build: {
+    rolldownOptions: {
+      output: {
+        // libraries change far less often than the app: separate chunks stay cached across deploys
+        codeSplitting: {
+          groups: [
+            { name: 'react', test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/ },
+            { name: 'motion', test: /node_modules[\\/](motion|motion-dom|motion-utils|framer-motion)[\\/]/ },
+          ],
+        },
+      },
+    },
+  },
   server: {
     port: 5180,
     strictPort: true,

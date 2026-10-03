@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
+import { useEffect } from 'react'
 import { BookOpen, Check, CornerDownLeft, Lightbulb } from 'lucide-react'
 import { cn } from '../lib/visual'
 import { isComplete, lessonFraction, type LessonId } from '@kubelearn/shared'
@@ -7,7 +8,7 @@ import { useProgress } from '../progress/browser'
 import { useLesson } from '../lessons/useLesson'
 import { useSim } from '../store/useSim'
 import { GlossaryText } from './GlossaryText'
-import { hasApostila, READING_MINUTES } from '../lessons/apostilas'
+import { hasApostila, preloadApostila, READING_MINUTES } from '../lessons/apostilas'
 import { useApostila } from '../lessons/apostilas/store'
 
 export function LessonPanel() {
@@ -19,6 +20,13 @@ export function LessonPanel() {
   const apostilaId = hasApostila(lesson.id) ? lesson.id : null
   const required = statuses.filter((s) => !s.optional)
   const doneCount = required.filter((s) => s.isDone).length
+
+  // fetch this lesson's apostila while the user is busy with the stage, so it opens instantly
+  useEffect(() => {
+    if (!apostilaId) return
+    const id = window.setTimeout(() => preloadApostila(apostilaId), 2500)
+    return () => clearTimeout(id)
+  }, [apostilaId])
 
   return (
     <aside data-tour="licao" className="flex min-h-0 flex-col overflow-auto lg:h-full">

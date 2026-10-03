@@ -1,4 +1,5 @@
-import { z } from 'zod'
+// zod/mini: same validation, tree-shakeable (this ships in the web bundle)
+import * as z from 'zod/mini'
 import { isLessonId, LESSON_CATALOG, objectivesOf, type LessonId } from './catalog.ts'
 
 /**
@@ -24,15 +25,15 @@ export interface Progress {
 const isoDate = z.iso.datetime({ offset: true })
 
 const LessonProgressSchema = z.object({
-  objectives: z.array(z.string().min(1).max(40)).max(32),
-  completedAt: isoDate.nullable(),
-  bestMs: z.number().int().positive().max(24 * 60 * 60 * 1000).nullable(),
+  objectives: z.array(z.string().check(z.minLength(1), z.maxLength(40))).check(z.maxLength(32)),
+  completedAt: z.nullable(isoDate),
+  bestMs: z.nullable(z.int().check(z.positive(), z.lte(24 * 60 * 60 * 1000))),
 })
 
 /** Shape check for anything that crosses a trust boundary (network, localStorage). */
 export const ProgressSchema = z.object({
-  lessons: z.record(z.string().max(40), LessonProgressSchema).refine((r) => Object.keys(r).length <= 64, 'too many lessons'),
-  last: z.object({ lessonId: z.string().max(40), at: isoDate }).nullable(),
+  lessons: z.record(z.string().check(z.maxLength(40)), LessonProgressSchema).check(z.refine((r) => Object.keys(r).length <= 64, 'too many lessons')),
+  last: z.nullable(z.object({ lessonId: z.string().check(z.maxLength(40)), at: isoDate })),
 })
 
 export const emptyProgress = (): Progress => ({ lessons: {}, last: null })

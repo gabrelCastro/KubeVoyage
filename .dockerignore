@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+**/target
+**/.jqwik-database
+**/*.log
+.git
+.github
+.env
+.env.*
+deploy/.env

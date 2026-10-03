@@ -71,9 +71,29 @@ packages/shared/    catalog.json (lesson ids) + the progress model, shared by bo
 - Signing in uploads what you did while signed out. Signing out forgets the device's copy
   (it's in the account). After syncing, an untouched lesson resumes where you left off.
 
+### Deploying
+
+`deploy/` runs the whole thing on one server with Docker: **Caddy** (serves the web app,
+proxies `/api`, gets the HTTPS certificate) → **API** → **Postgres**.
+
+```bash
+cd deploy
+cp .env.example .env     # domain, Postgres password, SMTP
+docker compose up -d --build
+```
+
+The domain's DNS must point to the server, with ports 80 and 443 open. To try the stack
+locally, set `DOMAIN=localhost`, `SMTP_HOST=mailpit`, `SMTP_PORT=1025`, the alternative
+ports in `.env.example`, and add `--profile local` (emails at http://localhost:8025).
+
+Caddy sets the security headers (strict CSP, HSTS), caches hashed assets forever and
+revalidates `index.html`. Postgres data and certificates live in named volumes — back up
+`postgres-data`. CI (`.github/workflows/ci.yml`) runs every test and builds both images.
+
 ### Production configuration
 
-Activate the `prod` profile (`SPRING_PROFILES_ACTIVE=prod`) and set:
+The compose file already does this. Running the API another way: activate the `prod`
+profile (`SPRING_PROFILES_ACTIVE=prod`, the image's default) and set:
 
 | Variable | Purpose |
 |---|---|

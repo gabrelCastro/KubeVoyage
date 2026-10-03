@@ -1,0 +1,71 @@
+# Production stack for one server: Caddy (web + TLS) → API → Postgres.
+#   cp .env.example .env   # and fill it in
+#   docker compose up -d --build
+name: kubelearn
+
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    ports:
+      - '${HTTP_PORT:-80}:80'
+      - '${HTTPS_PORT:-443}:443'
+      - '${HTTPS_PORT:-443}:443/udp'
+    volumes:
+      - caddy-data:/data # certificates: keep this volume, or Let's Encrypt rate limits will bite
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL:-https://${DOMAIN}}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/kubelearn
+      SPRING_DATASOURCE_USERNAME: kubelearn
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      SMTP_HOST: ${SMTP_HOST:?set SMTP_HOST in .env}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:?set MAIL_FROM in .env}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: kubelearn
+      POSTGRES_USER: kubelearn
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U kubelearn -d kubelearn']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Only for trying the stack locally: `docker compose --profile local up`, with SMTP_HOST=mailpit
+  mailpit:
+    image: axllent/mailpit:latest
+    profiles: [local]
+    ports:
+      - '127.0.0.1:8025:8025'
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:

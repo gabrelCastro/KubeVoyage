@@ -1,5 +1,5 @@
 import { BookOpen, Printer } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { Suspense, useEffect, useRef, type RefObject } from 'react'
 import { getLesson } from '../../lessons'
 import { APOSTILAS } from '../../lessons/apostilas'
 import { useApostila } from '../../lessons/apostilas/store'
@@ -23,15 +23,6 @@ export function ApostilaPanel() {
   const Content = lessonId ? APOSTILAS[lessonId] : null
   const lesson = lessonId ? getLesson(lessonId) : null
 
-  useEffect(() => {
-    if (!lessonId) return
-    const frame = requestAnimationFrame(() => {
-      if (anchor) scroll.current?.querySelector<HTMLElement>(`#${anchor}`)?.scrollIntoView({ block: 'start' })
-      else scroll.current?.scrollTo({ top: 0 })
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [lessonId, anchor])
-
   return (
     <Modal open={!!Content} onClose={close} label={`Apostila: ${lesson?.title ?? ''}`} className="apostila-print-root w-[min(760px,calc(100vw-2rem))] overflow-hidden">
       <header className="apostila-controls flex items-center gap-3 border-b border-line px-5 py-3.5 pr-12">
@@ -52,9 +43,39 @@ export function ApostilaPanel() {
               ))}
             </ol>
           </nav>
-          <article className="apostila-content min-w-0 px-5 py-6 sm:px-7">{Content && <Content />}</article>
+          <article className="apostila-content min-w-0 px-5 py-6 sm:px-7">
+            {Content && (
+              <Suspense fallback={<Loading />}>
+                <Content />
+                {/* mounts together with the content, so the anchor exists by the time it scrolls */}
+                <ScrollTo container={scroll} lessonId={lessonId} anchor={anchor} />
+              </Suspense>
+            )}
+          </article>
         </div>
       </div>
     </Modal>
+  )
+}
+
+function ScrollTo({ container, lessonId, anchor }: { container: RefObject<HTMLDivElement | null>; lessonId: string | null; anchor: string | null }) {
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      if (anchor) container.current?.querySelector<HTMLElement>(`#${CSS.escape(anchor)}`)?.scrollIntoView({ block: 'start' })
+      else container.current?.scrollTo({ top: 0 })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [container, lessonId, anchor])
+  return null
+}
+
+function Loading() {
+  return (
+    <div className="flex flex-col gap-3" role="status" aria-label="Carregando a apostila">
+      <div className="h-6 w-2/3 animate-pulse rounded bg-raised" />
+      <div className="h-3 w-full animate-pulse rounded bg-raised" />
+      <div className="h-3 w-5/6 animate-pulse rounded bg-raised" />
+      <div className="h-3 w-4/6 animate-pulse rounded bg-raised" />
+    </div>
   )
 }
