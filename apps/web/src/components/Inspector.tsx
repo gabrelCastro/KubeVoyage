@@ -185,7 +185,11 @@ function PodView({ pod, cluster }: { pod: Pod; cluster: ClusterState }) {
           <p className="mt-0.5 text-[11.5px] leading-relaxed text-fg-muted">
             {pod.waiting
               ? `O kubelet não consegue criar o container: o ConfigMap ${pod.configMap} não existe. Ele tenta de novo sozinho — crie o ConfigMap e o Pod segue.`
-              : meta.hint}
+              : pod.hung
+                ? pod.liveness
+                  ? 'Travou: o processo está vivo, mas não responde. A liveness probe vai falhar e o kubelet vai reiniciar o container.'
+                  : 'Travou: o processo está vivo, mas não responde. A readiness o tirou do Service — e sem liveness probe, nada vai reiniciá-lo.'
+                : meta.hint}
           </p>
         </div>
       </div>

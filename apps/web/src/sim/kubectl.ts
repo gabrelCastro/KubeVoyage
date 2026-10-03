@@ -1154,6 +1154,8 @@ function describeOne(sim: Simulation, kind: KindId, name: string): CommandResult
           ? [kv('State', `Waiting (Reason: ${p.phase === 'Error' ? 'Error' : 'CrashLoopBackOff'})`, 'error'), kv('Last State', 'Terminated (Reason: Error, Exit Code: 2)', 'error')]
           : []),
         kv('Restart Count', String(p.restarts), p.restarts ? 'warn' : undefined),
+        kv('Readiness', 'http-get http://:8080/healthz period=10s #failure=3', 'muted'),
+        kv('Liveness', p.liveness ? 'http-get http://:8080/healthz period=10s #failure=3' : '<none>', p.liveness ? 'muted' : 'warn'),
         kv('Ready', p.ready ? 'True' : 'False', p.ready ? 'success' : 'warn'),
         ...eventsFor(p.uid),
       ],

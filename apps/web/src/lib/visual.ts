@@ -29,7 +29,8 @@ export const VISUAL: Record<PodVisual, { label: string; color: string; step: num
 }
 
 /** Text shown for a Pod's state: the real phase name for crashes (Error vs CrashLoopBackOff). */
-export const podLabel = (p: Pod) => (podVisual(p) === 'crash' ? (p.waiting ?? p.phase) : VISUAL[podVisual(p)].label)
+// a frozen container is "running" to the API — say what the probes see instead
+export const podLabel = (p: Pod) => (podVisual(p) === 'crash' ? (p.waiting ?? p.phase) : p.hung && p.deletedAt === null ? 'Não responde' : VISUAL[podVisual(p)].label)
 
 export const LIFECYCLE = ['Pending', 'Creating', 'Running', 'Ready'] as const
 

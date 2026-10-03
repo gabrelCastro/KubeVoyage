@@ -1,0 +1,177 @@
+import { Callout, QuickQuestion } from '../../components/apostila/ApostilaBlocks'
+
+# Probes: vivo não é o mesmo que funcionando
+
+Esta apostila acompanha a lição 8. Na atividade, a v1.6 passou no rollout e depois foi parando, um Pod de cada vez — sem nenhum restart, sem nenhum erro no `kubectl get pods`. Aqui está como o Kubernetes descobre que um container não está bem, e o que ele faz com essa informação.
+
+<section id="o-que-voce-vai-entender">
+
+## O que você vai entender
+
+- O que são as **probes** e quem as executa.
+- A diferença entre **readiness probe** e **liveness probe** — e por que a v1.6 precisou das duas.
+- Quando usar uma **startup probe**, e o cuidado que uma liveness exige.
+
+</section>
+
+<section id="conceitos">
+
+## Conceitos
+
+<h3 id="probes">Probes</h3>
+
+Uma **probe** é um teste que o **kubelet** faz periodicamente em cada container: uma requisição HTTP, uma conexão TCP, um comando dentro do container. Se responde a tempo e com sucesso, o teste passou.
+
+```yaml
+readinessProbe:
+  httpGet: { path: /healthz, port: 8080 }
+  periodSeconds: 10      # a cada 10 s (o padrão)
+  timeoutSeconds: 1      # espera até 1 s pela resposta (o padrão)
+  failureThreshold: 3    # 3 falhas seguidas = falhou (o padrão)
+```
+
+O que o kubelet faz quando a probe falha depende de **qual** probe ela é.
+
+<h3 id="readiness-probe">Readiness probe: recebe tráfego?</h3>
+
+A **readiness probe** responde a uma pergunta: este container está pronto para atender? Se ela falha, o Pod é marcado como não pronto, e o controller de EndpointSlices tira o IP dele dos Services. O Pod continua lá, `Running` — só para de receber requisições.
+
+Foi o que a v1.6 mostrou: cada Pod que travava saía do Service, e a janela do app começava a recusar visitantes. Mas ninguém reiniciava nada. A readiness não reinicia container; ela só decide o tráfego.
+
+<h3 id="liveness-probe">Liveness probe: precisa reiniciar?</h3>
+
+A **liveness probe** responde a outra pergunta: este container ainda tem salvação? Se ela falha `failureThreshold` vezes seguidas, o kubelet **mata o container e o reinicia** (conforme a `restartPolicy` do Pod). O Pod é o mesmo, com o mesmo IP; o que muda é o contador `RESTARTS`.
+
+A documentação dá o exemplo clássico: um **deadlock**, em que o app está rodando mas não consegue avançar. É o caso da v1.6 — o processo vivo, os workers esgotados, nada respondendo. Sem liveness, um Pod assim fica travado para sempre.
+
+<h3 id="vivo-e-pronto">Uma não substitui a outra</h3>
+
+| Situação | Readiness | Liveness |
+|---|---|---|
+| App iniciando, ainda carregando | falha → fica fora do Service | não deveria falhar |
+| Sobrecarga passageira | falha → sai até se recuperar | não deveria falhar |
+| Travado de vez (deadlock) | falha → sai do Service | falha → o kubelet reinicia |
+
+Use readiness para “agora não”; liveness para “nunca mais, sem reiniciar”.
+
+<h3 id="startup-probe">Startup probe: dar tempo para iniciar</h3>
+
+Apps que demoram a iniciar sofrem com a liveness: ela pode reiniciá-los antes de terminarem de subir. A **startup probe** resolve isso: enquanto ela não passa, o Kubernetes **não executa** a liveness nem a readiness. Com `failureThreshold: 30` e `periodSeconds: 10`, o app tem até 5 minutos para iniciar — e depois disso a liveness volta a vigiar com a frequência normal.
+
+</section>
+
+<section id="no-mundo-real">
+
+## No mundo real
+
+### Os comandos da atividade
+
+```bash
+kubectl set image deployment/backend backend=ghcr.io/kubelearn/backend:1.6
+kubectl get pods                         # Running, mas READY 0/1 e RESTARTS 0
+kubectl describe pod <pod>               # Events: Readiness probe failed
+kubectl logs <pod>                       # "worker pool exhausted"
+kubectl apply -f backend-liveness.yaml   # adiciona a liveness probe
+kubectl get pods -w                      # RESTARTS sobe a cada trava
+kubectl set image deployment/backend backend=ghcr.io/kubelearn/backend:1.4
+```
+
+### O que procurar no describe
+
+```text
+Liveness:   http-get http://:8080/healthz delay=0s timeout=1s period=10s #success=1 #failure=3
+Readiness:  http-get http://:8080/healthz delay=0s timeout=1s period=10s #success=1 #failure=3
+Events:
+  Warning  Unhealthy  Readiness probe failed: ... context deadline exceeded
+  Warning  Unhealthy  Liveness probe failed: ... context deadline exceeded
+  Normal   Killing    Container backend failed liveness probe, will be restarted
+```
+
+### O endpoint de saúde
+
+Na prática, o app expõe um endpoint simples (como `/healthz`) que responde rápido e testa **o próprio processo**: “meus workers estão andando?”. Muitas equipes usam endpoints separados — um para readiness (que pode considerar dependências), outro para liveness (que não deve).
+
+<Callout title="Cuidado com a liveness que testa os outros">
+  Se a liveness probe verifica o banco de dados e o banco cai, **todos** os Pods falham na liveness ao mesmo tempo e o kubelet reinicia todos — sem resolver nada, e somando uma tempestade de restarts à queda do banco. A documentação avisa: uma liveness mal implementada pode causar falhas em cascata. Teste só o que reiniciar resolveria.
+</Callout>
+
+</section>
+
+<section id="o-que-simplificamos">
+
+## O que simplificamos
+
+- Aqui as probes só existem como `httpGet` em `/healthz`. No Kubernetes também há `tcpSocket`, `exec` (um comando dentro do container) e `grpc`.
+- O tempo entre a trava e o restart foi encurtado: no cluster real, com os padrões, são cerca de 30 segundos (3 falhas, uma a cada 10 s).
+- A v1.6 trava num intervalo previsível depois de ficar Ready. Bugs reais travam sob carga, depois de horas, ou nunca no seu ambiente de teste.
+- Reinícios por liveness aqui não acumulam back-off. No kubelet real, restarts seguidos também esperam cada vez mais, como no CrashLoopBackOff.
+
+</section>
+
+<section id="erros-comuns">
+
+## Erros comuns
+
+### Confiar só no STATUS
+
+`Running` diz que o processo existe, não que ele funciona. Olhe a coluna `READY` e os eventos do `describe`. Um Pod `Running` com `0/1` e nenhum restart é exatamente o retrato da v1.6 sem liveness.
+
+### Usar a mesma probe para tudo, sem pensar
+
+Uma liveness tão sensível quanto a readiness reinicia containers que só estavam ocupados. Prefira uma liveness mais tolerante (mais falhas, ou um teste mais simples) que só falhe quando o processo realmente não tem volta.
+
+### Achar que a liveness é a correção
+
+Ela é uma rede de proteção. Com a v1.6, o `RESTARTS` só subia: o bug continuava lá. A correção foi trocar a versão.
+
+### Desfazer a probe sem querer
+
+O `kubectl rollout undo` volta o **template inteiro** para a revisão anterior. Na atividade, isso traria de volta a v1.6 **sem** a liveness probe. Para trocar só a imagem, use `kubectl set image`.
+
+</section>
+
+<section id="teste-rapido">
+
+## Teste rápido
+
+<QuickQuestion
+  question="Um Pod está Running, READY 0/1, RESTARTS 0, e não recebe tráfego há 20 minutos. O que isso indica?"
+  options={[
+    { label: 'Que a liveness probe está reiniciando o container.', explanation: 'Se estivesse, o RESTARTS estaria subindo.' },
+    { label: 'Que a readiness falha, e não há liveness para reiniciá-lo.', correct: true, explanation: 'Correto. A readiness o tirou do Service; sem liveness, nada o reinicia.' },
+    { label: 'Que o Pod está em CrashLoopBackOff.', explanation: 'No CrashLoopBackOff o container cai e o RESTARTS sobe; aqui ele está vivo.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="O que o kubelet faz quando uma liveness probe falha 3 vezes seguidas (o padrão)?"
+  options={[
+    { label: 'Apaga o Pod, e o ReplicaSet cria outro.', explanation: 'O Pod continua o mesmo; só o container é reiniciado.' },
+    { label: 'Reinicia o container, no mesmo Pod.', correct: true, explanation: 'Correto. Mesmo Pod, mesmo IP, e o RESTARTS aumenta.' },
+    { label: 'Tira o Pod do Service até a probe voltar a passar.', explanation: 'Isso é o que a readiness faz.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="Sua liveness probe consulta o banco de dados. O banco fica fora do ar por 2 minutos. O que acontece?"
+  options={[
+    { label: 'Nada: as probes ignoram falhas de dependências.', explanation: 'A probe só sabe o que o endpoint responde. Se ele consulta o banco, falha junto.' },
+    { label: 'Todos os Pods são reiniciados, sem resolver o problema.', correct: true, explanation: 'Correto. É a falha em cascata que a documentação descreve.' },
+    { label: 'O Deployment faz rollback automático.', explanation: 'Não existe rollback automático no Deployment.' },
+  ]}
+/>
+
+</section>
+
+<section id="para-ir-alem">
+
+## Para ir além
+
+- **Readiness e rolling update** andam juntas: a lição 6 mostrou que um Pod novo só substitui um antigo quando fica Ready. Sem readiness probe, “Ready” vira apenas “o container iniciou”.
+- **Pod Disruption Budgets** e **graceful shutdown** completam o quadro de disponibilidade: um protege contra remoções voluntárias demais de uma vez; o outro deixa as requisições em andamento terminarem antes do container sair.
+- [Liveness, Readiness e Startup Probes — conceito](https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/)
+- [Configurar probes — tarefa](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)
+- [Ciclo de vida do Pod](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/)
+- [Referência da API: Probe](https://kubernetes.io/docs/reference/kubernetes-api/workload-resources/pod-v1/)
+
+</section>

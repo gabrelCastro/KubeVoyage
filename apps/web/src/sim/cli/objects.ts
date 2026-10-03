@@ -20,13 +20,14 @@ const restartAnnotation = (sim: Simulation, at?: number): Obj => (at === undefin
 
 const owner = (apiVersion: string, kind: string, name: string, uid: string): Obj => ({ apiVersion, kind, name, uid, controller: true, blockOwnerDeletion: true })
 
-const container = (image: string, name = CONTAINER, configMap?: string): Obj => ({
+const container = (image: string, name = CONTAINER, configMap?: string, liveness?: boolean): Obj => ({
   name,
   image,
   ...(configMap && { envFrom: [{ configMapRef: { name: configMap } }] }),
   imagePullPolicy: 'IfNotPresent',
   ports: [{ containerPort: CONTAINER_PORT, protocol: 'TCP' }],
   readinessProbe: { httpGet: { path: '/healthz', port: CONTAINER_PORT, scheme: 'HTTP' }, periodSeconds: 10, failureThreshold: 3 },
+  ...(liveness && { livenessProbe: { httpGet: { path: '/healthz', port: CONTAINER_PORT, scheme: 'HTTP' }, periodSeconds: 10, failureThreshold: 3 } }),
 })
 
 /** Phase as the API reports it: a crash-looping or terminating Pod is still "Running". */
@@ -60,7 +61,7 @@ export function podObject(sim: Simulation, p: Pod): Obj {
       ...(p.deletedAt !== null && { deletionTimestamp: stamp(sim, p.deletedAt + 30_000), deletionGracePeriodSeconds: 30 }),
     },
     spec: {
-      containers: [container(p.image, p.image.includes('kubelearn/backend') ? CONTAINER : p.name, p.configMap)],
+      containers: [container(p.image, p.image.includes('kubelearn/backend') ? CONTAINER : p.name, p.configMap, p.liveness)],
       ...(p.nodeName && { nodeName: p.nodeName }),
       restartPolicy: 'Always',
       terminationGracePeriodSeconds: 30,
@@ -109,7 +110,7 @@ export function deploymentObject(sim: Simulation, d: Deployment): Obj {
       progressDeadlineSeconds: 600,
       selector: { matchLabels: { ...d.selector } },
       strategy: { type: 'RollingUpdate', rollingUpdate: { maxSurge: '25%', maxUnavailable: '25%' } },
-      template: { metadata: { labels: { ...d.template.labels }, ...restartAnnotation(sim, d.template.restartedAt) }, spec: { containers: [container(d.template.image, CONTAINER, d.template.configMap)] } },
+      template: { metadata: { labels: { ...d.template.labels }, ...restartAnnotation(sim, d.template.restartedAt) }, spec: { containers: [container(d.template.image, CONTAINER, d.template.configMap, d.template.liveness)] } },
     },
     status: {
       observedGeneration: d.revision,
@@ -151,7 +152,7 @@ export function replicaSetObject(sim: Simulation, rs: ReplicaSet): Obj {
     spec: {
       replicas: rs.desired,
       selector: { matchLabels: rsSelector(rs) },
-      template: { metadata: { labels, ...restartAnnotation(sim, rs.restartedAt) }, spec: { containers: [container(rs.image, CONTAINER, rs.configMap)] } },
+      template: { metadata: { labels, ...restartAnnotation(sim, rs.restartedAt) }, spec: { containers: [container(rs.image, CONTAINER, rs.configMap, rs.liveness)] } },
     },
     status: { replicas: active.length, readyReplicas: ready, availableReplicas: ready, ...(rs.desired === 0 && { replicas: 0 }) },
   }

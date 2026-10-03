@@ -183,6 +183,26 @@ export const GLOSSARY: GlossaryEntry[] = [
     lessonId: 'configmaps',
     anchor: 'createcontainerconfigerror',
   },
+  {
+    term: 'readiness probe',
+    aliases: ['readiness'],
+    definition: 'Teste periódico do kubelet que decide se o container recebe tráfego. Falhou: o Pod sai dos Services.',
+    lessonId: 'probes',
+    anchor: 'readiness-probe',
+  },
+  {
+    term: 'liveness probe',
+    aliases: ['liveness'],
+    definition: 'Teste periódico do kubelet que decide se o container precisa ser reiniciado. Falhou várias vezes: o kubelet o reinicia.',
+    lessonId: 'probes',
+    anchor: 'liveness-probe',
+  },
+  {
+    term: 'startup probe',
+    definition: 'Segura a liveness e a readiness até o app terminar de iniciar.',
+    lessonId: 'probes',
+    anchor: 'startup-probe',
+  },
 ]
 
 export const GLOSSARY_MATCHES = GLOSSARY.flatMap((entry) => [entry.term, ...(entry.aliases ?? [])].map((alias) => ({ alias, entry }))).sort(

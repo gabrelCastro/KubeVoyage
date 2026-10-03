@@ -7,6 +7,7 @@
     "labels": { "required": ["inspect", "join", "quarantine"], "optional": ["return"] },
     "debugging": { "required": ["notice", "compare", "fix"], "optional": [] },
     "failures": { "required": ["ship", "investigate", "rollback"], "optional": [] },
-    "configmaps": { "required": ["missing", "create", "change", "restart"], "optional": [] }
+    "configmaps": { "required": ["missing", "create", "change", "restart"], "optional": [] },
+    "probes": { "required": ["ship", "notice", "liveness", "fix"], "optional": [] }
   }
 }

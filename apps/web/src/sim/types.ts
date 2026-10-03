@@ -14,6 +14,8 @@ export interface Template {
   restartedAt?: number
   /** `envFrom: configMapRef` — the ConfigMap whose keys become the container's environment. */
   configMap?: string
+  /** A liveness probe: the kubelet restarts the container when it stops answering. */
+  liveness?: boolean
 }
 
 /** Configuration kept outside the image. Containers read it as environment variables at start. */
@@ -54,6 +56,7 @@ export interface ReplicaSet {
   /** Pod labels captured by this revision's template. */
   templateLabels: Labels
   configMap?: string
+  liveness?: boolean
   revision: number
   restartedAt?: number
   desired: number
@@ -87,6 +90,10 @@ export interface Pod {
   env?: Record<string, string>
   /** Why the container can't be created yet, e.g. CreateContainerConfigError. */
   waiting?: string
+  /** Has a liveness probe (copied from the template). */
+  liveness?: boolean
+  /** The process is alive but stopped answering — probes fail. */
+  hung?: boolean
 }
 
 export interface Service {

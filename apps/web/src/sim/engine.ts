@@ -37,6 +37,9 @@ export const TIMING = {
   backoffMax: 8000,
   terminate: 900,
   configRetry: 1600,
+  hangAfter: 22000,
+  hangJitter: 8000,
+  livenessFail: 2400,
   scaleDownStagger: 220,
 } as const
 
@@ -57,6 +60,7 @@ export interface DeploymentManifest {
   image: string
   /** envFrom: configMapRef */
   configMap?: string
+  livenessProbe?: boolean
 }
 
 export interface ConfigMapManifest {
@@ -90,6 +94,9 @@ export const setBrokenImages = (images: Iterable<string>) => {
 }
 export const isBroken = (image: string) => /:1\.5$/.test(image) || brokenImages.has(image)
 
+/** v1.6 starts fine, then freezes after a while: the process stays up but stops answering. */
+export const hangs = (image: string) => /:1\.6$/.test(image)
+
 // Same alphabet Kubernetes uses for generated name suffixes (no vowels, no ambiguous chars).
 const ALPHABET = 'bcdfghjklmnpqrstvwxz2456789'
 const randomSuffix = (n: number) => Array.from({ length: n }, () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)]).join('')
@@ -110,11 +117,15 @@ const sameLabels = (a: Labels, b: Labels) => {
 }
 
 const sameTemplateData = (a: Template, b: Template) =>
-  a.image === b.image && (a.restartedAt ?? 0) === (b.restartedAt ?? 0) && (a.configMap ?? '') === (b.configMap ?? '') && sameLabels(a.labels, b.labels)
+  a.image === b.image &&
+  (a.restartedAt ?? 0) === (b.restartedAt ?? 0) &&
+  (a.configMap ?? '') === (b.configMap ?? '') &&
+  !!a.liveness === !!b.liveness &&
+  sameLabels(a.labels, b.labels)
 
 /** Does this ReplicaSet run this template? */
-export const sameTemplate = (rs: { image: string; templateLabels: Labels; restartedAt?: number; configMap?: string }, t: Template) =>
-  sameTemplateData({ image: rs.image, labels: rs.templateLabels, restartedAt: rs.restartedAt, configMap: rs.configMap }, t)
+export const sameTemplate = (rs: { image: string; templateLabels: Labels; restartedAt?: number; configMap?: string; liveness?: boolean }, t: Template) =>
+  sameTemplateData({ image: rs.image, labels: rs.templateLabels, restartedAt: rs.restartedAt, configMap: rs.configMap, liveness: rs.liveness }, t)
 
 /** The selector a ReplicaSet really uses: the Deployment's, pinned to its own template hash. */
 export const rsSelector = (rs: ReplicaSet): Labels => ({ ...rs.selector, 'pod-template-hash': rs.hash })
@@ -492,8 +503,8 @@ export class Simulation {
     }
     const existing = this.findDeployment(m.name)
     if (existing) {
-      if ((existing.template.configMap ?? '') !== (m.configMap ?? '')) {
-        this.applyTemplate(existing, { ...existing.template, image: m.image, configMap: m.configMap })
+      if ((existing.template.configMap ?? '') !== (m.configMap ?? '') || !!existing.template.liveness !== !!m.livenessProbe) {
+        this.applyTemplate(existing, { ...existing.template, image: m.image, configMap: m.configMap, liveness: m.livenessProbe })
         if (existing.replicas !== m.replicas) this.scale(m.name, m.replicas, 'apply')
         return 'configured'
       }
@@ -512,10 +523,10 @@ export class Simulation {
         name: m.name,
         replicas: m.replicas,
         selector: { ...m.labels },
-        template: { labels: { ...m.labels }, image: m.image, ...(m.configMap && { configMap: m.configMap }) },
+        template: { labels: { ...m.labels }, image: m.image, ...(m.configMap && { configMap: m.configMap }), ...(m.livenessProbe && { liveness: true }) },
         createdAt: this.now,
         revision: 1,
-        history: [{ image: m.image, labels: { ...m.labels }, ...(m.configMap && { configMap: m.configMap }) }],
+        history: [{ image: m.image, labels: { ...m.labels }, ...(m.configMap && { configMap: m.configMap }), ...(m.livenessProbe && { liveness: true }) }],
         rollout: 'complete',
       }
       this.cluster = { ...this.cluster, deployments: { ...this.cluster.deployments, [dep.uid]: dep } }
@@ -593,7 +604,7 @@ export class Simulation {
     if (sameTemplateData(previous, dep.template)) return 'skipped' as const
     this.act(() => {
       this.patchDep(dep.uid, {
-        template: { image: previous.image, labels: { ...previous.labels }, restartedAt: previous.restartedAt, configMap: previous.configMap },
+        template: { image: previous.image, labels: { ...previous.labels }, restartedAt: previous.restartedAt, configMap: previous.configMap, liveness: previous.liveness },
         revision: dep.revision + 1,
         history: [...dep.history, previous],
         rollout: dep.paused ? dep.rollout : 'progressing',
@@ -812,6 +823,40 @@ export class Simulation {
     return true
   }
 
+  /** The process stops answering. Readiness takes it out of traffic; only liveness brings it back. */
+  private hang(podUid: string) {
+    const pod = this.livePod(podUid)
+    if (!pod || pod.phase !== 'Running' || pod.hung) return
+    this.patchPod(podUid, { ready: false, hung: true })
+    this.emit('kubelet', 'warning', 'Unhealthy', `Readiness probe failed: Get "http://${pod.ip}:8080/healthz": context deadline exceeded`, this.ref(pod), 'Warning')
+    this.fx({ kind: 'ping', uid: pod.uid, tone: 'error' })
+    if (!pod.liveness) {
+      this.narrateOnce(`hang:${pod.ownerUid ?? pod.uid}`, {
+        tone: 'error',
+        title: 'Vivo, mas sem responder',
+        body: `${short(pod.name)} travou: o processo continua lá, mas não responde. A readiness probe falhou e o tirou do Service — e é só isso. Sem uma liveness probe, ninguém vai reiniciá-lo.`,
+        command: `kubectl describe pod ${pod.name}`,
+      })
+      return
+    }
+    // failureThreshold × periodSeconds later, the kubelet gives up on it
+    this.schedule(TIMING.livenessFail, `a liveness probe de ${short(pod.name)} falha 3 vezes`, () => {
+      const p = this.livePod(podUid)
+      if (!p || !p.hung) return
+      const restarts = p.restarts + 1
+      this.emit('kubelet', 'warning', 'Unhealthy', `Liveness probe failed: Get "http://${p.ip}:8080/healthz": context deadline exceeded`, this.ref(p), 'Warning')
+      this.emit('kubelet', 'delete', 'Killing', 'Container backend failed liveness probe, will be restarted', this.ref(p))
+      this.patchPod(podUid, { restarts, hung: false })
+      this.fx({ kind: 'ping', uid: p.uid, tone: 'warn' })
+      this.narrateOnce(`liveness:${p.ownerUid ?? p.uid}`, {
+        tone: 'info',
+        title: 'A liveness probe agiu',
+        body: `${short(p.name)} não respondeu à liveness probe 3 vezes seguidas. O kubelet reiniciou o container — mesmo Pod, mesmo IP, RESTARTS ${restarts}. Ele volta a atender quando a readiness passar.`,
+      })
+      this.schedule(TIMING.start, `o kubelet reinicia o container de ${short(p.name)}`, () => this.start(podUid))
+    })
+  }
+
   /** The kubelet can't build the container's environment: wait, report, try again. */
   private missingConfig(pod: Pod) {
     const first = pod.waiting !== 'CreateContainerConfigError'
@@ -843,13 +888,24 @@ export class Simulation {
         history: [...dep.history, { ...template, labels: { ...dep.template.labels } }],
         rollout: dep.paused ? dep.rollout : 'progressing',
       })
-      this.emit('you', 'user', 'TemplateChanged', `kubectl apply — envFrom configMapRef ${template.configMap ?? '(removed)'}`, this.ref(dep))
+      const livenessChanged = !!template.liveness !== !!dep.template.liveness
+      this.emit(
+        'you',
+        'user',
+        'TemplateChanged',
+        livenessChanged ? `kubectl apply — livenessProbe ${template.liveness ? 'added' : 'removed'}` : `kubectl apply — envFrom configMapRef ${template.configMap ?? '(removed)'}`,
+        this.ref(dep),
+      )
       this.narrate({
         tone: 'info',
         title: 'Template novo',
-        body: template.configMap
-          ? `Os Pods de ${dep.name} agora leem o ConfigMap ${template.configMap}. Mudar o template é uma revisão nova: o Deployment troca os Pods aos poucos.`
-          : `Os Pods de ${dep.name} deixam de ler configuração externa. É uma revisão nova do template.`,
+        body: livenessChanged
+          ? template.liveness
+            ? `Os Pods de ${dep.name} ganham uma liveness probe: se o container parar de responder, o kubelet o reinicia. Template novo, revisão nova — o Deployment troca os Pods aos poucos.`
+            : `Os Pods de ${dep.name} perdem a liveness probe. É uma revisão nova do template.`
+          : template.configMap
+            ? `Os Pods de ${dep.name} agora leem o ConfigMap ${template.configMap}. Mudar o template é uma revisão nova: o Deployment troca os Pods aos poucos.`
+            : `Os Pods de ${dep.name} deixam de ler configuração externa. É uma revisão nova do template.`,
       })
       this.schedule(TIMING.scaleNotice, 'o Deployment controller inicia o rollout', () => this.syncDeployment(dep.uid))
     })
@@ -953,6 +1009,15 @@ export class Simulation {
         ]
       return []
     }
+    if (hangs(pod.image) && pod.hung)
+      return [
+        `level=info msg="starting backend" version=${tag(pod.image)}`,
+        'level=info msg="connected to database"',
+        'level=info msg="listening" addr=:8080',
+        'level=info msg="request" method=GET path=/api/items status=200',
+        'level=warn msg="worker pool exhausted" active=64 max=64',
+        'level=warn msg="request queued" waiting=128',
+      ]
     const served = Math.max(0, Math.floor((this.now - pod.createdAt) / 1800))
     return [
       `level=info msg="starting backend" version=${tag(pod.image)}`,
@@ -1057,6 +1122,7 @@ export class Simulation {
       revision: dep.revision,
       restartedAt: dep.template.restartedAt,
       configMap: dep.template.configMap,
+      liveness: dep.template.liveness,
       desired,
       selector: { ...dep.selector },
       createdAt: this.now,
@@ -1228,6 +1294,7 @@ export class Simulation {
       deletedAt: null,
       restarts: 0,
       ...(rs.configMap && { configMap: rs.configMap }),
+      ...(rs.liveness && { liveness: true }),
     }
     this.putPod(pod)
     this.dropVacancy(rsUid, slot)
@@ -1272,8 +1339,9 @@ export class Simulation {
     this.schedule(TIMING.ready, `a readiness probe de ${short(pod.name)} passa`, () => {
       const p = this.livePod(podUid)
       if (!p) return
-      this.patchPod(podUid, { ready: true })
+      this.patchPod(podUid, { ready: true, hung: false })
       this.emit('kubelet', 'ready', 'Ready', 'Readiness probe succeeded — Pod is Ready', this.ref(p))
+      if (hangs(p.image)) this.schedule(TIMING.hangAfter + Math.random() * TIMING.hangJitter, `${short(p.name)} trava`, () => this.hang(podUid))
       if (p.ownerUid) {
         this.checkReconciled(p.ownerUid)
         this.touchDeployment(p.ownerUid)

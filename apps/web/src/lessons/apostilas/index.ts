@@ -10,6 +10,7 @@ const LOADERS: Record<ApostilaId, () => Promise<{ default: ComponentType }>> = {
   debugging: () => import('./debugging.mdx'),
   failures: () => import('./failures.mdx'),
   configmaps: () => import('./configmaps.mdx'),
+  probes: () => import('./probes.mdx'),
 }
 
 export const APOSTILAS: Record<ApostilaId, ComponentType> = {
@@ -20,6 +21,7 @@ export const APOSTILAS: Record<ApostilaId, ComponentType> = {
   debugging: lazy(LOADERS.debugging),
   failures: lazy(LOADERS.failures),
   configmaps: lazy(LOADERS.configmaps),
+  probes: lazy(LOADERS.probes),
 }
 
 /** Fetch an apostila ahead of time (the browser caches the chunk; `lazy` reuses the same import). */

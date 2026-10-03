@@ -78,6 +78,34 @@ spec:
             httpGet: { path: /healthz, port: 8080 }`,
 }
 
+// Lesson 8: a version that freezes, and the probe that notices
+FILES['backend-liveness.yaml'] = {
+  manifest: { kind: 'Deployment', name: 'backend', replicas: 3, labels: { app: 'backend' }, image: 'ghcr.io/kubelearn/backend:1.6', livenessProbe: true },
+  yaml: `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/kubelearn/backend:1.6
+          readinessProbe:            # falhou? sai do Service
+            httpGet: { path: /healthz, port: 8080 }
+          livenessProbe:             # falhou 3 vezes? o kubelet reinicia
+            httpGet: { path: /healthz, port: 8080 }
+            periodSeconds: 10
+            failureThreshold: 3`,
+}
+
 /** Kept for the first lesson and tests. */
 export const MANIFEST = { file: 'backend.yaml', manifest: FILES['backend.yaml'].manifest }
 export const MANIFEST_YAML = FILES['backend.yaml'].yaml
