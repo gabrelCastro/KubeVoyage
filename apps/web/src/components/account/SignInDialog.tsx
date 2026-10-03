@@ -152,7 +152,13 @@ function SignInFlow() {
               </button>
             </form>
 
-            <p className="mt-4 text-[11.5px] leading-relaxed text-fg-faint">Sem senha. O link funciona uma vez e expira em 10 minutos.</p>
+            <p className="mt-4 text-[11.5px] leading-relaxed text-fg-faint">
+              Sem senha. O link funciona uma vez e expira em 10 minutos. Guardamos só seu e-mail e seu progresso —{' '}
+              <a href="/privacidade" target="_blank" rel="noopener" className="underline decoration-dotted underline-offset-2 hover:text-fg-muted">
+                veja como
+              </a>
+              .
+            </p>
             {done > 0 && (
               <p className="mt-2 flex items-center gap-1.5 text-[11.5px] text-fg-muted">
                 <Check size={12} className="text-ready" /> {done === 1 ? 'A lição que você concluiu neste dispositivo vai com você.' : `As ${done} lições que você concluiu neste dispositivo vão com você.`}

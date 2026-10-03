@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { ChevronRight, FileText, Minus, MousePointerClick, Plus, ScrollText, Trash2, X } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import { isBroken, matches, rsSelector, short } from '../sim/engine'
+import { isBroken, matches, rsSelector, sameTemplate, short } from '../sim/engine'
 import type { ClusterEvent, ClusterState, Deployment, Labels, Pod, ReplicaSet, Service } from '../sim/types'
 import { cn, kindOf, podLabel, podVisual, VISUAL } from '../lib/visual'
 import { clockTime, useSim } from '../store/useSim'
@@ -459,7 +459,7 @@ function RSView({ rs, cluster }: { rs: ReplicaSet; cluster: ClusterState }) {
 
 function DeploymentView({ dep, cluster }: { dep: Deployment; cluster: ClusterState }) {
   const exec = useSim((s) => s.exec)
-  const rs = Object.values(cluster.replicaSets).find((r) => r.ownerUid === dep.uid && r.image === dep.template.image)
+  const rs = Object.values(cluster.replicaSets).find((r) => r.ownerUid === dep.uid && !r.deletedAt && sameTemplate(r, dep.template))
   const set = (n: number) => exec(`kubectl scale deployment ${dep.name} --replicas=${n}`, 'ui')
   return (
     <>
@@ -508,15 +508,28 @@ function DeploymentView({ dep, cluster }: { dep: Deployment; cluster: ClusterSta
 // ── YAML ───────────────────────────────────────────────────────────────────
 
 function Yaml({ cluster, uid }: { cluster: ClusterState; uid: string }) {
+  const setDraft = useSim((s) => s.setDraft)
   const lines = toYaml(cluster, uid)
+  const kind = cluster.pods[uid] ? 'pod' : cluster.replicaSets[uid] ? 'rs' : cluster.services[uid] ? 'svc' : 'deploy'
+  const name = (cluster.pods[uid] ?? cluster.replicaSets[uid] ?? cluster.services[uid] ?? cluster.deployments[uid])?.name
+  const command = `kubectl get ${kind} ${name} -o yaml`
   return (
-    <pre className="mt-3 overflow-x-auto rounded-lg border border-line bg-bg/60 p-3 font-mono text-[11px] leading-[1.65]">
-      {lines.map((l, i) => (
-        <div key={i} className={cn(l.hl ? 'text-accent' : 'text-fg-muted', l.hl && '-mx-3 bg-accent/[0.06] px-3')}>
-          {l.t || ' '}
-        </div>
-      ))}
-    </pre>
+    <>
+      <p className="mt-3 text-[11.5px] leading-relaxed text-fg-faint">Resumo com os campos que importam agora; os destacados mudam com o que acontece no palco.</p>
+      <pre className="mt-2 overflow-x-auto rounded-lg border border-line bg-bg/60 p-3 font-mono text-[11px] leading-[1.65]">
+        {lines.map((l, i) => (
+          <div key={i} className={cn(l.hl ? 'text-accent' : 'text-fg-muted', l.hl && '-mx-3 bg-accent/[0.06] px-3')}>
+            {l.t || ' '}
+          </div>
+        ))}
+      </pre>
+      <button
+        onClick={() => setDraft(command)}
+        className="mt-2 w-full rounded-lg border border-line px-3 py-2 text-left text-[11.5px] text-fg-muted transition hover:border-accent/40 hover:text-fg"
+      >
+        O objeto completo, como a API devolve: <code className="font-mono text-accent">{command}</code>
+      </button>
+    </>
   )
 }
 

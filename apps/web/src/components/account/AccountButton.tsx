@@ -1,6 +1,6 @@
 import { completedCount, LESSON_IDS } from '@kubelearn/shared'
 import { AnimatePresence, motion } from 'motion/react'
-import { CloudCheck, CloudOff, LogOut, RefreshCw, RotateCcw, Trash2, TriangleAlert } from 'lucide-react'
+import { CloudCheck, CloudOff, Download, LogOut, RefreshCw, RotateCcw, Trash2, TriangleAlert } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useAuth, type User } from '../../auth/auth'
 import { progressSync, useProgress } from '../../progress/browser'
@@ -160,6 +160,10 @@ function AccountMenu({ user, sync, onClose }: { user: User; sync: SyncState; onC
         <div className="mt-2 border-t border-line p-1.5">
           <MenuItem icon={LogOut} onClick={() => (onClose(), void signOut())}>
             Sair
+          </MenuItem>
+          {/* a plain navigation: the response is an attachment, so the page stays put */}
+          <MenuItem icon={Download} onClick={() => (onClose(), location.assign('/api/me/export'))}>
+            Baixar meus dados
           </MenuItem>
           <MenuItem icon={RotateCcw} onClick={() => setConfirm('reset')}>
             Reiniciar progresso…

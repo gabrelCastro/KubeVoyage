@@ -1,7 +1,8 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { CornerDownLeft, Eye, SquareTerminal } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { complete, type Line, type Tone } from '../sim/kubectl'
+import { complete, type Line, type Seg, type Tone } from '../sim/kubectl'
+import { shellHistory } from '../lib/shellHistory'
 import { cn } from '../lib/visual'
 import { useLesson } from '../lessons/useLesson'
 import { useSim, type TermEntry } from '../store/useSim'
@@ -17,16 +18,59 @@ const TONE: Record<Tone, string> = {
   strong: 'text-fg',
 }
 
+/**
+ * A resource name in the output, linked to the stage: hovering it lights the resource up,
+ * clicking selects it — and hovering the resource on the stage lights the name up here.
+ */
+function RefSeg({ seg }: { seg: Seg }) {
+  const uid = seg.ref!
+  const alive = useSim((s) => !!(s.cluster.pods[uid] ?? s.cluster.replicaSets[uid] ?? s.cluster.deployments[uid] ?? s.cluster.services[uid]))
+  const lit = useSim((s) => s.hovered === uid || s.selected === uid)
+  const { hover, select } = useSim.getState()
+  // trailing padding from table alignment stays outside the link
+  const name = seg.t.trimEnd()
+  const pad = seg.t.slice(name.length)
+  const tone = seg.c ? TONE[seg.c] : 'text-fg-muted'
+  if (!alive) return <span className={tone}>{seg.t}</span>
+  return (
+    <>
+      <button
+        type="button"
+        tabIndex={-1}
+        onMouseEnter={() => hover(uid)}
+        onMouseLeave={() => useSim.getState().hovered === uid && hover(null)}
+        onClick={(e) => {
+          e.stopPropagation()
+          select(uid)
+        }}
+        title="Mostrar no palco"
+        className={cn(
+          'cursor-pointer rounded-[3px] underline decoration-transparent decoration-dotted underline-offset-[3px] transition-colors hover:decoration-current',
+          tone,
+          lit && 'bg-accent/15 decoration-current',
+        )}
+      >
+        {name}
+      </button>
+      {pad && <span>{pad}</span>}
+    </>
+  )
+}
+
 function Output({ lines }: { lines: Line[] }) {
   return (
     <>
       {lines.map((line, i) => (
         <div key={i} className="min-h-[1.55em] whitespace-pre">
-          {line.map((s, j) => (
-            <span key={j} className={s.c ? TONE[s.c] : 'text-fg-muted'}>
-              {s.t}
-            </span>
-          ))}
+          {line.map((s, j) =>
+            s.ref ? (
+              <RefSeg key={j} seg={s} />
+            ) : (
+              <span key={j} className={s.c ? TONE[s.c] : 'text-fg-muted'}>
+                {s.t}
+              </span>
+            ),
+          )}
         </div>
       ))}
     </>
@@ -57,12 +101,13 @@ export function Terminal() {
   const watching = useSim((s) => s.watching)
   const draft = useSim((s) => s.draft)
   const { exec, stopWatch } = useSim.getState()
-  const history = useSim((s) => s.history)
   const { suggestion } = useLesson()
   const [value, setValue] = useState('')
   const [hIndex, setHIndex] = useState<number | null>(null)
   const [candidates, setCandidates] = useState<string[]>([])
   const [error, setError] = useState(0)
+  // Ctrl+R: what's being searched, and how many older matches to skip
+  const [search, setSearch] = useState<{ query: string; skip: number } | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const input = useRef<HTMLInputElement>(null)
 
@@ -74,6 +119,7 @@ export function Terminal() {
   useEffect(() => {
     if (!draft) return
     setValue(draft.text)
+    setSearch(null)
     input.current?.focus()
   }, [draft])
 
@@ -82,15 +128,62 @@ export function Terminal() {
     if (last?.input !== undefined && last.lines.some((l) => l[0]?.c === 'error')) setError((n) => n + 1)
   }, [term])
 
-  const submit = () => {
-    exec(value)
+  const found = search ? shellHistory.search(search.query, search.skip) : null
+  // fish-style: the rest of the latest command that starts with what's typed
+  const ghost = !search && value ? (shellHistory.suggest(value)?.slice(value.length) ?? '') : ''
+
+  const submit = (command: string) => {
+    shellHistory.push(command)
+    exec(command)
     setValue('')
     setHIndex(null)
     setCandidates([])
+    setSearch(null)
+  }
+
+  const onSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!search) return false
+    if (e.key === 'r' && e.ctrlKey) {
+      e.preventDefault()
+      if (shellHistory.search(search.query, search.skip + 1)) setSearch({ ...search, skip: search.skip + 1 })
+      return true
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      submit(found ?? search.query)
+      return true
+    }
+    if (e.key === 'Escape' || (e.key === 'g' && e.ctrlKey) || (e.key === 'c' && e.ctrlKey)) {
+      e.preventDefault()
+      setSearch(null)
+      setValue('')
+      return true
+    }
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Tab', 'End', 'Home'].includes(e.key)) {
+      // leave search with the match in the prompt, ready to edit
+      e.preventDefault()
+      setValue(found ?? search.query)
+      setSearch(null)
+      return true
+    }
+    return false
   }
 
   const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') return submit()
+    if (onSearchKey(e)) return
+    if (e.key === 'Enter') return submit(value)
+    if (e.key === 'r' && e.ctrlKey) {
+      e.preventDefault()
+      setSearch({ query: '', skip: 0 })
+      setCandidates([])
+      return
+    }
+    const atEnd = e.currentTarget.selectionStart === value.length
+    if ((e.key === 'ArrowRight' || e.key === 'End' || (e.key === 'e' && e.ctrlKey)) && ghost && atEnd) {
+      e.preventDefault()
+      setValue(value + ghost)
+      return
+    }
     if (e.key === 'Tab') {
       e.preventDefault()
       const r = complete(useSim.getState().sim, value)
@@ -115,6 +208,7 @@ export function Terminal() {
     }
     if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       e.preventDefault()
+      const history = shellHistory.all()
       if (!history.length) return
       const next = e.key === 'ArrowUp' ? (hIndex === null ? history.length - 1 : Math.max(0, hIndex - 1)) : hIndex === null ? null : hIndex + 1
       if (next === null || next >= history.length) {
@@ -192,21 +286,63 @@ export function Terminal() {
           animate={{ x: 0 }}
           transition={{ type: 'spring', stiffness: 700, damping: 12 }}
         >
-          <span className={cn('transition-colors', error && term[term.length - 1]?.lines.some((l) => l[0]?.c === 'error') ? 'text-terminating' : 'text-accent')}>❯</span>
-          <input
-            ref={input}
-            value={value}
-            onChange={(e) => (setValue(e.target.value), setCandidates([]))}
-            onKeyDown={onKey}
-            spellCheck={false}
-            autoComplete="off"
-            autoCapitalize="off"
-            aria-label="Comando kubectl"
-            placeholder={watching || term.length > 1 ? '' : (suggestion ?? '')}
-            className="min-w-0 flex-1 bg-transparent text-fg caret-accent outline-none placeholder:text-fg-faint/60 focus-visible:outline-none"
-            data-terminal-input
-          />
+          {search ? (
+            <span className="shrink-0 text-creating">(busca-reversa)</span>
+          ) : (
+            <span className={cn('transition-colors', error && term[term.length - 1]?.lines.some((l) => l[0]?.c === 'error') ? 'text-terminating' : 'text-accent')}>❯</span>
+          )}
+          <span className={cn('relative min-w-0', search ? 'flex-none' : 'flex-1')} style={search ? { width: `${Math.max(search.query.length, 1) + 1}ch` } : undefined}>
+            {/* the gray rest of a remembered command, drawn exactly behind the typed text */}
+            {ghost && (
+              <span aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre">
+                <span className="invisible">{value}</span>
+                <span className="text-fg-faint/70">{ghost}</span>
+              </span>
+            )}
+            <input
+              ref={input}
+              value={search ? search.query : value}
+              onChange={(e) => {
+                if (search) setSearch({ query: e.target.value, skip: 0 })
+                else setValue(e.target.value)
+                setCandidates([])
+              }}
+              onKeyDown={onKey}
+              spellCheck={false}
+              autoComplete="off"
+              autoCapitalize="off"
+              aria-label={search ? 'Buscar no histórico de comandos' : 'Comando kubectl'}
+              placeholder={search ? 'digite parte de um comando' : watching || term.length > 1 ? '' : (suggestion ?? '')}
+              className="relative w-full bg-transparent text-fg caret-accent outline-none placeholder:text-fg-faint/60 focus-visible:outline-none"
+              data-terminal-input
+            />
+          </span>
+          {!search && value.trim() && !value.trim().startsWith('explicar') && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                // explains without running, and keeps the command in the prompt
+                exec(`explicar ${value.trim()}`)
+                input.current?.focus()
+              }}
+              title="Explicar este comando, parte por parte, sem executar"
+              className="shrink-0 rounded border border-line-strong px-1.5 font-sans text-[10.5px] text-fg-faint transition hover:border-accent/50 hover:text-fg"
+            >
+              ? explicar
+            </button>
+          )}
+          {search && (
+            <span className={cn('min-w-0 flex-1 truncate', found ? 'text-fg-muted' : 'text-terminating')}>
+              {found ? `→ ${found}` : search.query ? 'nada encontrado' : ''}
+            </span>
+          )}
         </motion.label>
+        {(search || ghost) && (
+          <div className="-mt-2 pb-2 font-sans text-[10.5px] text-fg-faint">
+            {search ? 'Enter executa · Ctrl+R mais antigo · → edita · Esc cancela' : '→ aceita a sugestão do histórico'}
+          </div>
+        )}
       </div>
     </section>
   )

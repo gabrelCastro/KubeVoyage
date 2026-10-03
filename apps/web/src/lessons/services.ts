@@ -35,7 +35,7 @@ export const services: Lesson = {
       detail: 'O Service mantém uma lista atualizada dos IPs dos Pods por trás dele. Veja essa lista — e compare com o palco.',
       suggest: () => 'kubectl get endpoints backend',
       uiHint: 'ou selecione o Service no palco',
-      done: (ctx) => ran(ctx.history, /^kubectl\s+(get\s+(ep|endpoints?)|describe\s+(svc|service))\b/) || ctx.seen.some((u) => ctx.cluster.services[u]),
+      done: (ctx) => ran(ctx.history, /^kubectl\s+(get\s+(ep|endpoints?|endpointslices?)|describe\s+(svc|service))\b/) || ctx.seen.some((u) => ctx.cluster.services[u]),
     },
     {
       id: 'reroute',

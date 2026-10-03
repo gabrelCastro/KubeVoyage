@@ -8,6 +8,9 @@ services:
     build:
       context: ..
       dockerfile: apps/web/Dockerfile
+      args:
+        OPERATOR_NAME: ${OPERATOR_NAME:?set OPERATOR_NAME in .env}
+        CONTACT_EMAIL: ${CONTACT_EMAIL:?set CONTACT_EMAIL in .env}
     restart: unless-stopped
     environment:
       DOMAIN: ${DOMAIN:?set DOMAIN in .env}
@@ -57,6 +60,26 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # A compressed dump every day, kept BACKUP_KEEP_DAYS days in ./backups (see the README to restore).
+  # The privacy page promises deleted accounts leave backups within 14 days: keep the two in sync.
+  backup:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    entrypoint: ['/bin/sh', '/backup.sh']
+    environment:
+      PGHOST: postgres
+      PGDATABASE: kubelearn
+      PGUSER: kubelearn
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      BACKUP_KEEP_DAYS: 14
+      BACKUP_EVERY_SECONDS: ${BACKUP_EVERY_SECONDS:-86400}
+    volumes:
+      - ./backup.sh:/backup.sh:ro
+      - ./backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   # Only for trying the stack locally: `docker compose --profile local up`, with SMTP_HOST=mailpit
   mailpit:

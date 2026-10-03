@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getLesson } from '../../lessons'
-import { matches, NO_OWNER } from '../../sim/engine'
+import { matches, NO_OWNER, sameTemplate } from '../../sim/engine'
 import { computeLayout, edgePath, relatedTo, spring, type Layout } from '../../lib/visual'
 import { useSim } from '../../store/useSim'
 import { Edges, type EdgeModel } from './Edges'
@@ -195,7 +195,8 @@ export function Stage() {
                   rs={rs}
                   geo={b}
                   compact={b.compact}
-                  current={!dep || dep.template.image === rs.image}
+                  current={!dep || sameTemplate(rs, dep.template)}
+                  deleting={!!rs.deletedAt}
                   actual={active.length}
                   ready={active.filter((p) => p.ready).length}
                   dim={dimmed(rs.uid)}

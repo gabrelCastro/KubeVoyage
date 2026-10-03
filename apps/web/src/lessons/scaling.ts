@@ -36,7 +36,7 @@ export const scaling: Lesson = {
       title: 'Agora diga isso em kubectl',
       detail: 'O que você acabou de fazer é um único comando. Use-o para reduzir para 2 e veja quais Pods são escolhidos para sair.',
       suggest: () => 'kubectl scale deployment backend --replicas=2',
-      done: (ctx) => ran(ctx.history, /^kubectl\s+scale\b.*--replicas=2\b/) && settledAt(ctx, (n) => n === 2),
+      done: (ctx) => ran(ctx.history, /^kubectl\s+scale\b.*--replicas[=\s]2\b/) && settledAt(ctx, (n) => n === 2),
     },
     {
       id: 'zero',

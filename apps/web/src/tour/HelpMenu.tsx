@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { BookOpen, CircleHelp, Keyboard, PlayCircle } from 'lucide-react'
+import { BookOpen, CircleHelp, Keyboard, PlayCircle, ShieldCheck } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { create } from 'zustand'
 import { Kbd, MOD, Tooltip } from '../components/primitives'
@@ -38,6 +38,7 @@ export function HelpMenu() {
     { icon: PlayCircle, label: 'Rever o tutorial', run: startTour },
     { icon: Keyboard, label: 'Atalhos de teclado', keys: '?', run: () => setShortcuts(true) },
     ...(hasApostila(lessonId) ? [{ icon: BookOpen, label: 'Abrir a apostila desta lição', run: () => openApostila(lessonId) }] : []),
+    { icon: ShieldCheck, label: 'Privacidade', run: () => window.open('/privacidade', '_blank', 'noopener') },
   ]
 
   return (

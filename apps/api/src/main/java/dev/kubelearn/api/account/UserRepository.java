@@ -63,6 +63,27 @@ public class UserRepository {
 		return user;
 	}
 
+	public record Identity(String provider, String subject, OffsetDateTime linkedAt) {
+	}
+
+	public record Activity(OffsetDateTime createdAt, OffsetDateTime lastLoginAt) {
+	}
+
+	/** Everything stored about how this account signs in, for the data export. */
+	public List<Identity> identities(UUID userId) {
+		return jdbc.sql("SELECT provider, subject, created_at FROM user_identity WHERE user_id = ? ORDER BY provider")
+			.param(userId)
+			.query((rs, i) -> new Identity(rs.getString(1), rs.getString(2), rs.getObject(3, OffsetDateTime.class)))
+			.list();
+	}
+
+	public Optional<Activity> activity(UUID userId) {
+		return jdbc.sql("SELECT created_at, last_login_at FROM app_user WHERE id = ?")
+			.param(userId)
+			.query((rs, i) -> new Activity(rs.getObject(1, OffsetDateTime.class), rs.getObject(2, OffsetDateTime.class)))
+			.optional();
+	}
+
 	public List<String> providers(UUID userId) {
 		return jdbc.sql("SELECT provider FROM user_identity WHERE user_id = ? ORDER BY provider")
 			.param(userId)

@@ -96,10 +96,17 @@ export const DeploymentNode = memo(function DeploymentNode({ dep, geo, ...e }: {
   const select = useSim((s) => s.select)
   return (
     <Positioned {...geo}>
-      <Card emphasis={e} tint="var(--color-deploy)" onClick={() => select(dep.uid)} label={`Deployment ${dep.name}`} className="px-3.5 py-2.5">
-        <div className="flex items-center justify-between">
+      <Card emphasis={e} tint="var(--color-deploy)" onClick={() => select(dep.uid)} label={`Deployment ${dep.name}${dep.paused ? ', pausado' : ''}`} className="px-3.5 py-2.5">
+        <div className="flex items-center justify-between gap-2">
           <KindBadge kind="Deployment" />
-          <LabelChip k="app" v={dep.selector.app} />
+          <span className="flex items-center gap-1.5">
+            {dep.paused && (
+              <span className="rounded-full border border-warn/35 bg-warn/10 px-1.5 py-[1px] text-[10px] font-medium text-warn" title="kubectl rollout resume para continuar">
+                Pausado
+              </span>
+            )}
+            <LabelChip k="app" v={dep.selector.app} />
+          </span>
         </div>
         <div className="mt-1.5 flex items-baseline justify-between">
           <span className="text-[17px] font-semibold tracking-tight">{dep.name}</span>
@@ -154,8 +161,9 @@ export const ReplicaSetNode = memo(function ReplicaSetNode({
   ready,
   compact,
   current,
+  deleting,
   ...e
-}: { rs: ReplicaSet; geo: Geo; actual: number; ready: number; compact?: boolean; current: boolean } & Emphasis) {
+}: { rs: ReplicaSet; geo: Geo; actual: number; ready: number; compact?: boolean; current: boolean; deleting?: boolean } & Emphasis) {
   const select = useSim((s) => s.select)
   const diverged = actual !== rs.desired
   const broken = isBroken(rs.image)
@@ -185,10 +193,20 @@ export const ReplicaSetNode = memo(function ReplicaSetNode({
   }
   return (
     <Positioned {...geo}>
-      <Card emphasis={e} tint="var(--color-rs)" onClick={() => select(rs.uid)} label={`ReplicaSet ${rs.name}`} className="overflow-hidden px-3.5 py-2.5">
+      <Card
+        emphasis={e}
+        tint="var(--color-rs)"
+        onClick={() => select(rs.uid)}
+        label={`ReplicaSet ${rs.name}${deleting ? ', sendo excluído' : ''}`}
+        className={cn('overflow-hidden px-3.5 py-2.5 transition-opacity', deleting && 'opacity-60')}
+      >
         <div className="flex items-center justify-between">
           <KindBadge kind="ReplicaSet" />
-          <PhasePill phase={rs.phase} />
+          {deleting ? (
+            <span className="rounded-full bg-terminating/10 px-1.5 py-0.5 text-[10px] font-medium text-terminating">Excluindo</span>
+          ) : (
+            <PhasePill phase={rs.phase} />
+          )}
         </div>
         <div className="mt-1 flex items-center justify-between gap-2">
           <span className="truncate font-mono text-[12.5px] text-fg">

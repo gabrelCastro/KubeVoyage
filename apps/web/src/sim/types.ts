@@ -6,18 +6,27 @@ export type ResourceKind = 'Deployment' | 'ReplicaSet' | 'Pod' | 'Service' | 'No
 
 export type RolloutState = 'complete' | 'progressing' | 'stalled'
 
+/** What makes one revision of a Pod template different from another. */
+export interface Template {
+  image: string
+  /** `kubectl rollout restart` stamps the template: same image, new revision. */
+  restartedAt?: number
+}
+
 export interface Deployment {
   kind: 'Deployment'
   uid: string
   name: string
   replicas: number
   selector: Labels
-  template: { labels: Labels; image: string }
+  template: Template & { labels: Labels }
   createdAt: number
   revision: number
-  /** Image of every revision, oldest first — what `rollout undo` walks back through. */
-  history: string[]
+  /** Every revision's template, oldest first — what `rollout undo` walks back through. */
+  history: Template[]
   rollout: RolloutState
+  /** `kubectl rollout pause`: template changes wait until `resume`. */
+  paused?: boolean
 }
 
 /** Controller loop state, exposed so the UI can show *when* Kubernetes is thinking. */
@@ -31,11 +40,14 @@ export interface ReplicaSet {
   hash: string
   image: string
   revision: number
+  restartedAt?: number
   desired: number
   /** The Deployment's selector. The effective selector also includes `pod-template-hash`. */
   selector: Labels
   createdAt: number
   phase: ControllerPhase
+  /** Set when the ReplicaSet is being deleted: its Pods are going away, then it is removed. */
+  deletedAt?: number | null
 }
 
 export interface Pod {
@@ -96,6 +108,7 @@ export type EventSource =
   | 'cluster'
   | 'deployment-controller'
   | 'replicaset-controller'
+  | 'garbage-collector'
   | 'endpoints-controller'
   | 'default-scheduler'
   | 'kubelet'

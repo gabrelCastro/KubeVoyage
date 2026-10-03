@@ -54,7 +54,7 @@ class SecurityConfig {
 			throws Exception {
 		http.securityContext((c) -> c.securityContextRepository(contexts))
 			.csrf((c) -> c.spa().csrfTokenRepository(csrf))
-			.authorizeHttpRequests((a) -> a.requestMatchers("/api/auth/**", "/api/health/**")
+			.authorizeHttpRequests((a) -> a.requestMatchers("/api/auth/**", "/api/health/**", "/api/client-errors")
 				.permitAll()
 				.requestMatchers("/api/**")
 				.authenticated()

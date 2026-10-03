@@ -12,6 +12,7 @@ import type {
   ReplicaSet,
   ResourceKind,
   Service,
+  Template,
 } from './types'
 
 /**
@@ -72,6 +73,9 @@ export interface Setup {
 
 /** Images that crash on start. Version 1.5 "forgot" a required environment variable. */
 export const isBroken = (image: string) => /:1\.5$/.test(image)
+
+/** Does this ReplicaSet run this template? (Same image and, after a restart, the same stamp.) */
+export const sameTemplate = (rs: { image: string; restartedAt?: number }, t: Template) => rs.image === t.image && (rs.restartedAt ?? 0) === (t.restartedAt ?? 0)
 
 // Same alphabet Kubernetes uses for generated name suffixes (no vowels, no ambiguous chars).
 const ALPHABET = 'bcdfghjklmnpqrstvwxz2456789'
@@ -237,16 +241,17 @@ export class Simulation {
     return this.podsOf(rsUid).filter((p) => p.deletedAt === null)
   }
 
+  /** The Deployment's ReplicaSets — not counting ones already being deleted. */
   replicaSetsOf(dep: Deployment) {
     return Object.values(this.cluster.replicaSets)
-      .filter((rs) => rs.ownerUid === dep.uid)
+      .filter((rs) => rs.ownerUid === dep.uid && !rs.deletedAt)
       .sort((a, b) => a.createdAt - b.createdAt)
   }
 
   /** The ReplicaSet running the Deployment's current template. */
   replicaSetOf(dep: Deployment) {
     const all = this.replicaSetsOf(dep)
-    return all.filter((rs) => rs.image === dep.template.image).at(-1) ?? all.at(-1)
+    return all.filter((rs) => sameTemplate(rs, dep.template)).at(-1) ?? all.at(-1)
   }
 
   deploymentPods(dep: Deployment) {
@@ -330,7 +335,7 @@ export class Simulation {
         template: { labels: { ...d.labels }, image: d.image },
         createdAt: born,
         revision: 1,
-        history: [d.image],
+        history: [{ image: d.image }],
         rollout: 'complete',
       }
       const hash = randomHash()
@@ -439,7 +444,7 @@ export class Simulation {
         template: { labels: { ...m.labels }, image: m.image },
         createdAt: this.now,
         revision: 1,
-        history: [m.image],
+        history: [{ image: m.image }],
         rollout: 'complete',
       }
       this.cluster = { ...this.cluster, deployments: { ...this.cluster.deployments, [dep.uid]: dep } }
@@ -486,8 +491,8 @@ export class Simulation {
       this.patchDep(dep.uid, {
         template: { ...dep.template, image },
         revision: dep.revision + 1,
-        history: [...dep.history, image],
-        rollout: 'progressing',
+        history: [...dep.history, { image, restartedAt: dep.template.restartedAt }],
+        rollout: dep.paused ? dep.rollout : 'progressing',
       })
       this.emit('you', 'user', 'ImageChanged', `${via === 'apply' ? 'kubectl apply' : 'kubectl set image'} — ${tag(from)} → ${tag(image)}`, this.ref(dep))
       this.narrate({
@@ -500,27 +505,69 @@ export class Simulation {
     return 'updated' as const
   }
 
-  rolloutUndo(name: string) {
+  /** `kubectl rollout undo [--to-revision=N]`. Revisions are 1-based positions in `history`. */
+  rolloutUndo(name: string, toRevision?: number) {
     const dep = this.findDeployment(name)
     if (!dep) return 'notfound' as const
-    const previous = dep.history.length > 1 ? dep.history[dep.history.length - 2] : undefined
-    if (!previous || previous === dep.template.image) return 'nohistory' as const
+    if (toRevision !== undefined && !dep.history[toRevision - 1]) return 'norevision' as const
+    const previous = toRevision !== undefined ? dep.history[toRevision - 1] : dep.history.length > 1 ? dep.history[dep.history.length - 2] : undefined
+    if (!previous) return 'nohistory' as const
+    if (previous.image === dep.template.image && (previous.restartedAt ?? 0) === (dep.template.restartedAt ?? 0)) return 'skipped' as const
     this.act(() => {
       this.patchDep(dep.uid, {
-        template: { ...dep.template, image: previous },
+        template: { ...dep.template, image: previous.image, restartedAt: previous.restartedAt },
         revision: dep.revision + 1,
         history: [...dep.history, previous],
-        rollout: 'progressing',
+        rollout: dep.paused ? dep.rollout : 'progressing',
       })
-      this.emit('you', 'user', 'RolledBack', `kubectl rollout undo — back to ${tag(previous)}`, this.ref(dep))
+      this.emit('you', 'user', 'RolledBack', `kubectl rollout undo${toRevision !== undefined ? ` --to-revision=${toRevision}` : ''} — back to ${tag(previous.image)}`, this.ref(dep))
       this.narrate({
         tone: 'info',
         title: 'Fazendo rollback',
-        body: `O template volta para ${tag(previous)}. O ReplicaSet antigo ainda existe, então o Deployment só precisa escalá-lo de volta e escalar o quebrado para zero.`,
+        body: `O template volta para ${tag(previous.image)}. O ReplicaSet antigo ainda existe, então o Deployment só precisa escalá-lo de volta e escalar o atual para zero.`,
       })
       this.schedule(TIMING.scaleNotice, 'o Deployment controller inicia o rollback', () => this.syncDeployment(dep.uid))
     })
     return 'rolledback' as const
+  }
+
+  /** `kubectl rollout restart`: a new template stamp, so every Pod is replaced — gradually. */
+  rolloutRestart(name: string) {
+    const dep = this.findDeployment(name)
+    if (!dep) return 'notfound' as const
+    if (dep.paused) return 'paused' as const
+    this.act(() => {
+      const template = { ...dep.template, restartedAt: this.now }
+      this.patchDep(dep.uid, { template, revision: dep.revision + 1, history: [...dep.history, { image: template.image, restartedAt: template.restartedAt }], rollout: 'progressing' })
+      this.emit('you', 'user', 'Restarted', `kubectl rollout restart deployment/${dep.name}`, this.ref(dep))
+      this.narrate({
+        tone: 'info',
+        title: 'Reiniciando sem derrubar nada',
+        body: 'Mesma imagem, mas o template ganhou a annotation restartedAt — para o Deployment, é uma revisão nova. Ele troca os Pods aos poucos, como em qualquer rolling update.',
+      })
+      this.schedule(TIMING.scaleNotice, 'o Deployment controller inicia o rollout', () => this.syncDeployment(dep.uid))
+    })
+    return 'restarted' as const
+  }
+
+  /** `kubectl rollout pause|resume`. While paused, template changes are recorded but not rolled out. */
+  setPaused(name: string, paused: boolean) {
+    const dep = this.findDeployment(name)
+    if (!dep) return 'notfound' as const
+    if (!!dep.paused === paused) return 'unchanged' as const
+    this.act(() => {
+      // resuming with a template that no ReplicaSet runs yet: that's a rollout starting
+      const pending = !paused && !this.replicaSetsOf(dep).some((rs) => sameTemplate(rs, dep.template))
+      this.patchDep(dep.uid, { paused, ...(pending && { rollout: 'progressing' as const }) })
+      this.emit('you', 'user', paused ? 'Paused' : 'Resumed', `kubectl rollout ${paused ? 'pause' : 'resume'} deployment/${dep.name}`, this.ref(dep))
+      this.narrate(
+        paused
+          ? { tone: 'info', title: 'Deployment pausado', body: 'Mudanças no template (como set image) ficam registradas, mas nenhum ReplicaSet novo é criado até o resume. Dá para acumular várias mudanças num rollout só.' }
+          : { tone: 'info', title: 'Deployment retomado', body: 'Se o template mudou durante a pausa, o rollout começa agora — com todas as mudanças de uma vez.' },
+      )
+      if (!paused) this.schedule(TIMING.scaleNotice, 'o Deployment controller retoma o rollout', () => this.syncDeployment(dep.uid))
+    })
+    return 'updated' as const
   }
 
   deletePod(name: string) {
@@ -605,12 +652,119 @@ export class Simulation {
     return true
   }
 
-  /** Simulated container output. Broken images explain themselves — if you think to look. */
-  logs(name: string): string[] | null {
+  /** `kubectl run`: a Pod with no owner. Nothing will replace it if it goes away. */
+  runPod(name: string, image: string, labels: Labels) {
+    if (this.findPod(name)) return 'exists' as const
+    this.act(() => {
+      const pod: Pod = {
+        kind: 'Pod',
+        uid: `pod-${++this.seq}`,
+        name,
+        ownerUid: null,
+        labels: { ...labels },
+        image,
+        phase: 'Pending',
+        ready: false,
+        nodeName: null,
+        ip: null,
+        slot: this.freeSlot(NO_OWNER),
+        createdAt: this.now,
+        deletedAt: null,
+        restarts: 0,
+      }
+      this.putPod(pod)
+      this.emit('you', 'user', 'Created', `kubectl run ${name} --image=${image}`, this.ref(pod))
+      this.fx({ kind: 'ping', uid: pod.uid, tone: 'info' })
+      this.narrate({
+        tone: 'info',
+        title: 'Um Pod avulso',
+        body: `${name} não tem ReplicaSet nem Deployment por trás. Ele roda igual aos outros — mas, se for apagado, nada o recria.`,
+      })
+      this.schedule(TIMING.schedule, `o scheduler escolhe um node para ${name}`, () => this.bind(pod.uid))
+      // a ReplicaSet whose selector matches these labels would adopt it
+      for (const rs of Object.values(this.cluster.replicaSets)) this.kick(rs.uid)
+    })
+    return 'created' as const
+  }
+
+  /** `kubectl delete deployment`: gone at once; the garbage collector then removes what it owned. */
+  deleteDeployment(name: string) {
+    const dep = this.findDeployment(name)
+    if (!dep) return false
+    this.act(() => {
+      const owned = Object.values(this.cluster.replicaSets).filter((rs) => rs.ownerUid === dep.uid)
+      const { [dep.uid]: _gone, ...rest } = this.cluster.deployments
+      this.cluster = { ...this.cluster, deployments: rest }
+      this.emit('you', 'user', 'Deleted', `kubectl delete deployment ${dep.name}`, this.ref(dep))
+      this.narrate({
+        tone: 'warn',
+        title: 'Exclusão em cascata',
+        body: `O Deployment some na hora. Seus ${owned.length === 1 ? 'ReplicaSet ficou' : `${owned.length} ReplicaSets ficaram`} sem dono vivo — o garbage collector percebe e apaga ${owned.length === 1 ? 'ele' : 'eles'}, e com ${owned.length === 1 ? 'ele' : 'eles'} os Pods.`,
+      })
+      this.schedule(TIMING.controllerNotice, 'o garbage collector apaga os dependentes', () => {
+        for (const rs of owned) if (this.cluster.replicaSets[rs.uid]) this.collectReplicaSet(rs.uid, `owner deployment/${dep.name} is gone`)
+      })
+    })
+    return true
+  }
+
+  /** `kubectl delete rs`: its Pods go with it — and an owning Deployment notices and makes a new one. */
+  deleteReplicaSet(name: string) {
+    const rs = Object.values(this.cluster.replicaSets).find((r) => r.name === name && !r.deletedAt)
+    if (!rs) return false
+    this.act(() => {
+      const dep = this.cluster.deployments[rs.ownerUid]
+      this.emit('you', 'user', 'Deleted', `kubectl delete replicaset ${rs.name}`, this.ref(rs))
+      this.collectReplicaSet(rs.uid, 'deleted with kubectl')
+      if (dep) {
+        this.narrate({
+          tone: 'warn',
+          title: 'O Deployment vai perceber',
+          body: `Os Pods de ${rs.name} saem junto com ele. Mas o Deployment ainda existe e quer ${dep.replicas} réplicas: ele cria um ReplicaSet novo para o mesmo template.`,
+        })
+        this.schedule(TIMING.controllerNotice, 'o Deployment controller nota que falta um ReplicaSet', () => this.syncDeployment(dep.uid))
+      }
+    })
+    return true
+  }
+
+  /** The garbage collector at work: mark the ReplicaSet deleted and end its Pods; it disappears when empty. */
+  private collectReplicaSet(rsUid: string, why: string) {
+    const rs = this.cluster.replicaSets[rsUid]
+    if (!rs || rs.deletedAt) return
+    this.patchRS(rsUid, { deletedAt: this.now, phase: 'idle' })
+    this.cluster = { ...this.cluster, vacancies: this.cluster.vacancies.filter((v) => v.ownerUid !== rsUid) }
+    delete this.inflight[rsUid]
+    this.emit('garbage-collector', 'delete', 'GarbageCollecting', `Deleting replica set ${rs.name}: ${why}`, this.ref(rs))
+    this.fx({ kind: 'ping', uid: rs.uid, tone: 'warn' })
+    const pods = this.activePods(rsUid)
+    if (!pods.length && !this.podsOf(rsUid).length) return this.removeReplicaSet(rsUid)
+    pods.forEach((pod, i) =>
+      this.schedule(TIMING.scaleDownStagger * (i + 1), `o garbage collector apaga ${short(pod.name)}`, () => {
+        const live = this.livePod(pod.uid)
+        if (live) this.terminate(live, 'gc')
+      }),
+    )
+  }
+
+  private removeReplicaSet(rsUid: string) {
+    const rs = this.cluster.replicaSets[rsUid]
+    if (!rs) return
+    const { [rsUid]: _gone, ...rest } = this.cluster.replicaSets
+    this.cluster = { ...this.cluster, replicaSets: rest, vacancies: this.cluster.vacancies.filter((v) => v.ownerUid !== rsUid) }
+    this.emit('garbage-collector', 'delete', 'GarbageCollected', `Replica set ${rs.name} removed: no Pods left`, this.ref(rs))
+  }
+
+  /**
+   * Simulated container output. Broken images explain themselves — if you think to look.
+   * `previous` is the container instance before the last restart (`kubectl logs --previous`).
+   */
+  logs(name: string, previous = false): string[] | 'noprevious' | null {
     const pod = this.findPod(name)
     if (!pod) return null
+    if (previous && pod.restarts === 0) return 'noprevious'
     if (isBroken(pod.image)) {
-      if (pod.phase === 'Pending' || pod.phase === 'ContainerCreating') return []
+      if (!previous && (pod.phase === 'Pending' || pod.phase === 'ContainerCreating')) return []
       return [
         `level=info msg="starting backend" version=${tag(pod.image)}`,
         'level=info msg="loading configuration"',
@@ -623,6 +777,14 @@ export class Simulation {
       ]
     }
     if (pod.phase === 'Pending' || pod.phase === 'ContainerCreating') return []
+    if (!pod.image.includes('kubelearn/backend')) {
+      if (/nginx/.test(pod.image))
+        return [
+          '/docker-entrypoint.sh: Configuration complete; ready for start up',
+          `${new Date(Date.now() - (this.now - pod.createdAt)).toISOString().slice(0, 19).replace('T', ' ')} [notice] 1#1: start worker processes`,
+        ]
+      return []
+    }
     const served = Math.max(0, Math.floor((this.now - pod.createdAt) / 1800))
     return [
       `level=info msg="starting backend" version=${tag(pod.image)}`,
@@ -647,7 +809,13 @@ export class Simulation {
     const dep = this.cluster.deployments[depUid]
     if (!dep) return
     const all = this.replicaSetsOf(dep)
-    let current = all.filter((rs) => rs.image === dep.template.image).at(-1)
+    if (dep.paused) {
+      // paused: no new ReplicaSet and no rollout progress — only plain scaling still applies
+      const live = all.filter((rs) => rs.desired > 0)
+      if (live.length === 1 && live[0].desired !== dep.replicas) this.scaleRS(live[0], dep.replicas)
+      return
+    }
+    let current = all.filter((rs) => sameTemplate(rs, dep.template)).at(-1)
     if (!current) {
       current = this.createReplicaSet(dep, all.length ? 0 : dep.replicas)
       if (!all.length) return
@@ -693,7 +861,7 @@ export class Simulation {
     const dep = this.cluster.deployments[depUid]
     if (!dep || dep.rollout === 'complete') return
     const all = this.replicaSetsOf(dep)
-    const current = all.find((rs) => rs.image === dep.template.image)
+    const current = all.find((rs) => sameTemplate(rs, dep.template))
     // done only when old revisions are not just scaled to 0, but actually empty
     if (!current || all.some((rs) => rs.uid !== current.uid && (rs.desired > 0 || this.podsOf(rs.uid).length > 0))) return
     const active = this.activePods(current.uid)
@@ -718,6 +886,7 @@ export class Simulation {
       hash,
       image: dep.template.image,
       revision: dep.revision,
+      restartedAt: dep.template.restartedAt,
       desired,
       selector: { ...dep.selector },
       createdAt: this.now,
@@ -772,7 +941,8 @@ export class Simulation {
 
   private syncReplicaSet(rsUid: string) {
     const rs = this.cluster.replicaSets[rsUid]
-    if (!rs) return
+    // a ReplicaSet being deleted no longer reconciles: its Pods are on their way out
+    if (!rs || rs.deletedAt) return
     for (const orphan of this.adoptable(rs)) this.adopt(rs, orphan)
     const active = this.activePods(rsUid)
     const inflight = this.inflight[rsUid] ?? 0
@@ -950,7 +1120,7 @@ export class Simulation {
 
     const rs = pod.ownerUid ? this.cluster.replicaSets[pod.ownerUid] : undefined
     const dep = rs && this.cluster.deployments[rs.ownerUid]
-    if (dep && rs && rs.image === dep.template.image && dep.rollout === 'progressing') {
+    if (dep && rs && sameTemplate(rs, dep.template) && dep.rollout === 'progressing') {
       this.patchDep(dep.uid, { rollout: 'stalled' })
       const oldReady = this.replicaSetsOf(dep)
         .filter((r) => r.uid !== rs.uid)
@@ -958,7 +1128,7 @@ export class Simulation {
       this.narrateOnce(`stall:${dep.uid}:${dep.revision}`, {
         tone: 'error',
         title: 'Rollout travado',
-        body: `O Pod novo nunca fica Ready, então o Deployment não derruba nenhum Pod antigo. ${oldReady} Pod${oldReady === 1 ? '' : 's'} na ${tag(dep.history[dep.history.length - 2] ?? '')} ${oldReady === 1 ? 'continua' : 'continuam'} atendendo — ninguém ficou fora do ar.`,
+        body: `O Pod novo nunca fica Ready, então o Deployment não derruba nenhum Pod antigo. ${oldReady} Pod${oldReady === 1 ? '' : 's'} na ${tag(dep.history[dep.history.length - 2]?.image ?? '')} ${oldReady === 1 ? 'continua' : 'continuam'} atendendo — ninguém ficou fora do ar.`,
         command: `kubectl rollout status deployment/${dep.name}`,
       })
     }
@@ -979,7 +1149,7 @@ export class Simulation {
     this.touchDeployment(pod.ownerUid)
   }
 
-  private terminate(pod: Pod, by: 'you' | 'controller') {
+  private terminate(pod: Pod, by: 'you' | 'controller' | 'gc') {
     this.patchPod(pod.uid, { phase: 'Terminating', ready: false, deletedAt: this.now })
     this.emit('kubelet', 'delete', 'Killing', 'Stopping container backend', this.ref(pod))
     this.fx({ kind: 'ping', uid: pod.uid, tone: 'warn' })
@@ -1013,14 +1183,16 @@ export class Simulation {
       }
       this.emit('kubelet', 'delete', 'Removed', `Pod ${pod.name} removed from the API server`, this.ref(current))
       if (!owner) this.compact(NO_OWNER)
-      else {
+      else if (owner.deletedAt) {
+        if (!this.podsOf(owner.uid).length) this.removeReplicaSet(owner.uid)
+      } else {
         if (by === 'controller') this.compact(owner.uid)
         this.checkReconciled(owner.uid)
         this.touchDeployment(owner.uid)
       }
     })
 
-    if (rs) this.kick(rs.uid)
+    if (rs && !rs.deletedAt) this.kick(rs.uid)
   }
 
   private checkReconciled(rsUid: string) {

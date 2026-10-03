@@ -7,7 +7,10 @@ import java.util.UUID;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.logout.CookieClearingLogoutHandler;
@@ -21,6 +24,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import dev.kubelearn.api.auth.SessionUser;
 import dev.kubelearn.api.common.ApiException;
+import dev.kubelearn.api.progress.Progress;
+import dev.kubelearn.api.progress.ProgressRepository;
 
 @RestController
 @RequestMapping("/api/me")
@@ -29,12 +34,19 @@ public class AccountController {
 	public record Me(UUID id, String email, String name, String avatarUrl, List<String> providers, Instant createdAt) {
 	}
 
+	/** Everything the service stores about one person (LGPD art. 18: access and portability). */
+	public record Export(Instant exportedAt, Me account, UserRepository.Activity activity, List<UserRepository.Identity> identities, Progress progress) {
+	}
+
 	private final UserRepository users;
+
+	private final ProgressRepository progress;
 
 	private final FindByIndexNameSessionRepository<? extends Session> sessions;
 
-	AccountController(UserRepository users, FindByIndexNameSessionRepository<? extends Session> sessions) {
+	AccountController(UserRepository users, ProgressRepository progress, FindByIndexNameSessionRepository<? extends Session> sessions) {
 		this.users = users;
+		this.progress = progress;
 		this.sessions = sessions;
 	}
 
@@ -43,6 +55,15 @@ public class AccountController {
 		return users.findById(user.id())
 			.map(this::describe)
 			.orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "account_gone", "Esta conta não existe mais."));
+	}
+
+	@GetMapping("/export")
+	ResponseEntity<Export> export(@AuthenticationPrincipal SessionUser user) {
+		var me = me(user);
+		var activity = users.activity(user.id()).orElseThrow();
+		var body = new Export(Instant.now(), me, activity, users.identities(user.id()), progress.load(user.id()));
+		var file = ContentDisposition.attachment().filename("kubelearn-meus-dados.json").build();
+		return ResponseEntity.ok().header(HttpHeaders.CONTENT_DISPOSITION, file.toString()).body(body);
 	}
 
 	/** Deletes the account and everything in it, and signs it out everywhere. */

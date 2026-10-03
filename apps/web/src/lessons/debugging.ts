@@ -27,7 +27,7 @@ export const debugging: Lesson = {
       detail: 'As requisições para o Service backend estão falhando. Para onde o Service acha que deveria mandá-las?',
       suggest: () => 'kubectl describe service backend',
       uiHint: 'ou selecione o Service no palco',
-      done: (ctx) => ran(ctx.history, /^kubectl\s+(describe\s+(svc|service)|get\s+(ep|endpoints?|svc|services?))\b/) || ctx.seen.some((u) => ctx.cluster.services[u]),
+      done: (ctx) => ran(ctx.history, /^kubectl\s+(describe\s+(svc|service)|get\s+(ep|endpoints?|endpointslices?|svc|services?))\b/) || ctx.seen.some((u) => ctx.cluster.services[u]),
     },
     {
       id: 'compare',
@@ -35,7 +35,7 @@ export const debugging: Lesson = {
       detail: 'Os Pods estão Running e Ready. Que labels eles realmente têm?',
       suggest: () => 'kubectl get pods --show-labels',
       uiHint: 'ou selecione um dos Pods',
-      done: (ctx) => ran(ctx.history, /--show-labels|describe\s+pods?\b/) || ctx.seen.some((u) => ctx.cluster.pods[u]),
+      done: (ctx) => ran(ctx.history, /--show-labels|\s-L\s|--label-columns|describe\s+pods?\b/) || ctx.seen.some((u) => ctx.cluster.pods[u]),
     },
     {
       id: 'fix',

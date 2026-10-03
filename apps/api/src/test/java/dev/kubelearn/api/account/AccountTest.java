@@ -41,4 +41,26 @@ class AccountTest extends ApiTest {
 		assertThat(fresh.get("/api/progress").json().get("lessons").size()).isZero();
 	}
 
+	@Test
+	void theExportHasEverythingStoredAboutTheAccount() {
+		var email = uniqueEmail();
+		var d = signedIn(email);
+		d.put("/api/progress", "{\"lessons\":{\"scaling\":{\"objectives\":[\"drag\"],\"completedAt\":null,\"bestMs\":null}},\"last\":null}");
+
+		var res = d.get("/api/me/export");
+
+		assertThat(res.status()).isEqualTo(200);
+		assertThat(res.headers().firstValue("Content-Disposition")).hasValueSatisfying((v) -> assertThat(v).contains("attachment", "kubelearn-meus-dados.json"));
+		var json = res.json();
+		assertThat(json.get("account").get("email").asString()).isEqualTo(email);
+		assertThat(json.get("activity").get("lastLoginAt").isNull()).isFalse();
+		assertThat(json.get("identities").get(0).get("provider").asString()).isEqualTo("email");
+		assertThat(json.get("progress").get("lessons").get("scaling").get("objectives").get(0).asString()).isEqualTo("drag");
+	}
+
+	@Test
+	void theExportNeedsASignedInAccount() {
+		assertThat(device().get("/api/me/export").status()).isEqualTo(401);
+	}
+
 }

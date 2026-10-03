@@ -10,7 +10,10 @@ COPY apps/web/package.json apps/web/
 RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
 COPY packages/shared packages/shared
 COPY apps/web apps/web
-RUN npm run build -w @kubelearn/web
+# shown on /privacidade
+ARG OPERATOR_NAME
+ARG CONTACT_EMAIL
+RUN VITE_OPERATOR_NAME="$OPERATOR_NAME" VITE_CONTACT_EMAIL="$CONTACT_EMAIL" npm run build -w @kubelearn/web
 
 FROM caddy:2-alpine
 COPY deploy/Caddyfile /etc/caddy/Caddyfile

@@ -87,8 +87,25 @@ locally, set `DOMAIN=localhost`, `SMTP_HOST=mailpit`, `SMTP_PORT=1025`, the alte
 ports in `.env.example`, and add `--profile local` (emails at http://localhost:8025).
 
 Caddy sets the security headers (strict CSP, HSTS), caches hashed assets forever and
-revalidates `index.html`. Postgres data and certificates live in named volumes — back up
-`postgres-data`. CI (`.github/workflows/ci.yml`) runs every test and builds both images.
+revalidates `index.html`. CI (`.github/workflows/ci.yml`) runs every test and builds both images.
+
+**Backups.** The `backup` service dumps Postgres at start and every 24h into `deploy/backups/`,
+deleting dumps older than 14 days (the privacy page promises that window — change both
+together). That folder is on the same disk as the database: copy it off the server too
+(e.g. `restic` or `rclone` to object storage, with the same retention). To restore:
+
+```bash
+docker compose exec -T postgres pg_restore -U kubelearn -d kubelearn --clean --if-exists \
+  --single-transaction < backups/kubelearn-<date>.dump
+```
+
+**Errors and uptime.** Browser errors are posted to `/api/client-errors` and written to the
+API log, with no IP or account: `docker compose logs api | grep client-error`. Point an
+uptime monitor (UptimeRobot, Better Stack, …) at `https://$DOMAIN/api/health`.
+
+**Privacy.** `/privacidade` describes exactly what is stored; `OPERATOR_NAME` and
+`CONTACT_EMAIL` fill in who answers for it. Signed-in users can download everything about
+them (`GET /api/me/export`) or delete it. When storage changes, update that page.
 
 ### Production configuration
 

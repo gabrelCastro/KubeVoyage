@@ -31,7 +31,7 @@ export const labels: Lesson = {
       detail: 'Selecione o Service. Cada Pod mostra a label que decide se ele combina com app=backend.',
       uiHint: 'ou liste as labels no terminal',
       suggest: () => 'kubectl get pods --show-labels',
-      done: (ctx) => ctx.seen.some((u) => ctx.cluster.services[u]) || ran(ctx.history, /--show-labels/),
+      done: (ctx) => ctx.seen.some((u) => ctx.cluster.services[u]) || ran(ctx.history, /--show-labels|\s-L\s|--label-columns/),
     },
     {
       id: 'join',

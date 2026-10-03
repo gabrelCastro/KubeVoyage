@@ -92,10 +92,16 @@ export function computeLayout(c: ClusterState): Layout {
   const regions: Region[] = []
   let cursor = PAD_X
 
-  for (const dep of Object.values(c.deployments)) {
-    const rss = Object.values(c.replicaSets)
-      .filter((r) => r.ownerUid === dep.uid)
-      .sort((a, b) => a.createdAt - b.createdAt)
+  // Deployments with their ReplicaSets — plus ReplicaSets whose Deployment was just deleted,
+  // which stay on stage (without a parent) while the garbage collector empties them.
+  const groups: { dep: (typeof c.deployments)[string] | null; rss: (typeof c.replicaSets)[string][] }[] = [
+    ...Object.values(c.deployments).map((dep) => ({ dep, rss: Object.values(c.replicaSets).filter((r) => r.ownerUid === dep.uid) })),
+    ...Object.values(c.replicaSets)
+      .filter((r) => !c.deployments[r.ownerUid])
+      .map((rs) => ({ dep: null, rss: [rs] })),
+  ]
+  for (const { dep, rss: unsorted } of groups) {
+    const rss = unsorted.sort((a, b) => a.createdAt - b.createdAt)
     const start = cursor
     if (!rss.length) cursor += SIZE.Deployment.w
     rss.forEach((rs, i) => {
@@ -118,7 +124,7 @@ export function computeLayout(c: ClusterState): Layout {
       for (const p of pods) boxes[p.uid] = { uid: p.uid, kind: 'Pod', x: rowLeft + p.slot * SLOT_W + SLOT_W / 2, y: ROW.Pod, ...SIZE.Pod }
       cursor += groupW
     })
-    boxes[dep.uid] = { uid: dep.uid, kind: 'Deployment', x: (start + cursor) / 2, y: ROW.Deployment, ...SIZE.Deployment }
+    if (dep) boxes[dep.uid] = { uid: dep.uid, kind: 'Deployment', x: (start + cursor) / 2, y: ROW.Deployment, ...SIZE.Deployment }
     cursor += DEPLOY_GAP
   }
 

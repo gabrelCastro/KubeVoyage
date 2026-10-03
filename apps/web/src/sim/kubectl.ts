@@ -1,8 +1,27 @@
-import { isBroken, labelString, matches, rsSelector, short, tag, type Manifest, type Simulation } from './engine'
-import type { Labels, Pod } from './types'
+import { parseArgs, parseSelector, selects, suggest, TAKES_VALUE, tokenize, type Flags, type Parsed, type Requirement } from './cli/args'
+import {
+  apiPhase,
+  deploymentObject,
+  endpointSliceObject,
+  endpointsObject,
+  listObject,
+  nodeObject,
+  podObject,
+  readPath,
+  replicaSetObject,
+  serviceObject,
+  sliceName,
+  toJson,
+  toYaml,
+  type Obj,
+} from './cli/objects'
+import { pipe } from './cli/pipe'
+import { isBroken, labelString, rsSelector, short, tag, type Manifest, type Simulation } from './engine'
+import type { ClusterEvent, Deployment, Labels, Pod, ReplicaSet, Service, WorkerNode } from './types'
 
 export type Tone = 'muted' | 'error' | 'success' | 'warn' | 'accent' | 'info' | 'strong'
-export type Seg = { t: string; c?: Tone }
+/** `ref`: uid of the resource this text names — the terminal links it to the stage. */
+export type Seg = { t: string; c?: Tone; ref?: string }
 export type Line = Seg[]
 
 export interface CommandResult {
@@ -86,7 +105,7 @@ const statusTone = (p: Pod): Tone =>
 
 export function podRow(sim: Simulation, p: Pod, wide = false, labels = false): Seg[] {
   const row: Seg[] = [
-    { t: p.name, c: 'strong' },
+    { t: p.name, c: 'strong', ref: p.uid },
     { t: p.ready ? '1/1' : '0/1' },
     { t: p.phase, c: statusTone(p) },
     { t: String(p.restarts), c: p.restarts ? 'warn' : undefined },
@@ -104,7 +123,10 @@ export function podHeader(wide = false, labels = false) {
   return h
 }
 
-/** "app=backend,tier=api" / "app=backend tier=api" → Labels; `key-` means "remove". */
+
+const note = (t: string): Line => plain(`# ${t}`, 'muted')
+
+/** "app=backend,tier=api" / "app=backend tier=api" → label changes; `key-` means "remove". */
 function parseLabels(parts: string[]): Record<string, string | null> | null {
   const out: Record<string, string | null> = {}
   for (const part of parts.flatMap((p) => p.split(','))) {
@@ -119,78 +141,445 @@ function parseLabels(parts: string[]): Record<string, string | null> | null {
   return out
 }
 
-const parseSelector = (s: string): Labels => (parseLabels([s]) ?? {}) as Labels
+// ── resource kinds ─────────────────────────────────────────────────────────
 
-type Kind = 'pods' | 'deployments' | 'replicasets' | 'services' | 'endpoints' | 'events' | 'nodes' | 'all'
-const KIND_ALIASES: Record<string, Kind> = {
+type KindId = 'pods' | 'deployments' | 'replicasets' | 'services' | 'endpoints' | 'endpointslices' | 'events' | 'nodes'
+
+const KIND_ALIASES: Record<string, KindId | 'all'> = {
   po: 'pods', pod: 'pods', pods: 'pods',
-  deploy: 'deployments', deployment: 'deployments', deployments: 'deployments', 'deployment.apps': 'deployments',
-  rs: 'replicasets', replicaset: 'replicasets', replicasets: 'replicasets',
+  deploy: 'deployments', deployment: 'deployments', deployments: 'deployments', 'deployment.apps': 'deployments', 'deployments.apps': 'deployments',
+  rs: 'replicasets', replicaset: 'replicasets', replicasets: 'replicasets', 'replicaset.apps': 'replicasets', 'replicasets.apps': 'replicasets',
   svc: 'services', service: 'services', services: 'services',
   ep: 'endpoints', endpoint: 'endpoints', endpoints: 'endpoints',
+  endpointslice: 'endpointslices', endpointslices: 'endpointslices', 'endpointslice.discovery.k8s.io': 'endpointslices', 'endpointslices.discovery.k8s.io': 'endpointslices',
   ev: 'events', event: 'events', events: 'events',
   no: 'nodes', node: 'nodes', nodes: 'nodes',
   all: 'all',
 }
 
-interface Parsed {
-  args: string[]
-  flags: Record<string, string | true>
+/** Real kinds this cluster doesn't simulate: say so instead of "no such type". */
+const UNSIMULATED_KINDS = ['configmaps', 'cm', 'secrets', 'secret', 'namespaces', 'ns', 'ingress', 'ingresses', 'ing', 'statefulsets', 'sts', 'daemonsets', 'ds', 'jobs', 'job', 'cronjobs', 'cj', 'persistentvolumeclaims', 'pvc', 'persistentvolumes', 'pv', 'hpa', 'horizontalpodautoscalers', 'serviceaccounts', 'sa', 'configmap', 'namespace']
+
+type Item = { name: string; uid?: string }
+
+interface Spec<T extends Item> {
+  /** As used in API errors: `pods "x" not found`. */
+  resource: string
+  /** As printed in `-o name` and multi-kind tables. */
+  prefix: string
+  namespaced: boolean
+  items(sim: Simulation): T[]
+  labels(sim: Simulation, t: T): Labels
+  object(sim: Simulation, t: T): Obj
+  header(wide: boolean): string[]
+  row(sim: Simulation, t: T, wide: boolean): Seg[]
+  /** `--field-selector` fields besides metadata.name. */
+  fields?: Record<string, (t: T) => string>
 }
 
-function parseArgs(tokens: string[]): Parsed {
-  const args: string[] = []
-  const flags: Record<string, string | true> = {}
-  for (let i = 0; i < tokens.length; i++) {
-    const t = tokens[i]
-    if (t.startsWith('--')) {
-      const [k, ...v] = t.slice(2).split('=')
-      flags[k] = v.length ? v.join('=') : true
-    } else if (t.startsWith('-') && t.length > 1 && !/^-\d/.test(t)) {
-      const k = t.slice(1)
-      const next = tokens[i + 1]
-      if (['o', 'l', 'f', 'n', 'p'].includes(k) && next !== undefined) {
-        flags[k] = next
-        i++
-      } else flags[k] = true
-    } else args.push(t)
+const ipList = (ips: string[]) => (ips.length > 3 ? `${ips.slice(0, 3).join(',')} + ${ips.length - 3} more...` : ips.join(','))
+
+const SPECS: { [K in KindId]: Spec<any> } = {
+  pods: {
+    resource: 'pods',
+    prefix: 'pod',
+    namespaced: true,
+    items: (sim) => Object.values(sim.cluster.pods).sort((a, b) => a.createdAt - b.createdAt),
+    labels: (_sim, p: Pod) => p.labels,
+    object: (sim, p: Pod) => podObject(sim, p),
+    header: (wide) => podHeader(wide),
+    row: (sim, p: Pod, wide) => podRow(sim, p, wide),
+    fields: { 'status.phase': (p: Pod) => apiPhase(p), 'spec.nodeName': (p: Pod) => p.nodeName ?? '', 'spec.restartPolicy': () => 'Always' },
+  } satisfies Spec<Pod>,
+  deployments: {
+    resource: 'deployments.apps',
+    prefix: 'deployment.apps',
+    namespaced: true,
+    items: (sim) => Object.values(sim.cluster.deployments).sort((a, b) => a.createdAt - b.createdAt),
+    // the manifests in this cluster set labels on the Pod template, not on the Deployment itself
+    labels: () => ({}),
+    object: (sim, d: Deployment) => deploymentObject(sim, d),
+    header: (wide) => ['NAME', 'READY', 'UP-TO-DATE', 'AVAILABLE', 'AGE', ...(wide ? ['CONTAINERS', 'IMAGES', 'SELECTOR'] : [])],
+    row: (sim, d: Deployment, wide) => {
+      const all = sim.deploymentPods(d).filter((p) => p.deletedAt === null)
+      const current = sim.replicaSetOf(d)
+      const updated = current ? sim.activePods(current.uid).length : 0
+      const ready = all.filter((p) => p.ready).length
+      return [
+        { t: d.name, c: 'strong' },
+        { t: `${ready}/${d.replicas}`, c: ready === d.replicas ? 'success' : 'warn' },
+        { t: String(updated) },
+        { t: String(ready) },
+        { t: age(sim.now - d.createdAt) },
+        ...(wide ? [{ t: 'backend' }, { t: d.template.image, c: isBroken(d.template.image) ? ('error' as Tone) : undefined }, { t: labelString(d.selector), c: 'accent' as Tone }] : []),
+      ]
+    },
+  } satisfies Spec<Deployment>,
+  replicasets: {
+    resource: 'replicasets.apps',
+    prefix: 'replicaset.apps',
+    namespaced: true,
+    items: (sim) => Object.values(sim.cluster.replicaSets).sort((a, b) => a.createdAt - b.createdAt),
+    labels: (sim, rs: ReplicaSet) => ({ ...rs.selector, ...(sim.cluster.deployments[rs.ownerUid]?.template.labels ?? {}), 'pod-template-hash': rs.hash }),
+    object: (sim, rs: ReplicaSet) => replicaSetObject(sim, rs),
+    header: (wide) => ['NAME', 'DESIRED', 'CURRENT', 'READY', 'AGE', ...(wide ? ['CONTAINERS', 'IMAGES', 'SELECTOR'] : [])],
+    row: (sim, rs: ReplicaSet, wide) => {
+      const active = sim.activePods(rs.uid)
+      const ready = active.filter((p) => p.ready).length
+      return [
+        { t: rs.name, c: 'strong' },
+        { t: String(rs.desired) },
+        { t: String(active.length), c: active.length === rs.desired ? undefined : 'warn' },
+        { t: String(ready), c: ready === rs.desired ? 'success' : 'warn' },
+        { t: age(sim.now - rs.createdAt) },
+        ...(wide ? [{ t: 'backend' }, { t: rs.image, c: isBroken(rs.image) ? ('error' as Tone) : undefined }, { t: labelString(rsSelector(rs)), c: 'accent' as Tone }] : []),
+      ]
+    },
+  } satisfies Spec<ReplicaSet>,
+  services: {
+    resource: 'services',
+    prefix: 'service',
+    namespaced: true,
+    items: (sim) => Object.values(sim.cluster.services).sort((a, b) => a.createdAt - b.createdAt),
+    labels: () => ({}),
+    object: (sim, s: Service) => serviceObject(sim, s),
+    header: (wide) => ['NAME', 'TYPE', 'CLUSTER-IP', 'EXTERNAL-IP', 'PORT(S)', 'AGE', ...(wide ? ['SELECTOR'] : [])],
+    row: (sim, s: Service, wide) => [
+      { t: s.name, c: 'strong' },
+      { t: 'ClusterIP' },
+      { t: s.clusterIP },
+      { t: '<none>', c: 'muted' },
+      { t: `${s.port}/TCP` },
+      { t: age(sim.now - s.createdAt) },
+      ...(wide ? [{ t: labelString(s.selector), c: 'accent' as Tone }] : []),
+    ],
+  } satisfies Spec<Service>,
+  endpoints: {
+    resource: 'endpoints',
+    prefix: 'endpoints',
+    namespaced: true,
+    items: (sim) => Object.values(sim.cluster.services).sort((a, b) => a.createdAt - b.createdAt),
+    labels: () => ({}),
+    object: (sim, s: Service) => endpointsObject(sim, s),
+    header: () => ['NAME', 'ENDPOINTS', 'AGE'],
+    row: (sim, s: Service) => {
+      const ips = s.endpoints.map((uid) => `${sim.cluster.pods[uid]?.ip}:${s.targetPort}`)
+      return [
+        { t: s.name, c: 'strong' },
+        { t: ips.length ? ipList(ips) : '<none>', c: ips.length ? 'success' : 'error' },
+        { t: age(sim.now - s.createdAt) },
+      ]
+    },
+  } satisfies Spec<Service>,
+  endpointslices: {
+    resource: 'endpointslices.discovery.k8s.io',
+    prefix: 'endpointslice.discovery.k8s.io',
+    namespaced: true,
+    items: (sim) => Object.values(sim.cluster.services).map((s) => ({ ...s, svcName: s.name, name: sliceName(s) })),
+    labels: (_sim, s: Service & { svcName: string }) => ({ 'kubernetes.io/service-name': s.svcName, 'endpointslice.kubernetes.io/managed-by': 'endpointslice-controller.k8s.io' }),
+    object: (sim, s: Service & { svcName: string }) => endpointSliceObject(sim, { ...s, name: s.svcName }),
+    header: () => ['NAME', 'ADDRESSTYPE', 'PORTS', 'ENDPOINTS', 'AGE'],
+    row: (sim, s: Service) => {
+      const ips = s.endpoints.map((uid) => sim.cluster.pods[uid]?.ip ?? '')
+      return [
+        { t: s.name, c: 'strong' },
+        { t: 'IPv4' },
+        { t: String(s.targetPort) },
+        { t: ips.length ? ipList(ips) : '<unset>', c: ips.length ? 'success' : 'error' },
+        { t: age(sim.now - s.createdAt) },
+      ]
+    },
+  } satisfies Spec<Service & { svcName: string }>,
+  events: {
+    resource: 'events',
+    prefix: 'event',
+    namespaced: true,
+    items: (sim) => sim.events.filter((e) => e.source !== 'you' && e.source !== 'cluster').slice(-14).map((e) => ({ ...e, name: `${e.involved.name}.${(e.id * 7919).toString(16).padStart(8, '0')}` })),
+    labels: () => ({}),
+    object: (sim, e: ClusterEvent & { name: string }) => ({
+      apiVersion: 'v1',
+      kind: 'Event',
+      metadata: { name: e.name, namespace: 'default' },
+      type: e.type,
+      reason: e.reason,
+      message: e.message,
+      source: { component: e.source },
+      involvedObject: { kind: e.involved.kind, name: e.involved.name, uid: e.involved.uid, namespace: 'default' },
+      lastTimestamp: new Date(Date.now() - (sim.now - e.at)).toISOString().replace(/\.\d+Z$/, 'Z'),
+    }),
+    header: () => ['LAST SEEN', 'TYPE', 'REASON', 'OBJECT', 'MESSAGE'],
+    row: (sim, e: ClusterEvent) => [
+      { t: age(sim.now - e.at) },
+      { t: e.type, c: e.type === 'Warning' ? 'warn' : 'muted' },
+      { t: e.reason, c: 'accent' },
+      { t: `${e.involved.kind.toLowerCase()}/${e.involved.name}`, ref: e.involved.uid },
+      { t: e.message, c: 'muted' },
+    ],
+  } satisfies Spec<ClusterEvent & { name: string }>,
+  nodes: {
+    resource: 'nodes',
+    prefix: 'node',
+    namespaced: false,
+    items: (sim) => sim.cluster.nodes,
+    labels: (_sim, n: WorkerNode) => ({ 'kubernetes.io/hostname': n.name, 'kubernetes.io/os': 'linux' }),
+    object: (_sim, n: WorkerNode) => nodeObject(n),
+    header: (wide) => ['NAME', 'STATUS', 'ROLES', 'AGE', 'VERSION', ...(wide ? ['INTERNAL-IP', 'OS-IMAGE', 'CONTAINER-RUNTIME'] : [])],
+    row: (_sim, n: WorkerNode, wide) => [
+      { t: n.name, c: 'strong' },
+      { t: 'Ready', c: 'success' },
+      { t: '<none>', c: 'muted' },
+      { t: '42d' },
+      { t: 'v1.34.1' },
+      ...(wide ? [{ t: `192.168.49.${n.name.replace(/\D/g, '') || '2'}` }, { t: 'Ubuntu 24.04 LTS' }, { t: 'containerd://2.1.4' }] : []),
+    ],
+  } satisfies Spec<WorkerNode>,
+}
+
+const ALL: KindId[] = ['pods', 'services', 'deployments', 'replicasets']
+
+function resolveKind(raw: string): KindId[] | { error: Line[] } {
+  const out: KindId[] = []
+  for (const part of raw.split(',')) {
+    const k = KIND_ALIASES[part.toLowerCase()]
+    if (k === 'all') out.push(...ALL)
+    else if (k) out.push(k)
+    else if (UNSIMULATED_KINDS.includes(part.toLowerCase()))
+      return { error: [plain(`"${part}" existe no Kubernetes real, mas este cluster de treino só simula Pods, Deployments, ReplicaSets, Services, EndpointSlices, Events e Nodes.`, 'warn')] }
+    else {
+      const guess = suggest(part, Object.keys(KIND_ALIASES).filter((a) => !a.includes('.')))[0]
+      return { error: [plain(`error: the server doesn't have a resource type "${part}"`, 'error'), ...(guess ? [note(`você quis dizer "${guess}"?`)] : [])] }
+    }
   }
-  return { args, flags }
+  return [...new Set(out)]
 }
 
-/** "pod/foo" → ["pod", ["foo"]]; "pods foo bar" → ["pods", ["foo", "bar"]] */
-function splitKind(args: string[]): [string | undefined, string[]] {
-  if (!args[0]) return [undefined, []]
+/** `get pods a b`, `get pod/a svc/b`, `get po,svc` → groups of (kind, names). */
+function targets(args: string[]): { kind: KindId; names: string[] }[] | { error: Line[] } {
+  if (!args.length) return { error: [plain('error: You must specify the type of resource to get. Use "kubectl api-resources" for a complete list of supported resources.', 'error')] }
   if (args[0].includes('/')) {
-    const [kind, name] = args[0].split('/')
-    return [kind, [name, ...args.slice(1)]]
+    const groups: { kind: KindId; names: string[] }[] = []
+    for (const a of args) {
+      const [rawKind, name] = a.split('/')
+      if (!name) return { error: [plain(`error: arguments in resource/name form must have a single resource and name`, 'error')] }
+      const kinds = resolveKind(rawKind)
+      if ('error' in kinds) return kinds
+      if (kinds.length !== 1) return { error: [plain('error: arguments in resource/name form must have a single resource and name', 'error')] }
+      const g = groups.find((x) => x.kind === kinds[0])
+      if (g) g.names.push(name)
+      else groups.push({ kind: kinds[0], names: [name] })
+    }
+    return groups
   }
-  return [args[0], args.slice(1)]
+  if (args.slice(1).some((a) => a.includes('/'))) return { error: [plain('error: there is no need to specify a resource type as a separate argument when passing arguments in resource/name form', 'error')] }
+  const kinds = resolveKind(args[0])
+  if ('error' in kinds) return kinds
+  if (kinds.length > 1 && args.length > 1) return { error: [plain('error: you must specify only one resource type when passing resource names', 'error')] }
+  return kinds.map((kind) => ({ kind, names: args.slice(1) }))
+}
+
+// ── flags ──────────────────────────────────────────────────────────────────
+
+const GLOBAL_FLAGS = ['n', 'h', 'help']
+const VERB_FLAGS: Record<string, string[]> = {
+  apply: ['f'],
+  get: ['o', 'l', 'w', 'L', 'A', 'show-labels', 'sort-by', 'field-selector', 'no-headers', 'ignore-not-found'],
+  describe: ['l', 'A'],
+  delete: ['l', 'grace-period', 'force', 'now', 'wait', 'ignore-not-found'],
+  scale: ['replicas'],
+  expose: ['port', 'target-port', 'name', 'type'],
+  label: ['overwrite', 'list'],
+  set: [],
+  rollout: ['to-revision', 'w'],
+  logs: ['p', 'follow', 'tail', 'c', 'l'],
+  run: ['image', 'labels', 'restart', 'rm', 'i', 't', 'it', 'port'],
+}
+
+/** Real kubectl flags this playground doesn't simulate: refuse rather than half-do the command. */
+const REAL_ONLY = new Set([
+  'dry-run', 'record', 'context', 'kubeconfig', 'cluster', 'user', 'server', 's', 'token', 'v', 'request-timeout', 'server-side', 'force-conflicts', 'save-config', 'validate',
+  'field-manager', 'all', 'cascade', 'raw', 'chunk-size', 'output-watch-events', 'watch-only', 'all-containers', 'since', 'since-time', 'limit-bytes', 'prefix', 'timestamps',
+  'max-log-requests', 'current-replicas', 'resource-version', 'revision', 'R', 'recursive', 'k', 'kustomize', 'subresource', 'show-kind', 'template', 'selector-overwrite',
+])
+
+function checkFlags(verb: string, p: Parsed): Line[] | null {
+  const allowed = new Set([...GLOBAL_FLAGS, ...(VERB_FLAGS[verb] ?? [])])
+  for (const key of Object.keys(p.flags)) {
+    const typed = p.spelled[key] ?? `--${key}`
+    if (allowed.has(key)) {
+      if (TAKES_VALUE.has(key) && p.flags[key] === true)
+        return [plain(typed.startsWith('--') ? `error: flag needs an argument: ${typed}` : `error: flag needs an argument: '${key}' in ${typed}`, 'error')]
+      continue
+    }
+    if (REAL_ONLY.has(key)) return [plain(`A flag ${typed} existe no kubectl real, mas não é simulada aqui — o comando não foi executado.`, 'warn')]
+    return [
+      plain(typed.startsWith('--') ? `error: unknown flag: ${typed}` : `error: unknown shorthand flag: '${key[0]}' in ${typed}`, 'error'),
+      plain(`See 'kubectl ${verb} --help' for usage.`, 'muted'),
+    ]
+  }
+  return null
+}
+
+// ── verbs ──────────────────────────────────────────────────────────────────
+
+const VERBS = ['apply', 'get', 'describe', 'delete', 'scale', 'expose', 'label', 'set', 'rollout', 'logs', 'run']
+
+/** Real verbs that aren't simulated (yet): what they do, so the learner isn't told they don't exist. */
+const UNSIMULATED_VERBS: Record<string, string> = {
+  exec: 'executar um comando dentro de um container',
+  'port-forward': 'abrir um túnel da sua máquina até um Pod ou Service',
+  top: 'mostrar o consumo de CPU e memória (precisa do metrics-server)',
+  edit: 'abrir um recurso no editor e aplicar o que você mudar',
+  explain: 'explicar os campos de cada tipo de recurso',
+  create: 'criar um recurso a partir de argumentos',
+  annotate: 'mudar as annotations de um recurso',
+  patch: 'alterar campos específicos de um recurso',
+  replace: 'substituir um recurso inteiro',
+  autoscale: 'criar um HorizontalPodAutoscaler',
+  cp: 'copiar arquivos de e para containers',
+  attach: 'conectar ao processo de um container',
+  debug: 'criar containers de depuração',
+  cordon: 'marcar um nó como não agendável',
+  uncordon: 'voltar a agendar Pods em um nó',
+  drain: 'esvaziar um nó para manutenção',
+  taint: 'restringir quais Pods um nó aceita',
+  wait: 'esperar uma condição de um recurso',
+  diff: 'comparar um manifesto com o que está no cluster',
+  'cluster-info': 'mostrar os endereços do control plane',
+  config: 'gerenciar contextos e o kubeconfig',
+  version: 'mostrar as versões do cliente e do servidor',
+  'api-resources': 'listar os tipos de recurso do cluster',
+  'api-versions': 'listar as versões de API do cluster',
+  auth: 'verificar permissões (RBAC)',
+  proxy: 'abrir um proxy local para a API',
+  events: 'listar eventos (aqui, use kubectl get events)',
+  kustomize: 'gerar manifestos com Kustomize',
+  certificate: 'aprovar certificados',
+  completion: 'gerar autocompletar para o shell',
+  plugin: 'gerenciar plugins',
+}
+
+const USAGE: Record<string, { use: string[]; what: string; examples?: string[] }> = {
+  apply: { use: ['kubectl apply -f <arquivo>'], what: 'Cria ou atualiza recursos a partir de um manifesto.', examples: ['kubectl apply -f backend.yaml'] },
+  get: {
+    use: ['kubectl get <tipo>[,<tipo>...] [nome...] [-l selector] [-o wide|yaml|json|name] [-w]', 'kubectl get <tipo>/<nome> [<tipo>/<nome>...]'],
+    what: 'Lista recursos. Flags: -l, --field-selector, -L, --show-labels, -A, -o, --sort-by, --no-headers, -w (só Pods).',
+    examples: ['kubectl get pods -o wide', 'kubectl get pods -l app=backend --show-labels', 'kubectl get deploy backend -o yaml', 'kubectl get endpointslices -l kubernetes.io/service-name=backend'],
+  },
+  describe: { use: ['kubectl describe <tipo> [nome] [-l selector]'], what: 'Mostra detalhes e os eventos recentes de um recurso.', examples: ['kubectl describe pod <nome>', 'kubectl describe svc backend'] },
+  delete: {
+    use: ['kubectl delete pod <nome>... | -l selector', 'kubectl delete deployment|rs|service <nome>'],
+    what: 'Apaga recursos. Apagar um dono apaga também o que ele possui (exclusão em cascata).',
+    examples: ['kubectl delete pod <nome>', 'kubectl delete pods -l app=backend', 'kubectl delete rs <nome>'],
+  },
+  scale: { use: ['kubectl scale deployment <nome> --replicas=<n>'], what: 'Muda o número desejado de réplicas.', examples: ['kubectl scale deployment backend --replicas=5'] },
+  expose: { use: ['kubectl expose deployment <nome> --port=<porta> [--target-port=<porta>] [--name=<nome>]'], what: 'Cria um Service (ClusterIP) com o selector do Deployment.', examples: ['kubectl expose deployment backend --port=80 --target-port=8080'] },
+  label: { use: ['kubectl label pod <nome> chave=valor... [--overwrite]', 'kubectl label pod <nome> chave-'], what: 'Adiciona, troca ou remove labels de um Pod.', examples: ['kubectl label pod <nome> app=debug --overwrite'] },
+  set: { use: ['kubectl set image deployment/<nome> <container>=<imagem>', 'kubectl set selector service <nome> chave=valor'], what: 'Troca a imagem de um Deployment ou o selector de um Service.' },
+  rollout: {
+    use: ['kubectl rollout status|history deployment/<nome>', 'kubectl rollout undo deployment/<nome> [--to-revision=N]', 'kubectl rollout restart|pause|resume deployment/<nome>'],
+    what: 'Acompanha, lista, desfaz, reinicia ou pausa rollouts.',
+    examples: ['kubectl rollout undo deployment/backend', 'kubectl rollout restart deployment/backend'],
+  },
+  run: {
+    use: ['kubectl run <nome> --image=<imagem> [--labels=k=v]', 'kubectl run <nome> --rm -it --image=busybox --restart=Never -- wget -qO- http://<service>'],
+    what: 'Cria um Pod avulso — ou roda um comando de teste dentro do cluster e apaga o Pod no fim.',
+    examples: ['kubectl run teste --image=nginx', 'kubectl run teste --rm -it --image=busybox:1.36 --restart=Never -- wget -qO- http://backend', 'kubectl run dns --rm -it --image=busybox:1.36 --restart=Never -- nslookup backend'],
+  },
+  logs: { use: ['kubectl logs <pod> [--previous] [--tail=N]', 'kubectl logs -l <selector>'], what: 'Mostra a saída do container. --previous mostra a execução anterior ao último restart.', examples: ['kubectl logs <pod> --previous'] },
+}
+
+function usage(verb: string): CommandResult {
+  const u = USAGE[verb]
+  return {
+    lines: [
+      plain(u.what, 'strong'),
+      [],
+      plain('Uso:', 'muted'),
+      ...u.use.map((l) => plain(`  ${l}`, 'accent')),
+      ...(u.examples ? [[], plain('Exemplos:', 'muted'), ...u.examples.map((l) => plain(`  ${l}`))] : []),
+    ],
+  }
 }
 
 export function run(sim: Simulation, input: string): CommandResult {
-  const tokens = input.trim().split(/\s+/).filter(Boolean)
-  if (!tokens.length) return { lines: [] }
+  const { stages, error } = tokenize(input.trim())
+  if (error) return err(`bash: ${error}`)
+  if (!stages.length || !stages[0].length) return stages.length > 1 ? err("bash: syntax error near unexpected token `|'") : { lines: [] }
+  const result = runOne(sim, stages[0])
+  if (stages.length === 1) return result
+  let lines = result.lines
+  for (const stage of stages.slice(1)) {
+    const r = pipe(lines, stage)
+    if ('error' in r) return err(r.error)
+    lines = r
+  }
+  return { ...result, lines: [...lines, ...(result.watch ? [note('-w não acompanha a saída depois de um | neste terminal')] : [])], watch: undefined }
+}
+
+const SHELL = ['kubectl', 'k', 'clear', 'help', 'ls', 'cat', 'explicar']
+
+function runOne(sim: Simulation, tokens: string[]): CommandResult {
   const [cmd, ...rest] = tokens
 
   if (cmd === 'clear') return { lines: [], clear: true }
   if (cmd === 'help') return help()
+  if (cmd === 'explicar') return explain(sim, rest)
   if (cmd === 'ls') return { lines: [sim.files.map((f) => ({ t: `${f}  `, c: 'accent' as Tone }))] }
   if (cmd === 'cat') {
-    const f = rest[0] ?? ''
-    if (!sim.files.includes(f)) return err(`cat: ${f}: No such file or directory`)
-    return { lines: FILES[f].yaml.split('\n').map((l) => plain(l, 'muted')) }
+    if (!rest.length) return err('cat: informe um arquivo — por exemplo, cat backend.yaml')
+    const lines: Line[] = []
+    for (const f of rest) {
+      if (!sim.files.includes(f)) lines.push(plain(`cat: ${f}: No such file or directory`, 'error'))
+      else lines.push(...FILES[f].yaml.split('\n').map((l) => plain(l, 'muted')))
+    }
+    return { lines }
   }
   if (cmd !== 'kubectl' && cmd !== 'k') {
-    return { lines: [plain(`command not found: ${cmd}`, 'error'), plain('Digite `help` para ver o que este terminal entende.', 'muted')] }
+    const guess = suggest(cmd, SHELL)[0]
+    return {
+      lines: [
+        plain(`command not found: ${cmd}`, 'error'),
+        plain(guess ? `Você quis dizer ${guess}?` : 'Digite `help` para ver o que este terminal entende.', 'muted'),
+      ],
+    }
   }
 
   const [verb, ...more] = rest
-  const { args, flags } = parseArgs(more)
+  if (verb === undefined || verb === '-h' || verb === '--help' || verb === 'help') return help()
+  if (!VERBS.includes(verb)) {
+    if (UNSIMULATED_VERBS[verb])
+      return {
+        lines: [
+          plain(`kubectl ${verb} existe no kubectl real (serve para ${UNSIMULATED_VERBS[verb]}), mas ainda não é simulado aqui.`, 'warn'),
+          plain('Digite `help` para ver o que este terminal entende.', 'muted'),
+        ],
+      }
+    const guess = suggest(verb, [...VERBS, ...Object.keys(UNSIMULATED_VERBS)])
+    return {
+      lines: [
+        plain(`error: unknown command "${verb}" for "kubectl"`, 'error'),
+        ...(guess.length ? [[], plain('Did you mean this?', 'muted'), ...guess.slice(0, 2).map((g) => plain(`\t${g}`, 'accent'))] : []),
+      ],
+    }
+  }
+
+  const parsed = parseArgs(more, verb)
+  const { args, flags } = parsed
+  if (flags.h || flags.help) return usage(verb)
+  const bad = checkFlags(verb, parsed)
+  if (bad) return { lines: bad }
+
+  const ns = typeof flags.n === 'string' ? flags.n : 'default'
+  if (ns !== 'default') {
+    const nsNote = note('este cluster de treino só simula o namespace default (num cluster real, kube-system teria os componentes do sistema)')
+    if (verb === 'get') return { lines: [plain(`No resources found in ${ns} namespace.`, 'muted'), nsNote] }
+    return { lines: [plain(`Error from server (NotFound): namespaces "${ns}" not found`, 'error'), nsNote] }
+  }
 
   switch (verb) {
     case 'apply': {
       const file = typeof flags.f === 'string' ? flags.f : ''
+      if (!file) return err('error: must specify one of -f and -k')
       if (!sim.files.includes(file)) return err(`error: the path "${file}" does not exist`)
       const m = FILES[file].manifest
       const result = sim.apply(m)
@@ -201,7 +590,7 @@ export function run(sim: Simulation, input: string): CommandResult {
     case 'get':
       return get(sim, args, flags)
     case 'describe':
-      return describe(sim, args)
+      return describe(sim, args, flags)
     case 'delete':
       return remove(sim, args, flags)
     case 'scale': {
@@ -216,8 +605,11 @@ export function run(sim: Simulation, input: string): CommandResult {
     case 'expose': {
       const [kind, names] = splitKind(args)
       if (!kind || KIND_ALIASES[kind] !== 'deployments' || !names[0]) return err('Usage: kubectl expose deployment <name> --port=80 [--target-port=8080]')
+      if (typeof flags.type === 'string' && flags.type !== 'ClusterIP')
+        return { lines: [plain(`Services do tipo ${flags.type} existem no Kubernetes real, mas este cluster de treino só simula ClusterIP — o comando não foi executado.`, 'warn')] }
       const port = Number(flags.port ?? 80)
-      const target = Number(flags['target-port'] ?? 8080)
+      const target = Number(flags['target-port'] ?? flags.port ?? 8080)
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return err(`error: invalid port "${flags.port}"`)
       const name = typeof flags.name === 'string' ? flags.name : undefined
       const r = sim.expose(names[0], port, target, name)
       if (r === 'notfound') return err(`Error from server (NotFound): deployments.apps "${names[0]}" not found`)
@@ -228,6 +620,11 @@ export function run(sim: Simulation, input: string): CommandResult {
       const [kind, rest2] = splitKind(args)
       if (!kind || KIND_ALIASES[kind] !== 'pods' || !rest2[0]) return err('Usage: kubectl label pod <name> key=value [--overwrite]')
       const [name, ...specs] = rest2
+      if (flags.list) {
+        const pod = sim.findPod(name)
+        if (!pod) return err(`Error from server (NotFound): pods "${name}" not found`)
+        return { lines: Object.entries(pod.labels).map(([k, v]) => plain(`${k}=${v}`, 'accent')), focusUid: pod.uid }
+      }
       const changes = parseLabels(specs)
       if (!changes || !Object.keys(changes).length) return err('error: at least one label update is required, e.g. app=api')
       const r = sim.labelPod(name, changes, flags.overwrite === true)
@@ -237,41 +634,102 @@ export function run(sim: Simulation, input: string): CommandResult {
     case 'set':
       return set(sim, args)
     case 'rollout':
-      return rollout(sim, args)
-    case 'logs': {
-      const name = args[0]?.replace(/^pods?\//, '')
-      if (!name) return err('error: expected POD name. Usage: kubectl logs <pod>')
-      const lines = sim.logs(name)
-      if (!lines) return err(`Error from server (NotFound): pods "${name}" not found`)
-      const pod = sim.findPod(name)!
-      if (!lines.length) return err(`Error from server (BadRequest): container "backend" in pod "${name}" is waiting to start: ${pod.phase}`)
-      return {
-        focusUid: pod.uid,
-        lines: lines.map((l) => plain(l, /panic|exit status|level=error/.test(l) ? 'error' : l.startsWith('\t') || l.startsWith('goroutine') || l.startsWith('main.') ? 'muted' : undefined)),
-      }
-    }
-    case undefined:
-      return help()
-    default:
-      return err(`error: unknown command "${verb}" for "kubectl"`)
+      return rollout(sim, args, flags)
+    case 'logs':
+      return logs(sim, args, flags)
+    case 'run':
+      return runPod(sim, args, flags)
   }
+  return help()
 }
 
-function remove(sim: Simulation, args: string[], flags: Parsed['flags']): CommandResult {
+/** "pod/foo" → ["pod", ["foo"]]; "pods foo bar" → ["pods", ["foo", "bar"]] */
+function splitKind(args: string[]): [string | undefined, string[]] {
+  if (!args[0]) return [undefined, []]
+  if (args[0].includes('/')) {
+    const [kind, name] = args[0].split('/')
+    return [kind, [name, ...args.slice(1)]]
+  }
+  return [args[0], args.slice(1)]
+}
+
+function selectorFlag(flags: Flags): Requirement[] | { error: string } | null {
+  if (typeof flags.l !== 'string') return null
+  const r = parseSelector(flags.l)
+  return 'error' in r ? { error: `error: ${r.error}` } : r
+}
+
+function logs(sim: Simulation, args: string[], flags: Flags): CommandResult {
+  if (typeof flags.c === 'string' && flags.c !== 'backend') return err(`error: container ${flags.c} is not valid for pod ${args[0] ?? ''}`)
+  const tail = typeof flags.tail === 'string' ? Number(flags.tail) : -1
+  if (!Number.isInteger(tail)) return err(`error: invalid argument "${flags.tail}" for "--tail" flag`)
+  const previous = flags.p === true
+  const follow = flags.follow ? [note('-f acompanharia as próximas linhas; aqui aparece só o que já foi escrito')] : []
+  const cut = (ls: string[]) => (tail >= 0 ? ls.slice(Math.max(0, ls.length - tail)) : ls)
+  const paint = (l: string): Line => plain(l, /panic|exit status|level=error/.test(l) ? 'error' : l.startsWith('\t') || l.startsWith('goroutine') || l.startsWith('main.') ? 'muted' : undefined)
+
+  const sel = selectorFlag(flags)
+  if (sel) {
+    if ('error' in sel) return err(sel.error)
+    const pods = Object.values(sim.cluster.pods).filter((p) => p.deletedAt === null && selects(sel, p.labels))
+    if (!pods.length) return { lines: [plain('No resources found in default namespace.', 'muted')] }
+    // like kubectl: 10 lines per Pod by default when selecting by label
+    const lines = pods.flatMap((p) => {
+      const out = sim.logs(p.name, previous)
+      return Array.isArray(out) ? (tail >= 0 ? cut(out) : out.slice(-10)) : []
+    })
+    return { lines: [...lines.map(paint), ...follow] }
+  }
+
+  const name = args[0]?.replace(/^pods?\//, '')
+  if (!name) return err('error: expected POD name. Usage: kubectl logs <pod>')
+  const out = sim.logs(name, previous)
+  if (out === null) return err(`Error from server (NotFound): pods "${name}" not found`)
+  const pod = sim.findPod(name)!
+  if (out === 'noprevious') return err(`Error from server (BadRequest): previous terminated container "backend" in pod "${name}" not found`)
+  if (!out.length) return err(`Error from server (BadRequest): container "backend" in pod "${name}" is waiting to start: ${pod.phase}`)
+  return { focusUid: pod.uid, lines: [...cut(out).map(paint), ...follow] }
+}
+
+function remove(sim: Simulation, args: string[], flags: Flags): CommandResult {
   const [kind, names] = splitKind(args)
   const k = kind ? KIND_ALIASES[kind] : undefined
+  const graceNote = flags.force || flags.now || flags['grace-period'] !== undefined ? [note('neste simulador todo Pod passa pelo encerramento gracioso')] : []
   if (k === 'services') {
     if (!names[0]) return err('error: resource(s) were provided, but no name was specified')
-    return sim.deleteService(names[0]) ? { lines: [plain(`service "${names[0]}" deleted`, 'warn')] } : err(`Error from server (NotFound): services "${names[0]}" not found`)
+    if (sim.deleteService(names[0])) return { lines: [plain(`service "${names[0]}" deleted`, 'warn')] }
+    return flags['ignore-not-found'] ? { lines: [] } : err(`Error from server (NotFound): services "${names[0]}" not found`)
+  }
+  if (k === 'deployments' || k === 'replicasets') {
+    if (!names.length) return err('error: resource(s) were provided, but no name was specified')
+    const resource = k === 'deployments' ? 'deployments.apps' : 'replicasets.apps'
+    const prefix = k === 'deployments' ? 'deployment.apps' : 'replicaset.apps'
+    const lines: Line[] = []
+    let focusUid: string | undefined
+    for (const name of names) {
+      const uid = k === 'deployments' ? sim.findDeployment(name)?.uid : Object.values(sim.cluster.replicaSets).find((r) => r.name === name)?.uid
+      const gone = k === 'deployments' ? sim.deleteDeployment(name) : sim.deleteReplicaSet(name)
+      if (gone) {
+        lines.push([{ t: `${prefix} "`, c: 'warn' }, { t: name, c: 'warn', ref: k === 'replicasets' ? uid : undefined }, { t: '" deleted', c: 'warn' }])
+        focusUid ??= k === 'replicasets' ? uid : undefined
+      } else if (!flags['ignore-not-found']) lines.push(plain(`Error from server (NotFound): ${resource} "${name}" not found`, 'error'))
+    }
+    return { lines: [...lines, ...graceNote], focusUid }
   }
   if (k !== 'pods') {
-    return kind ? err('Neste playground dá para apagar Pods e Services. Tente: kubectl delete pod <nome>') : err('error: You must provide one or more resources by argument or filename.')
+    if (!kind) return err('error: You must provide one or more resources by argument or filename.')
+    if (!k) {
+      const r = resolveKind(kind)
+      if ('error' in r) return { lines: r.error }
+    }
+    return err('Neste playground dá para apagar Pods, ReplicaSets, Deployments e Services.')
   }
   let targets = names
-  if (typeof flags.l === 'string') {
-    const sel = parseSelector(flags.l)
+  const sel = selectorFlag(flags)
+  if (sel) {
+    if ('error' in sel) return err(sel.error)
     targets = Object.values(sim.cluster.pods)
-      .filter((p) => matches(sel, p.labels) && p.deletedAt === null)
+      .filter((p) => selects(sel, p.labels) && p.deletedAt === null)
       .map((p) => p.name)
     if (!targets.length) return { lines: [plain('No resources found', 'muted')] }
   }
@@ -280,14 +738,15 @@ function remove(sim: Simulation, args: string[], flags: Parsed['flags']): Comman
   let focusUid: string | undefined
   for (const name of targets) {
     const r = sim.deletePod(name)
-    if (r === 'notfound') lines.push(plain(`Error from server (NotFound): pods "${name}" not found`, 'error'))
-    else {
-      lines.push([{ t: `pod "${name}" deleted`, c: 'warn' }, ...(r === 'terminating' ? [{ t: '  (already terminating)', c: 'muted' as Tone }] : [])])
+    if (r === 'notfound') {
+      if (!flags['ignore-not-found']) lines.push(plain(`Error from server (NotFound): pods "${name}" not found`, 'error'))
+    } else {
+      lines.push([{ t: 'pod "', c: 'warn' }, { t: name, c: 'warn', ref: sim.findPod(name)?.uid }, { t: '" deleted', c: 'warn' }, ...(r === 'terminating' ? [{ t: '  (already terminating)', c: 'muted' as Tone }] : [])])
       focusUid ??= sim.findPod(name)?.uid
     }
   }
   if (lines.some((l) => l[0].c === 'error')) lines.push(plain('Dica: aperte Tab para completar nomes de Pods.', 'muted'))
-  return { lines, focusUid }
+  return { lines: [...lines, ...graceNote], focusUid }
 }
 
 function set(sim: Simulation, args: string[]): CommandResult {
@@ -310,18 +769,35 @@ function set(sim: Simulation, args: string[]): CommandResult {
     if (r === 'nocontainer') return err(`error: unable to find container named "${container}"`)
     return { lines: [plain(`deployment.apps/${names[0]} image ${r === 'updated' ? 'updated' : 'unchanged'}`, r === 'updated' ? 'success' : 'muted')], focusUid: sim.findDeployment(names[0])?.uid }
   }
+  if (what && ['env', 'resources', 'serviceaccount', 'subject'].includes(what))
+    return { lines: [plain(`kubectl set ${what} existe no kubectl real, mas ainda não é simulado aqui.`, 'warn')] }
   return err('Usage: kubectl set image deployment/<name> backend=<image> | kubectl set selector service <name> key=value')
 }
 
-function rollout(sim: Simulation, args: string[]): CommandResult {
+function rollout(sim: Simulation, args: string[], flags: Flags): CommandResult {
   const [action, ...rest] = args
   const [kind, names] = splitKind(rest)
-  if (!action || !kind || KIND_ALIASES[kind] !== 'deployments' || !names[0]) return err('Usage: kubectl rollout status|undo|history deployment/<name>')
+  if (!action || !kind || KIND_ALIASES[kind] !== 'deployments' || !names[0]) return err('Usage: kubectl rollout status|history|undo|restart|pause|resume deployment/<name>')
   const dep = sim.findDeployment(names[0])
   if (!dep) return err(`Error from server (NotFound): deployments.apps "${names[0]}" not found`)
+  if (action === 'restart') {
+    const r = sim.rolloutRestart(dep.name)
+    if (r === 'paused') return err(`error: deployments.apps "${dep.name}" can't restart paused deployment (run rollout resume first)`)
+    return ok(`deployment.apps/${dep.name} restarted`, dep.uid)
+  }
+  if (action === 'pause' || action === 'resume') {
+    const r = sim.setPaused(dep.name, action === 'pause')
+    if (r === 'unchanged') return err(`error: deployments.apps "${dep.name}" is ${action === 'pause' ? 'already paused' : 'not paused'}`)
+    return ok(`deployment.apps/${dep.name} ${action}d`, dep.uid)
+  }
   if (action === 'undo') {
-    const r = sim.rolloutUndo(dep.name)
+    const to = flags['to-revision'] === undefined ? undefined : Number(flags['to-revision'])
+    if (to !== undefined && (!Number.isInteger(to) || to < 0)) return err(`error: invalid argument "${flags['to-revision']}" for "--to-revision" flag`)
+    // --to-revision=0 means "the previous one", like no flag at all
+    const r = sim.rolloutUndo(dep.name, to || undefined)
     if (r === 'nohistory') return err('error: no rollout history found for deployment "' + dep.name + '"')
+    if (r === 'norevision') return err(`error: unable to find specified revision ${to} in history`)
+    if (r === 'skipped') return { focusUid: dep.uid, lines: [plain(`deployment.apps/${dep.name} skipped rollback (current template already matches revision ${to || dep.history.length - 1})`, 'muted')] }
     return ok(`deployment.apps/${dep.name} rolled back`, dep.uid)
   }
   if (action === 'history') {
@@ -330,9 +806,15 @@ function rollout(sim: Simulation, args: string[]): CommandResult {
       lines: [
         plain(`deployment.apps/${dep.name}`, 'strong'),
         ...table(
-          ['REVISION', 'IMAGE'],
-          dep.history.map((img, i) => [{ t: String(i + 1), c: i === dep.history.length - 1 ? 'accent' : undefined }, { t: tag(img) }]),
+          ['REVISION', 'IMAGE', 'CHANGE'],
+          dep.history.map((rev, i) => {
+            const prev = dep.history[i - 1]
+            const change = i === 0 ? 'criação' : prev && prev.image === rev.image && prev.restartedAt !== rev.restartedAt ? 'rollout restart' : prev && prev.image !== rev.image ? `imagem ${tag(prev.image)} → ${tag(rev.image)}` : 'rollback'
+            return [{ t: String(i + 1), c: i === dep.history.length - 1 ? 'accent' : undefined }, { t: tag(rev.image), c: isBroken(rev.image) ? ('error' as Tone) : undefined }, { t: change, c: 'muted' as Tone }]
+          }),
         ),
+        note('o kubectl real mostra CHANGE-CAUSE (geralmente <none>); aqui mostramos a imagem e o que mudou'),
+        ...(dep.paused ? [note('pausado — mudanças no template esperam o rollout resume')] : []),
       ],
     }
   }
@@ -340,6 +822,8 @@ function rollout(sim: Simulation, args: string[]): CommandResult {
     const current = sim.replicaSetOf(dep)
     const updated = current ? sim.activePods(current.uid) : []
     const ready = updated.filter((p) => p.ready).length
+    if (dep.paused && !sim.replicaSetsOf(dep).some((rs) => rs.desired > 0 && rs.image === dep.template.image && (rs.restartedAt ?? 0) === (dep.template.restartedAt ?? 0)))
+      return { focusUid: dep.uid, lines: [plain(`Waiting for deployment "${dep.name}" rollout to finish: 0 out of ${dep.replicas} new replicas have been updated...`, 'warn'), note('o Deployment está pausado — use kubectl rollout resume')] }
     if (dep.rollout === 'complete') return { focusUid: dep.uid, lines: [plain(`deployment "${dep.name}" successfully rolled out`, 'success')] }
     const oldLeft = sim
       .replicaSetsOf(dep)
@@ -350,171 +834,171 @@ function rollout(sim: Simulation, args: string[]): CommandResult {
       lines: [
         plain(`Waiting for deployment "${dep.name}" rollout to finish: ${ready} of ${dep.replicas} updated replicas are available...`, 'warn'),
         ...(oldLeft ? [plain(`Waiting for deployment "${dep.name}" rollout to finish: ${oldLeft} old replicas are pending termination...`, 'warn')] : []),
-        ...(dep.rollout === 'stalled' ? [plain('# os Pods novos nunca ficam Ready — investigue com kubectl get pods / kubectl logs', 'muted')] : []),
+        ...(dep.rollout === 'stalled' ? [note('os Pods novos nunca ficam Ready — investigue com kubectl get pods / kubectl logs')] : []),
       ],
     }
   }
   return err(`error: unknown rollout action "${action}"`)
 }
 
-function get(sim: Simulation, args: string[], flags: Parsed['flags']): CommandResult {
-  const [rawKind, names] = splitKind(args)
-  const kind = rawKind ? KIND_ALIASES[rawKind] : undefined
-  if (!kind) return err(rawKind ? `error: the server doesn't have a resource type "${rawKind}"` : 'error: You must specify the type of resource to get.')
-  const wide = flags.o === 'wide'
-  const showLabels = flags['show-labels'] === true
-  const none = { lines: [plain('No resources found in default namespace.', 'muted')] }
+// ── get ────────────────────────────────────────────────────────────────────
 
-  if (kind === 'pods') {
-    let list = Object.values(sim.cluster.pods).sort((a, b) => a.createdAt - b.createdAt)
-    if (typeof flags.l === 'string') {
-      const sel = parseSelector(flags.l)
-      list = list.filter((p) => matches(sel, p.labels))
-    }
-    if (names.length) list = list.filter((p) => names.includes(p.name))
-    if (names.length && !list.length) return err(`Error from server (NotFound): pods "${names[0]}" not found`)
-    const rows = table(podHeader(wide, showLabels), list.map((p) => podRow(sim, p, wide, showLabels)))
-    if (flags.w || flags.watch) return { lines: rows, watch: 'pods' }
-    return list.length ? { lines: rows } : none
-  }
+const FORMATS = ['wide', 'yaml', 'json', 'name']
+const REAL_FORMATS = ['custom-columns', 'custom-columns-file', 'go-template', 'go-template-file', 'jsonpath', 'jsonpath-as-json', 'jsonpath-file', 'template', 'templatefile']
 
-  if (kind === 'deployments') {
-    const deps = Object.values(sim.cluster.deployments)
-    if (!deps.length) return none
-    return {
-      lines: table(
-        ['NAME', 'READY', 'UP-TO-DATE', 'AVAILABLE', 'AGE'],
-        deps.map((d) => {
-          const all = sim.deploymentPods(d).filter((p) => p.deletedAt === null)
-          const current = sim.replicaSetOf(d)
-          const updated = current ? sim.activePods(current.uid).length : 0
-          const ready = all.filter((p) => p.ready).length
-          return [
-            { t: d.name, c: 'strong' },
-            { t: `${ready}/${d.replicas}`, c: ready === d.replicas ? 'success' : 'warn' },
-            { t: String(updated) },
-            { t: String(ready) },
-            { t: age(sim.now - d.createdAt) },
-          ]
-        }),
-      ),
-    }
-  }
-
-  if (kind === 'replicasets') {
-    const list = Object.values(sim.cluster.replicaSets).sort((a, b) => a.createdAt - b.createdAt)
-    if (!list.length) return none
-    const header = ['NAME', 'DESIRED', 'CURRENT', 'READY', 'AGE', ...(wide ? ['IMAGES'] : [])]
-    return {
-      lines: table(
-        header,
-        list.map((rs) => {
-          const active = sim.activePods(rs.uid)
-          const ready = active.filter((p) => p.ready).length
-          return [
-            { t: rs.name, c: 'strong' },
-            { t: String(rs.desired) },
-            { t: String(active.length), c: active.length === rs.desired ? undefined : 'warn' },
-            { t: String(ready), c: ready === rs.desired ? 'success' : 'warn' },
-            { t: age(sim.now - rs.createdAt) },
-            ...(wide ? [{ t: rs.image, c: isBroken(rs.image) ? ('error' as Tone) : undefined }] : []),
-          ]
-        }),
-      ),
-    }
-  }
-
-  if (kind === 'services') {
-    const list = Object.values(sim.cluster.services)
-    if (!list.length) return none
-    return {
-      lines: table(
-        ['NAME', 'TYPE', 'CLUSTER-IP', 'PORT(S)', 'AGE', ...(wide ? ['SELECTOR'] : [])],
-        list.map((s) => [
-          { t: s.name, c: 'strong' },
-          { t: 'ClusterIP' },
-          { t: s.clusterIP },
-          { t: `${s.port}/TCP` },
-          { t: age(sim.now - s.createdAt) },
-          ...(wide ? [{ t: labelString(s.selector), c: 'accent' as Tone }] : []),
-        ]),
-      ),
-    }
-  }
-
-  if (kind === 'endpoints') {
-    let list = Object.values(sim.cluster.services)
-    if (names.length) list = list.filter((s) => names.includes(s.name))
-    if (names.length && !list.length) return err(`Error from server (NotFound): endpoints "${names[0]}" not found`)
-    if (!list.length) return none
-    return {
-      lines: table(
-        ['NAME', 'ENDPOINTS', 'AGE'],
-        list.map((s) => {
-          const ips = s.endpoints.map((uid) => `${sim.cluster.pods[uid]?.ip}:${s.targetPort}`)
-          return [
-            { t: s.name, c: 'strong' },
-            { t: ips.length ? (ips.length > 3 ? `${ips.slice(0, 3).join(',')} + ${ips.length - 3} more...` : ips.join(',')) : '<none>', c: ips.length ? 'success' : 'error' },
-            { t: age(sim.now - s.createdAt) },
-          ]
-        }),
-      ),
-    }
-  }
-
-  if (kind === 'nodes') {
-    return {
-      lines: table(
-        ['NAME', 'STATUS', 'ROLES', 'PODS', 'VERSION'],
-        sim.cluster.nodes.map((n) => [
-          { t: n.name, c: 'strong' },
-          { t: 'Ready', c: 'success' },
-          { t: '<none>', c: 'muted' },
-          { t: String(Object.values(sim.cluster.pods).filter((p) => p.nodeName === n.name).length) },
-          { t: 'v1.34.1' },
-        ]),
-      ),
-    }
-  }
-
-  if (kind === 'events') {
-    const evs = sim.events.filter((e) => e.source !== 'you' && e.source !== 'cluster').slice(-14)
-    if (!evs.length) return { lines: [plain('No events found in default namespace.', 'muted')] }
-    return {
-      lines: table(
-        ['LAST SEEN', 'TYPE', 'REASON', 'OBJECT', 'MESSAGE'],
-        evs.map((e) => [
-          { t: age(sim.now - e.at) },
-          { t: e.type, c: e.type === 'Warning' ? 'warn' : 'muted' },
-          { t: e.reason, c: 'accent' },
-          { t: `${e.involved.kind.toLowerCase()}/${e.involved.name}` },
-          { t: e.message, c: 'muted' },
-        ]),
-      ),
-    }
-  }
-
-  // all — the same tables, with kind-qualified names like the real kubectl
-  const lines: Line[] = []
-  const section = (prefix: string, kindLines: Line[]) => {
-    if (kindLines.length < 2) return
-    if (lines.length) lines.push([])
-    const [header, ...rows] = kindLines.map((l) => l.map((s) => ({ ...s, t: s.t.trimEnd() })))
-    lines.push(...table(header.map((h) => h.t), rows.map((r) => [{ ...r[0], t: `${prefix}/${r[0].t}` }, ...r.slice(1)])))
-  }
-  section('pod', get(sim, ['pods'], {}).lines)
-  section('service', get(sim, ['services'], {}).lines)
-  section('deployment.apps', get(sim, ['deployments'], {}).lines)
-  section('replicaset.apps', get(sim, ['replicasets'], {}).lines)
-  return lines.length ? { lines } : none
+function yamlLines(obj: Obj): Line[] {
+  return toYaml(obj).map((l) => {
+    const m = l.match(/^(\s*(?:- )*[^:\s][^:]*:)(.*)$/)
+    return m ? [{ t: m[1] }, { t: m[2], c: 'strong' as Tone }] : plain(l, 'strong')
+  })
 }
 
-function describe(sim: Simulation, args: string[]): CommandResult {
-  const [rawKind, names] = splitKind(args)
-  const kind = rawKind ? KIND_ALIASES[rawKind] : undefined
-  const name = names[0]
-  if (!kind || !name) return err('Usage: kubectl describe pod|deployment|rs|service <name>')
-  const kv = (k: string, v: string, c?: Tone): Line => [{ t: `${k}:`.padEnd(18), c: 'muted' }, { t: v, c }]
+function get(sim: Simulation, args: string[], flags: Flags): CommandResult {
+  const groups = targets(args)
+  if ('error' in groups) return { lines: groups.error }
+
+  const output = typeof flags.o === 'string' ? flags.o : undefined
+  if (output && !FORMATS.includes(output)) {
+    if (REAL_FORMATS.includes(output.split('=')[0]))
+      return { lines: [plain(`O formato -o ${output.split('=')[0]} existe no kubectl real, mas aqui só há wide, yaml, json e name.`, 'warn')] }
+    return err(
+      `error: unable to match a printer suitable for the output format "${output}", allowed formats are: custom-columns,custom-columns-file,go-template,go-template-file,json,jsonpath,jsonpath-as-json,jsonpath-file,name,template,templatefile,wide,yaml`,
+    )
+  }
+  const wide = output === 'wide'
+  const sel = selectorFlag(flags)
+  if (sel && 'error' in sel) return err(sel.error)
+
+  let field: { key: string; op: '=' | '!='; value: string }[] = []
+  if (typeof flags['field-selector'] === 'string') {
+    for (const part of flags['field-selector'].split(',')) {
+      const m = part.match(/^([\w.]+)\s*(==|=|!=)\s*(.*)$/)
+      if (!m) return err(`error: invalid field selector: ${part}`)
+      field.push({ key: m[1], op: m[2] === '!=' ? '!=' : '=', value: m[3] })
+    }
+  }
+  const labelCols = typeof flags.L === 'string' ? flags.L.split(',').filter(Boolean) : []
+  const showLabels = flags['show-labels'] === true
+  const allNs = flags.A === true
+
+  const lines: Line[] = []
+  const objects: Obj[] = []
+  const errors: Line[] = []
+  const multi = groups.length > 1
+  let focusUid: string | undefined
+  let found = 0
+
+  for (const { kind, names } of groups) {
+    const spec = SPECS[kind] as Spec<Item>
+    let items = spec.items(sim)
+    if (sel && !('error' in sel)) items = items.filter((t) => selects(sel, spec.labels(sim, t)))
+    for (const f of field) {
+      const read = f.key === 'metadata.name' ? (t: Item) => t.name : f.key === 'metadata.namespace' ? () => 'default' : spec.fields?.[f.key]
+      if (!read) return err(`Error from server (BadRequest): Unable to find "${spec.resource}" that match label selector "", field selector "${flags['field-selector']}": field label not supported: ${f.key}`)
+      items = items.filter((t) => (read(t) === f.value) === (f.op === '='))
+    }
+    if (names.length) {
+      for (const n of names) if (!items.some((t) => t.name === n) && !flags['ignore-not-found']) errors.push(plain(`Error from server (NotFound): ${spec.resource} "${n}" not found`, 'error'))
+      items = names.flatMap((n) => items.filter((t) => t.name === n))
+      if (items.length === 1 && groups.length === 1) focusUid = items[0].uid
+    }
+    if (typeof flags['sort-by'] === 'string') {
+      const path = flags['sort-by']
+      const keyed = items.map((t) => ({ t, v: readPath(spec.object(sim, t), path) }))
+      keyed.sort((a, b) => (typeof a.v === 'number' && typeof b.v === 'number' ? a.v - b.v : String(a.v ?? '').localeCompare(String(b.v ?? ''))))
+      items = keyed.map((k) => k.t)
+    }
+    found += items.length
+
+    if (output === 'yaml' || output === 'json') {
+      objects.push(...items.map((t) => spec.object(sim, t)))
+      continue
+    }
+    if (output === 'name') {
+      lines.push(...items.map((t): Line => [{ t: `${spec.prefix}/${t.name}`, ref: kind === 'nodes' || kind === 'events' ? undefined : t.uid }]))
+      continue
+    }
+    if (!items.length) continue
+    const header = [...(allNs && spec.namespaced ? ['NAMESPACE'] : []), ...spec.header(wide), ...labelCols.map((c) => c.toUpperCase()), ...(showLabels ? ['LABELS'] : [])]
+    const rows = items.map((t) => {
+      const row = spec.row(sim, t, wide)
+      if (t.uid && kind !== 'events' && kind !== 'nodes') row[0] = { ...row[0], ref: t.uid }
+      if (multi) row[0] = { ...row[0], t: `${spec.prefix}/${row[0].t}` }
+      const labels = spec.labels(sim, t)
+      return [
+        ...(allNs && spec.namespaced ? [{ t: 'default' }] : []),
+        ...row,
+        ...labelCols.map((c) => ({ t: labels[c] ?? '', c: 'accent' as Tone })),
+        ...(showLabels ? [{ t: labelString(labels) || '<none>', c: 'accent' as Tone }] : []),
+      ]
+    })
+    const t = table(header, rows)
+    if (lines.length) lines.push([])
+    lines.push(...(flags['no-headers'] ? t.slice(1) : t))
+  }
+
+  if (output === 'yaml' || output === 'json') {
+    const single = objects.length === 1 && groups.length === 1 && groups[0].names.length === 1
+    const value = single ? objects[0] : listObject(objects)
+    if (!objects.length && errors.length) return { lines: errors }
+    lines.push(...(output === 'yaml' ? yamlLines(value) : toJson(value).split('\n').map((l) => plain(l))))
+  }
+
+  const notes: Line[] = []
+  const kinds = groups.map((g) => g.kind)
+  if (kinds.includes('endpoints') && !flags.o) lines.unshift(plain('Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice', 'warn'))
+  if (allNs) notes.push(note('este cluster de treino só simula o namespace default'))
+  if (sel && !found && kinds.includes('deployments'))
+    notes.push(note('os Deployments daqui não têm labels próprias — app=backend está no template dos Pods (veja -o yaml)'))
+  const watch = (flags.w === true) && !output?.match(/yaml|json|name/) && kinds.length === 1 && kinds[0] === 'pods'
+  if (flags.w && !watch) notes.push(note('-w só acompanha a tabela de Pods neste terminal'))
+
+  if (!found && !errors.length && !watch) {
+    if (output === 'yaml' || output === 'json') return { lines: [...lines, ...notes] }
+    return { lines: [plain(kinds.every((k) => !SPECS[k].namespaced) ? 'No resources found' : 'No resources found in default namespace.', 'muted'), ...notes] }
+  }
+  if (watch) {
+    const rows = lines.length ? lines : table(podHeader(wide), []).slice(0, 1)
+    return { lines: [...rows, ...errors, ...notes], watch: 'pods' }
+  }
+  return { lines: [...lines, ...errors, ...notes], focusUid }
+}
+
+// ── describe ───────────────────────────────────────────────────────────────
+
+function describe(sim: Simulation, args: string[], flags: Flags): CommandResult {
+  const [rawKind, rawNames] = splitKind(args)
+  if (!rawKind) return err('error: You must specify the type of resource to describe. Use "kubectl api-resources" for a complete list of supported resources.')
+  const kinds = resolveKind(rawKind)
+  if ('error' in kinds) return { lines: kinds.error }
+  if (kinds.length !== 1) return err('Usage: kubectl describe pod|deployment|rs|service|node <name>')
+  const kind = kinds[0]
+  if (!['pods', 'deployments', 'replicasets', 'services', 'nodes'].includes(kind)) return { lines: [plain(`describe de ${rawKind} ainda não está disponível aqui — tente kubectl get ${rawKind} -o yaml`, 'warn')] }
+  const spec = SPECS[kind] as Spec<Item>
+  let names = rawNames
+  const sel = selectorFlag(flags)
+  if (sel) {
+    if ('error' in sel) return err(sel.error)
+    names = spec.items(sim).filter((t) => selects(sel, spec.labels(sim, t))).map((t) => t.name)
+    if (!names.length) return { lines: [plain('No resources found in default namespace.', 'muted')] }
+  } else if (!names.length) {
+    // like kubectl: no name means "all of them"
+    names = spec.items(sim).map((t) => t.name)
+    if (!names.length) return { lines: [plain('No resources found in default namespace.', 'muted')] }
+  }
+  const out: Line[] = []
+  let focusUid: string | undefined
+  for (const name of names) {
+    const r = describeOne(sim, kind, name)
+    if (out.length) out.push([], [])
+    out.push(...r.lines)
+    if (names.length === 1) focusUid = r.focusUid
+  }
+  return { lines: out, focusUid }
+}
+
+function describeOne(sim: Simulation, kind: KindId, name: string): CommandResult {
+  const kv = (k: string, v: string, c?: Tone, ref?: string): Line => [{ t: `${k}:`.padEnd(18), c: 'muted' }, { t: v, c, ref }]
   const eventsFor = (uid: string) => {
     const evs = sim.events.filter((e) => e.involved.uid === uid && e.source !== 'you' && e.source !== 'cluster').slice(-10)
     return [
@@ -537,13 +1021,13 @@ function describe(sim: Simulation, args: string[]): CommandResult {
     return {
       focusUid: p.uid,
       lines: [
-        kv('Name', p.name, 'strong'),
+        kv('Name', p.name, 'strong', p.uid),
         kv('Namespace', 'default'),
         kv('Node', p.nodeName ?? '<none>'),
-        kv('Labels', labelString(p.labels), 'accent'),
-        kv('Status', p.phase === 'Terminating' ? 'Terminating' : p.phase === 'Pending' || p.phase === 'ContainerCreating' ? 'Pending' : 'Running', statusTone(p)),
+        kv('Labels', labelString(p.labels) || '<none>', 'accent'),
+        kv('Status', p.phase === 'Terminating' ? 'Terminating' : apiPhase(p), statusTone(p)),
         kv('IP', p.ip ?? '<none>'),
-        kv('Controlled By', rs ? `ReplicaSet/${rs.name}` : '<none>', rs ? 'info' : 'warn'),
+        kv('Controlled By', rs ? `ReplicaSet/${rs.name}` : '<none>', rs ? 'info' : 'warn', rs?.uid),
         kv('Image', p.image, isBroken(p.image) ? 'error' : undefined),
         ...(crashing
           ? [kv('State', `Waiting (Reason: ${p.phase === 'Error' ? 'Error' : 'CrashLoopBackOff'})`, 'error'), kv('Last State', 'Terminated (Reason: Error, Exit Code: 2)', 'error')]
@@ -566,15 +1050,16 @@ function describe(sim: Simulation, args: string[]): CommandResult {
     return {
       focusUid: d.uid,
       lines: [
-        kv('Name', d.name, 'strong'),
+        kv('Name', d.name, 'strong', d.uid),
         kv('Selector', labelString(d.selector), 'accent'),
         kv('Replicas', `${d.replicas} desired | ${updated} updated | ${all.length} total | ${ready} available | ${all.length - ready} unavailable`),
+        ...(d.paused ? [kv('Paused', 'True — rollouts congelados até o resume', 'warn')] : []),
         kv('StrategyType', 'RollingUpdate'),
         kv('RollingUpdate', '25% max unavailable, 25% max surge', 'muted'),
         kv('Image', d.template.image, isBroken(d.template.image) ? 'error' : undefined),
         kv('Progressing', d.rollout === 'complete' ? 'True (NewReplicaSetAvailable)' : d.rollout === 'stalled' ? 'True (ReplicaSetUpdated) — new Pods not becoming ready' : 'True (ReplicaSetUpdated)', d.rollout === 'stalled' ? 'error' : undefined),
         kv('OldReplicaSets', olds.length ? olds.map((rs) => `${rs.name} (${sim.activePods(rs.uid).length}/${rs.desired} replicas created)`).join(', ') : '<none>', 'muted'),
-        kv('NewReplicaSet', current ? `${current.name} (${updated}/${current.desired} replicas created)` : '<none>', 'info'),
+        kv('NewReplicaSet', current ? `${current.name} (${updated}/${current.desired} replicas created)` : '<none>', 'info', current?.uid),
         ...eventsFor(d.uid),
       ],
     }
@@ -588,9 +1073,9 @@ function describe(sim: Simulation, args: string[]): CommandResult {
     return {
       focusUid: rs.uid,
       lines: [
-        kv('Name', rs.name, 'strong'),
+        kv('Name', rs.name, 'strong', rs.uid),
         kv('Selector', labelString(rsSelector(rs)), 'accent'),
-        kv('Controlled By', dep ? `Deployment/${dep.name}` : '<none>', 'info'),
+        kv('Controlled By', dep ? `Deployment/${dep.name}` : '<none>', 'info', dep?.uid),
         kv('Image', rs.image, isBroken(rs.image) ? 'error' : undefined),
         kv('Replicas', `${active.length} current / ${rs.desired} desired`),
         kv('Pods Status', `${active.filter((p) => p.ready).length} Running / ${active.filter((p) => !p.ready).length} Waiting`),
@@ -606,7 +1091,7 @@ function describe(sim: Simulation, args: string[]): CommandResult {
     return {
       focusUid: s.uid,
       lines: [
-        kv('Name', s.name, 'strong'),
+        kv('Name', s.name, 'strong', s.uid),
         kv('Selector', labelString(s.selector), 'accent'),
         kv('Type', 'ClusterIP'),
         kv('IP', s.clusterIP),
@@ -617,58 +1102,407 @@ function describe(sim: Simulation, args: string[]): CommandResult {
       ],
     }
   }
-  return err(`describe de ${rawKind} não está disponível aqui`)
+
+  const n = sim.cluster.nodes.find((x) => x.name === name)
+  if (!n) return err(`Error from server (NotFound): nodes "${name}" not found`)
+  const pods = Object.values(sim.cluster.pods).filter((p) => p.nodeName === n.name && p.deletedAt === null)
+  return {
+    lines: [
+      kv('Name', n.name, 'strong'),
+      kv('Roles', '<none>'),
+      kv('Labels', `kubernetes.io/hostname=${n.name},kubernetes.io/os=linux`, 'accent'),
+      kv('Conditions', 'Ready=True (KubeletReady)', 'success'),
+      kv('Kubelet Version', 'v1.34.1'),
+      [],
+      plain(`Non-terminated Pods:  (${pods.length} in total)`, 'muted'),
+      ...(pods.length ? table(['  Namespace', 'Name', 'Age'], pods.map((p) => [{ t: '  default' }, { t: p.name, c: 'strong' as Tone, ref: p.uid }, { t: age(sim.now - p.createdAt) }])) : [plain('  <none>', 'muted')]),
+    ],
+  }
 }
 
 function help(): CommandResult {
-  const row = (c: string, d: string): Line => [{ t: `  ${c}`.padEnd(54), c: 'accent' }, { t: d, c: 'muted' }]
+  const row = (c: string, d: string): Line => [{ t: `  ${c}`.padEnd(58), c: 'accent' }, { t: d, c: 'muted' }]
   return {
     lines: [
       plain('Este terminal conversa com o cluster simulado no palco.', 'muted'),
       [],
       row('ls · cat <file>', 'ver os manifestos desta lição'),
       row('kubectl apply -f <file>', 'criar ou atualizar a partir de um manifesto'),
-      row('kubectl get pods [-o wide] [--show-labels] [-w]', 'listar Pods (-w acompanha; Esc para)'),
-      row('kubectl get deploy | rs | svc | endpoints | events | all', 'listar outros recursos'),
-      row('kubectl describe pod|deploy|rs|svc <name>', 'detalhes + eventos'),
-      row('kubectl delete pod <name>... | -l key=value', 'apagar Pods'),
+      row('kubectl get pods [-o wide|yaml] [--show-labels] [-w]', 'listar Pods (-w acompanha; Esc para)'),
+      row('kubectl get deploy | rs | svc | endpointslices | events | all', 'listar outros recursos'),
+      row('kubectl get <tipo> -l app=backend · -L app · -A', 'filtrar por labels, mostrar colunas'),
+      row('kubectl describe pod|deploy|rs|svc|node <name>', 'detalhes + eventos'),
+      row('kubectl delete pod|rs|deploy|svc <name>... | -l k=v', 'apagar (em cascata: o dono leva o que possui)'),
       row('kubectl scale deploy backend --replicas=N', 'mudar as réplicas desejadas'),
       row('kubectl expose deploy backend --port=80', 'colocar um Service na frente'),
       row('kubectl label pod <name> key=value --overwrite', 'mudar uma label de Pod (key- remove)'),
       row('kubectl set selector svc <name> key=value', 'mudar o selector de um Service'),
       row('kubectl set image deploy/backend backend=<image>', 'publicar uma versão nova'),
-      row('kubectl rollout status|undo|history deploy/backend', 'acompanhar ou desfazer um rollout'),
-      row('kubectl logs <pod>', 'ler a saída de um container'),
+      row('kubectl rollout status|history|undo deploy/backend', 'acompanhar ou desfazer um rollout'),
+      row('kubectl rollout restart|pause|resume deploy/backend', 'trocar todos os Pods · pausar mudanças'),
+      row('kubectl logs <pod> [--previous] [--tail=N]', 'ler a saída de um container'),
+      row('kubectl run <nome> --image=<imagem>', 'criar um Pod avulso (sem dono)'),
+      row('kubectl run t --rm -it --image=busybox -- wget -qO- http://backend', 'testar um Service de dentro do cluster'),
+      row('… | grep · head · tail · wc -l · sort', 'filtrar a saída'),
+      row('explicar <comando>', 'explica cada parte de um comando, sem executar'),
       [],
-      plain('Tab completa · ↑/↓ histórico · `k` é atalho para kubectl · clear limpa', 'muted'),
+      plain('kubectl <comando> --help explica cada comando · Tab completa · ↑/↓ histórico · `k` = kubectl · clear limpa', 'muted'),
     ],
   }
 }
 
-const WORDS = [
-  'kubectl', 'apply', 'get', 'describe', 'delete', 'scale', 'expose', 'label', 'set', 'selector', 'image', 'rollout', 'status', 'undo', 'history', 'logs',
-  'pods', 'pod', 'deployment', 'deploy', 'deployment/backend', 'rs', 'svc', 'service', 'endpoints', 'events', 'nodes', 'all', 'backend',
-  '--replicas=', '--show-labels', '--overwrite', '--port=80', '-o', 'wide', '-f', '-w', 'backend=ghcr.io/kubelearn/backend:1.5', 'app=backend',
-]
+// ── completion ─────────────────────────────────────────────────────────────
 
-/** Bash-style completion on the last token. Returns the new input, plus candidates when ambiguous. */
+const KIND_WORDS = ['pods', 'deployments', 'replicasets', 'services', 'endpoints', 'endpointslices', 'events', 'nodes', 'all', 'po', 'deploy', 'rs', 'svc', 'ep', 'no']
+
+/** How each flag is offered: `=` means "a value follows, right here". */
+const FLAG_WORDS: Record<string, string> = {
+  o: '-o', l: '-l', L: '-L', w: '-w', A: '-A', f: '-f', n: '-n', c: '-c', p: '--previous',
+  'show-labels': '--show-labels', 'sort-by': '--sort-by=', 'field-selector': '--field-selector=', 'no-headers': '--no-headers', 'ignore-not-found': '--ignore-not-found',
+  'grace-period': '--grace-period=', force: '--force', now: '--now', wait: '--wait', replicas: '--replicas=', port: '--port=', 'target-port': '--target-port=', name: '--name=', type: '--type=',
+  overwrite: '--overwrite', list: '--list', 'to-revision': '--to-revision=', follow: '--follow', tail: '--tail=',
+}
+
+function namesOf(sim: Simulation, kind: KindId | 'all' | undefined, live = false): string[] {
+  if (!kind || kind === 'all' || kind === 'events') return []
+  if (kind === 'pods') return Object.values(sim.cluster.pods).filter((p) => !live || p.deletedAt === null).map((p) => p.name)
+  return (SPECS[kind] as Spec<Item>).items(sim).map((t) => t.name)
+}
+
+function labelPairs(sim: Simulation): string[] {
+  const pairs = new Set<string>()
+  for (const p of Object.values(sim.cluster.pods)) for (const [k, v] of Object.entries(p.labels)) pairs.add(`${k}=${v}`)
+  for (const s of Object.values(sim.cluster.services)) pairs.add(`kubernetes.io/service-name=${s.name}`)
+  return [...pairs]
+}
+
+/** What fits at the end of `input`, given everything typed before it. */
+function candidatesFor(sim: Simulation, words: string[], last: string): string[] {
+  const [cmd, verb] = words
+  if (!words.length) return SHELL
+  if (cmd === 'cat') return sim.files
+  if (cmd !== 'kubectl' && cmd !== 'k') return []
+  if (words.length === 1) return VERBS
+
+  const prevWord = words[words.length - 1]
+  const prevFlag = prevWord.startsWith('-') ? prevWord.replace(/^-+/, '') : null
+  // values of the flag just typed
+  if (prevFlag === 'o' || prevFlag === 'output') return FORMATS
+  if (prevFlag === 'l' || prevFlag === 'selector') return labelPairs(sim)
+  if (prevFlag === 'L' || prevFlag === 'label-columns') return [...new Set(labelPairs(sim).map((p) => p.split('=')[0]))]
+  if ((prevFlag === 'f' || prevFlag === 'filename') && verb !== 'logs') return sim.files
+  if (prevFlag === 'n' || prevFlag === 'namespace') return ['default']
+  if (prevFlag === 'c' || prevFlag === 'container') return ['backend']
+  // --output=y, --selector=app=b
+  const inline = last.match(/^(--?[\w-]+=)(.*)$/)
+  if (inline) {
+    const flag = inline[1].replace(/^-+|=$/g, '')
+    const values = flag === 'output' || flag === 'o' ? FORMATS : flag === 'selector' || flag === 'l' ? labelPairs(sim) : flag === 'sort-by' ? ['.metadata.name', '.metadata.creationTimestamp', '.status.containerStatuses[0].restartCount'] : flag === 'field-selector' ? ['status.phase=Running', 'status.phase!=Running', 'spec.nodeName=node-1', 'metadata.name='] : flag === 'type' ? ['ClusterIP'] : []
+    return values.map((v) => inline[1] + v)
+  }
+  if (last.startsWith('-')) return (VERB_FLAGS[verb] ?? []).map((f) => FLAG_WORDS[f]).filter(Boolean).concat('--help')
+
+  // positional arguments (flags and their values skipped)
+  const positional: string[] = []
+  for (let i = 2; i < words.length; i++) {
+    const w = words[i]
+    if (w.startsWith('-')) {
+      const key = w.replace(/^-+/, '').split('=')[0]
+      if (!w.includes('=') && TAKES_VALUE.has(key)) i++
+      continue
+    }
+    positional.push(w)
+  }
+  const kindOf = (w: string | undefined) => (w ? (KIND_ALIASES[w.split('/')[0].toLowerCase()] as KindId | 'all' | undefined) : undefined)
+  // kind/name form
+  if (last.includes('/')) {
+    const kind = kindOf(last)
+    const prefix = last.split('/')[0]
+    return namesOf(sim, kind, verb === 'delete').map((n) => `${prefix}/${n}`)
+  }
+
+  switch (verb) {
+    case 'get':
+    case 'describe':
+      return positional.length === 0 ? KIND_WORDS : namesOf(sim, kindOf(positional[0]))
+    case 'delete':
+      return positional.length === 0 ? ['pod', 'pods', 'service', 'svc', 'deployment', 'deploy', 'replicaset', 'rs'] : namesOf(sim, kindOf(positional[0]), true)
+    case 'logs':
+      return positional.length === 0 ? namesOf(sim, 'pods', true) : []
+    case 'scale':
+    case 'expose':
+      return positional.length === 0 ? ['deployment', 'deploy'] : positional.length === 1 ? namesOf(sim, 'deployments') : []
+    case 'label':
+      if (positional.length === 0) return ['pod', 'pods']
+      if (positional.length === 1) return namesOf(sim, 'pods', true)
+      return [...labelPairs(sim), ...[...new Set(labelPairs(sim).map((p) => `${p.split('=')[0]}-`))]]
+    case 'set':
+      if (positional.length === 0) return ['image', 'selector']
+      if (positional[0] === 'image') {
+        if (positional.length === 1) return namesOf(sim, 'deployments').map((n) => `deployment/${n}`)
+        return [...new Set(Object.values(sim.cluster.deployments).flatMap((d) => [...d.history.map((r) => r.image), IMAGE, 'ghcr.io/kubelearn/backend:1.5']))].map((img) => `backend=${img}`)
+      }
+      if (positional.length === 1) return ['service', 'svc']
+      if (positional.length === 2) return namesOf(sim, 'services')
+      return labelPairs(sim)
+    case 'rollout':
+      if (positional.length === 0) return ['status', 'history', 'undo', 'restart', 'pause', 'resume']
+      return positional.length === 1 ? namesOf(sim, 'deployments').map((n) => `deployment/${n}`) : []
+    case 'apply':
+      return ['-f']
+  }
+  return []
+}
+
+/** Bash-style completion on the last word. Returns the new input, plus candidates when ambiguous. */
 export function complete(sim: Simulation, input: string): { value: string; candidates: string[] } {
   const parts = input.split(' ')
   const last = parts[parts.length - 1]
-  const prev = parts.slice(0, -1).join(' ')
-  const podContext = /\b(delete|describe|get|label)\s+(pods?|po)\b/.test(prev) || /\blogs\s*$/.test(prev)
-  const fileContext = /(-f|cat)\s*$/.test(prev)
-  const pool = podContext
-    ? Object.values(sim.cluster.pods)
-        .filter((p) => p.deletedAt === null || !prev.includes('delete'))
-        .map((p) => p.name)
-    : fileContext
-      ? sim.files
-      : WORDS
-  const hits = pool.filter((c) => c.startsWith(last) && !parts.slice(0, -1).includes(c))
+  const words = parts.slice(0, -1).filter(Boolean)
+  const pool = candidatesFor(sim, words, last)
+  const hits = [...new Set(pool)].filter((c) => c.startsWith(last) && (c !== last || pool.length === 1) && !words.includes(c))
   if (!hits.length) return { value: input, candidates: [] }
-  if (hits.length === 1) return { value: [...parts.slice(0, -1), hits[0]].join(' ') + (hits[0].endsWith('=') ? '' : ' '), candidates: [] }
+  if (hits.length === 1) return { value: [...parts.slice(0, -1), hits[0]].join(' ') + (hits[0].endsWith('=') || hits[0].endsWith('/') ? '' : ' '), candidates: [] }
   let common = hits[0]
   for (const h of hits) while (!h.startsWith(common)) common = common.slice(0, -1)
-  return { value: [...parts.slice(0, -1), common].join(' '), candidates: hits.map((h) => (podContext ? short(h) : h)) }
+  const isPods = hits.every((h) => sim.findPod(h.split('/').pop()!))
+  return { value: [...parts.slice(0, -1), common].join(' '), candidates: hits.map((h) => (isPods ? short(h) : h)).slice(0, 24) }
+}
+
+// ── explicar ───────────────────────────────────────────────────────────────
+
+const KIND_DOCS: Record<KindId | 'all', string> = {
+  pods: 'Pods — os containers rodando',
+  deployments: 'Deployments — descrevem o app e cuidam das versões',
+  replicasets: 'ReplicaSets — mantêm N cópias idênticas de um Pod',
+  services: 'Services — nome e IP estáveis na frente de um grupo de Pods',
+  endpoints: 'Endpoints — os IPs por trás de um Service (API antiga)',
+  endpointslices: 'EndpointSlices — os IPs por trás de um Service',
+  events: 'Events — o que os controllers relataram',
+  nodes: 'Nodes — as máquinas do cluster',
+  all: 'os tipos principais: Pods, Services, Deployments e ReplicaSets',
+}
+
+const VERB_DOCS: Record<string, string> = {
+  apply: 'cria ou atualiza o que o manifesto descreve',
+  get: 'lista recursos',
+  describe: 'mostra detalhes e os eventos recentes',
+  delete: 'apaga recursos',
+  scale: 'muda quantas réplicas você quer',
+  expose: 'cria um Service na frente dos Pods',
+  label: 'muda as labels de um Pod',
+  set: 'altera um campo específico',
+  rollout: 'trata dos rollouts de um Deployment',
+  logs: 'mostra a saída do container',
+  run: 'cria um Pod avulso, sem dono',
+}
+
+function describeSelector(v: string): string {
+  const r = parseSelector(v)
+  if ('error' in r) return `selector inválido (${r.error})`
+  const parts = r.map((q) =>
+    q.op === '=' ? `${q.key} igual a ${q.value}` : q.op === '!=' ? `${q.key} diferente de ${q.value}` : q.op === 'in' ? `${q.key} em (${q.values.join(', ')})` : q.op === 'notin' ? `${q.key} fora de (${q.values.join(', ')})` : q.op === 'exists' ? `com a label ${q.key}` : `sem a label ${q.key}`,
+  )
+  return `selector: só o que tiver ${parts.join(' e ')}`
+}
+
+const FLAG_DOCS: Record<string, (v: string) => string> = {
+  o: (v) => ({ wide: 'formato: a tabela com colunas extras (IP, nó, imagem…)', yaml: 'formato: o objeto completo, em YAML, como a API devolve', json: 'formato: o objeto completo, em JSON', name: 'formato: só tipo/nome' })[v] ?? `formato ${v}`,
+  l: (v) => describeSelector(v),
+  L: (v) => `uma coluna a mais com o valor da label ${v}`,
+  w: () => 'continua acompanhando e imprime cada mudança (watch) — Esc para',
+  A: () => 'todos os namespaces',
+  n: (v) => `no namespace ${v}`,
+  'show-labels': () => 'mostra todas as labels numa coluna',
+  'sort-by': (v) => `ordena pelo campo ${v}`,
+  'field-selector': (v) => `filtra por campo: ${v}`,
+  'no-headers': () => 'sem a linha de cabeçalho',
+  'ignore-not-found': () => 'não reclama se não existir',
+  replicas: (v) => `quantidade desejada: ${v} réplica${v === '1' ? '' : 's'} — o ReplicaSet cria ou remove Pods até chegar lá`,
+  port: (v) => `porta do Service, a que os clientes usam: ${v}`,
+  'target-port': (v) => `porta do container, para onde o tráfego vai: ${v}`,
+  name: (v) => `nome do Service criado: ${v}`,
+  type: (v) => `tipo de Service: ${v}`,
+  overwrite: () => 'permite trocar o valor de uma label que já existe',
+  list: () => 'só lista as labels',
+  'to-revision': (v) => `volta para a revisão ${v} (veja rollout history)`,
+  p: () => 'a execução anterior ao último restart — onde está o motivo do crash',
+  follow: () => 'continuaria acompanhando novas linhas',
+  tail: (v) => `só as últimas ${v} linhas`,
+  c: (v) => `do container ${v}`,
+  f: (v) => `o manifesto ${v} (veja com cat ${v})`,
+  'grace-period': (v) => `prazo para encerrar: ${v}s`,
+  force: () => 'apaga sem esperar confirmação do kubelet',
+  now: () => 'encerra imediatamente',
+  wait: () => 'espera a exclusão terminar',
+  image: (v) => `a imagem do container: ${v}`,
+  labels: (v) => `labels do Pod: ${v}`,
+  restart: (v) => (v === 'Never' ? 'não reinicia o container quando ele termina' : `política de restart: ${v}`),
+  rm: () => 'apaga o Pod quando o comando terminar',
+  it: () => 'interativo, com terminal — você vê a saída do comando',
+  i: () => 'mantém a entrada aberta',
+  t: () => 'aloca um terminal',
+  h: () => 'mostra a ajuda do comando',
+  help: () => 'mostra a ajuda do comando',
+}
+
+function explain(sim: Simulation, tokens: string[]): CommandResult {
+  if (!tokens.length) return { lines: [plain('Uso: explicar <comando> — por exemplo, explicar kubectl get pods -l app=backend', 'muted')] }
+  const rows: [string, string, Tone?][] = []
+  const [cmd, verb, ...more] = tokens
+  if (cmd !== 'kubectl' && cmd !== 'k') {
+    const shell: Record<string, string> = { ls: 'lista os arquivos desta lição', cat: 'mostra o conteúdo de um arquivo', clear: 'limpa o terminal', help: 'mostra o que este terminal entende' }
+    return { lines: [plain(shell[cmd] ? `${cmd}: ${shell[cmd]}` : `${cmd} não é um comando que este terminal entende`, shell[cmd] ? undefined : 'warn')] }
+  }
+  rows.push([cmd, cmd === 'k' ? 'atalho para kubectl — a ferramenta que conversa com a API do cluster' : 'a ferramenta que conversa com a API do cluster'])
+  if (!verb) return { lines: table2(rows) }
+  if (!VERBS.includes(verb)) {
+    rows.push([verb, UNSIMULATED_VERBS[verb] ? `${UNSIMULATED_VERBS[verb]} (não simulado aqui)` : 'não é um comando do kubectl', 'warn'])
+    return { lines: table2(rows) }
+  }
+  rows.push([verb, VERB_DOCS[verb]])
+
+  const { args, flags, spelled } = parseArgs(more, verb)
+  // positional arguments
+  const exists = (kind: KindId, name: string) => kind === 'events' || (SPECS[kind] as Spec<Item>).items(sim).some((t) => t.name === name)
+  const nameRow = (kind: KindId, name: string, label: string) =>
+    rows.push([name, exists(kind, name) ? label : `${label} — não existe nenhum com esse nome agora`, exists(kind, name) ? undefined : 'warn'])
+  const singular: Partial<Record<KindId, string>> = { pods: 'Pod', deployments: 'Deployment', replicasets: 'ReplicaSet', services: 'Service', nodes: 'Node', endpoints: 'Endpoints', endpointslices: 'EndpointSlice' }
+  const positional = (list: string[], defaultKind?: KindId) => {
+    let kind: KindId | undefined = defaultKind
+    list.forEach((a, i) => {
+      if (a.includes('/')) {
+        const [k, n] = a.split('/')
+        const kk = KIND_ALIASES[k]
+        if (!kk || kk === 'all') return void rows.push([a, `tipo "${k}" desconhecido`, 'warn'])
+        return nameRow(kk, n, `o ${singular[kk]} chamado ${n}`)
+      }
+      if (i === 0 && !defaultKind) {
+        const ks = a.split(',').map((x) => KIND_ALIASES[x])
+        if (ks.some((x) => !x)) return void rows.push([a, 'tipo de recurso desconhecido', 'warn'])
+        rows.push([a, ks.length > 1 ? `vários tipos: ${a.split(',').join(', ')}` : KIND_DOCS[ks[0]!]])
+        if (ks.length === 1 && ks[0] !== 'all') kind = ks[0] as KindId
+        return
+      }
+      if (kind) nameRow(kind, a, `o ${singular[kind] ?? 'recurso'} chamado ${a}`)
+      else rows.push([a, 'argumento'])
+    })
+  }
+
+  switch (verb) {
+    case 'get':
+    case 'describe':
+    case 'delete':
+    case 'scale':
+    case 'expose':
+      positional(args)
+      break
+    case 'logs':
+      if (args[0]) nameRow('pods', args[0].replace(/^pods?\//, ''), 'o Pod cujos logs você quer ver')
+      break
+    case 'label': {
+      const [kind, name, ...specs] = args
+      if (kind) rows.push([kind, KIND_DOCS[(KIND_ALIASES[kind] as KindId) ?? 'pods'] ?? kind])
+      if (name) nameRow('pods', name, `o Pod chamado ${name}`)
+      for (const sp of specs)
+        rows.push([sp, sp.endsWith('-') && !sp.includes('=') ? `remove a label ${sp.slice(0, -1)}` : `define a label ${sp.split('=')[0]} com o valor ${sp.split('=')[1] ?? ''}`])
+      break
+    }
+    case 'set': {
+      const [what, target, spec] = args
+      if (what) rows.push([what, what === 'image' ? 'troca a imagem do container — gera uma revisão nova e um rollout' : what === 'selector' ? 'troca o selector do Service — muda quais Pods recebem tráfego' : 'subcomando'])
+      if (target) positional([target])
+      if (spec) rows.push([spec, what === 'image' ? `container ${spec.split('=')[0]} passa a usar ${spec.split('=')[1] ?? ''}` : `selector novo: ${spec}`])
+      break
+    }
+    case 'run': {
+      const [name, ...command] = args
+      if (name) rows.push([name, 'o nome do Pod novo'])
+      if (command.length) rows.push([`-- ${command.join(' ')}`, 'o comando que roda dentro do container'])
+      break
+    }
+    case 'rollout': {
+      const [action, target] = args
+      const doc: Record<string, string> = { status: 'acompanha até o rollout terminar', history: 'lista as revisões', undo: 'volta para a revisão anterior', restart: 'troca todos os Pods aos poucos, sem mudar a imagem', pause: 'congela os rollouts: mudanças no template esperam', resume: 'retoma os rollouts — o que mudou durante a pausa sai de uma vez' }
+      if (action) rows.push([action, doc[action] ?? 'ação desconhecida', doc[action] ? undefined : 'warn'])
+      if (target) positional([target])
+      break
+    }
+  }
+  for (const [key, value] of Object.entries(flags)) {
+    const typed = spelled[key] ?? `--${key}`
+    const doc = FLAG_DOCS[key] as ((v: string) => string) | undefined
+    rows.push([value === true ? typed : `${typed} ${value}`, doc ? doc(value === true ? '' : value) : 'flag que este terminal não conhece', doc ? undefined : 'warn'])
+  }
+  return { lines: table2(rows) }
+}
+
+function table2(rows: [string, string, Tone?][]): Line[] {
+  const w = Math.min(34, Math.max(...rows.map(([t]) => t.length)) + 3)
+  return rows.map(([t, d, tone]) => [{ t: t.length >= w ? `${t}  ` : t.padEnd(w), c: 'accent' as Tone }, { t: d, c: tone }])
+}
+
+// ── kubectl run ────────────────────────────────────────────────────────────
+
+const DNS = /^([a-z0-9-]+)(?:\.default(?:\.svc(?:\.cluster\.local)?)?)?$/
+
+/** What a request from inside the cluster to a Service would get: DNS → ClusterIP → kube-proxy → endpoint. */
+function fromInside(sim: Simulation, command: string[]): Line[] {
+  const [tool, ...rest] = command
+  if (tool === 'nslookup') {
+    const host = rest.find((a) => !a.startsWith('-')) ?? ''
+    const m = host.match(DNS)
+    const svc = m ? sim.findService(m[1]) : undefined
+    if (!svc) return [plain('Server:\t\t10.96.0.10'), plain('Address:\t10.96.0.10:53'), [], plain(`** server can't find ${host}.default.svc.cluster.local: NXDOMAIN`, 'error')]
+    return [plain('Server:\t\t10.96.0.10'), plain('Address:\t10.96.0.10:53'), [], plain(`Name:\t${svc.name}.default.svc.cluster.local`, 'strong'), plain(`Address: ${svc.clusterIP}`, 'success')]
+  }
+  if (tool === 'wget' || tool === 'curl') {
+    const url = rest.find((a) => /^https?:\/\//.test(a) || (!a.startsWith('-') && a.includes('.')) || (!a.startsWith('-') && sim.findService(a)))
+    if (!url) return [plain(`${tool}: informe uma URL — por exemplo, http://backend`, 'error')]
+    const u = url.replace(/^https?:\/\//, '')
+    const [hostPort, ...pathParts] = u.split('/')
+    const [host, portText] = hostPort.split(':')
+    const m = host.match(DNS)
+    const svc = m ? sim.findService(m[1]) : Object.values(sim.cluster.services).find((s) => s.clusterIP === host)
+    const fail = (why: string) => [plain(tool === 'wget' ? why : why.replace(/^wget:/, 'curl:'), 'error')]
+    if (!svc) return fail(`wget: bad address '${host}'`)
+    const port = portText ? Number(portText) : 80
+    if (port !== svc.port) return [...fail(`wget: can't connect to remote host (${svc.clusterIP}): Connection refused`), note(`o Service ${svc.name} escuta na porta ${svc.port}, não na ${port}`)]
+    if (!svc.endpoints.length)
+      return [...fail(`wget: can't connect to remote host (${svc.clusterIP}): Connection refused`), note('o Service existe e o DNS resolveu, mas ele não tem endpoints — nenhum Pod Ready combina com o selector')]
+    if (svc.targetPort !== 8080)
+      return [...fail(`wget: can't connect to remote host (${svc.clusterIP}): Connection refused`), note(`o tráfego chegou a um Pod, mas na porta ${svc.targetPort} — o container escuta na 8080 (targetPort errado)`)]
+    // kube-proxy picks an endpoint at random, per connection
+    const pod = sim.cluster.pods[svc.endpoints[Math.floor(Math.random() * svc.endpoints.length)]]
+    const path = '/' + pathParts.join('/')
+    return [
+      plain(JSON.stringify({ status: 'ok', path, servedBy: pod.name, version: tag(pod.image) }), 'success'),
+      [{ t: '# atendido por ', c: 'muted' }, { t: pod.name, c: 'muted', ref: pod.uid }, { t: ' — rode de novo e o kube-proxy pode escolher outro Pod', c: 'muted' }],
+    ]
+  }
+  return [plain(`${tool ?? 'sh'}: este terminal não abre shells interativos dentro de Pods.`, 'warn'), note('dá para rodar wget, curl ou nslookup — ex.: -- wget -qO- http://backend')]
+}
+
+function runPod(sim: Simulation, args: string[], flags: Flags): CommandResult {
+  const [name, ...command] = args
+  if (!name) return err('error: NAME is required for run')
+  if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(name)) return err(`The Pod "${name}" is invalid: metadata.name: Invalid value: "${name}": a lowercase RFC 1123 label must consist of lower case alphanumeric characters or '-'`)
+  if (typeof flags.image !== 'string') return err('error: required flag(s) "image" not set')
+  const interactive = flags.it === true || (flags.i === true && flags.t === true) || flags.i === true
+  if (flags.rm && !interactive) return err('error: --rm should only be used for attached containers')
+  if (command.length && !interactive) return { lines: [plain('Sem -it o comando rodaria em segundo plano; aqui ele só é simulado com --rm -it.', 'warn')] }
+  if (interactive) {
+    if (!command.length) return { lines: [plain('Este terminal não abre shells interativos dentro de Pods.', 'warn'), note('passe um comando depois de --, ex.: -- wget -qO- http://backend')] }
+    const out = fromInside(sim, command)
+    return { lines: [...out, ...(flags.rm ? [plain(`pod "${name}" deleted`, 'muted')] : [note('sem --rm, o Pod ficaria no cluster depois do comando')])] }
+  }
+  let labels: Labels = { run: name }
+  if (typeof flags.labels === 'string') {
+    const parsed = parseLabels([flags.labels])
+    if (!parsed || Object.values(parsed).some((v) => v === null)) return err(`error: invalid label spec: ${flags.labels}`)
+    labels = parsed as Labels
+  }
+  const r = sim.runPod(name, flags.image, labels)
+  if (r === 'exists') return err(`Error from server (AlreadyExists): pods "${name}" already exists`)
+  return ok(`pod/${name} created`, sim.findPod(name)?.uid)
 }

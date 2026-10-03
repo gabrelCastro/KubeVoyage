@@ -24,6 +24,7 @@ const SOURCE: Record<ClusterEvent['source'], string> = {
   'endpoints-controller': 'endpoints controller',
   'deployment-controller': 'deployment controller',
   'replicaset-controller': 'replicaset controller',
+  'garbage-collector': 'garbage collector',
   'default-scheduler': 'scheduler',
   kubelet: 'kubelet',
 }
@@ -37,7 +38,7 @@ function phrase(e: ClusterEvent): { lead: string; obj?: string; tail?: string } 
     case 'Existing':
       return { lead: e.involved.kind === 'Service' ? 'Service' : e.involved.kind, obj: n, tail: e.involved.kind === 'Service' ? 'já existia' : 'já estava rodando' }
     case 'Created':
-      return { lead: 'Você criou', obj: `service/${e.involved.name}` }
+      return { lead: 'Você criou', obj: `${e.involved.kind === 'Pod' ? 'pod' : 'service'}/${e.involved.name}` }
     case 'Labeled':
       return { lead: 'Você trocou a label de', obj: n, tail: e.message.split(`${e.involved.name} `)[1] }
     case 'SelectorChanged':
@@ -65,7 +66,17 @@ function phrase(e: ClusterEvent): { lead: string; obj?: string; tail?: string } 
     case 'Scaled':
       return { lead: 'Você mudou as réplicas', tail: e.message.split('replicas ')[1] }
     case 'Deleted':
-      return { lead: 'Você apagou', obj: e.involved.kind === 'Service' ? `service/${n}` : n }
+      return { lead: 'Você apagou', obj: e.involved.kind === 'Pod' ? n : `${({ Service: 'service', Deployment: 'deployment', ReplicaSet: 'rs' } as Record<string, string>)[e.involved.kind] ?? ''}/${n}` }
+    case 'Restarted':
+      return { lead: 'Você reiniciou', obj: `deployment/${n}`, tail: '— todos os Pods serão trocados' }
+    case 'Paused':
+      return { lead: 'Você pausou', obj: `deployment/${n}` }
+    case 'Resumed':
+      return { lead: 'Você retomou', obj: `deployment/${n}` }
+    case 'GarbageCollecting':
+      return { lead: 'Sem dono vivo:', obj: `rs/${n}`, tail: 'vai ser apagado, com os Pods' }
+    case 'GarbageCollected':
+      return { lead: 'ReplicaSet', obj: n, tail: 'removido' }
     case 'ScalingReplicaSet': {
       const count = e.message.split(' to ').pop() ?? ''
       return { lead: 'ReplicaSet ajustado para', obj: `${count} ${plural(count, 'réplica', 'réplicas')}` }
