@@ -34,8 +34,8 @@ export function ApostilaPanel() {
         <button onClick={() => window.print()} className="ml-auto flex items-center gap-1.5 rounded-lg border border-line-strong px-2.5 py-1.5 text-[12px] text-fg-muted transition hover:text-fg"><Printer size={13} /> Imprimir</button>
       </header>
       <div ref={scroll} className="apostila-scroll max-h-[calc(100vh-8rem)] overflow-y-auto">
-        <div className="grid items-start md:grid-cols-[170px_minmax(0,1fr)]">
-          <nav className="apostila-index sticky top-0 z-10 border-b border-line bg-panel/95 px-4 py-4 backdrop-blur md:border-r md:border-b-0" aria-label="Índice da apostila">
+        <div className="grid grid-cols-[minmax(0,1fr)] items-start md:grid-cols-[170px_minmax(0,1fr)]">
+          <nav className="apostila-index sticky top-0 z-10 min-w-0 border-b border-line bg-panel/95 px-4 py-4 backdrop-blur md:border-r md:border-b-0" aria-label="Índice da apostila">
             <div className="mb-2 text-[10px] font-semibold tracking-[0.1em] text-fg-faint uppercase">Nesta apostila</div>
             <ol className="flex gap-2 overflow-x-auto md:flex-col md:overflow-visible">
               {sections.map(([id, label]) => (
