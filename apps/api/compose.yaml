@@ -1,0 +1,24 @@
+# Local services. Started automatically by `./mvnw spring-boot:run` (spring-boot-docker-compose).
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: kubelearn
+      POSTGRES_USER: kubelearn
+      POSTGRES_PASSWORD: kubelearn
+    ports:
+      - '127.0.0.1:54329:5432'
+    volumes:
+      - kubelearn-pg:/var/lib/postgresql/data
+
+  # Catches every email the API sends. Inbox at http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - '127.0.0.1:1025:1025'
+      - '127.0.0.1:8025:8025'
+    labels:
+      org.springframework.boot.ignore: true
+
+volumes:
+  kubelearn-pg:

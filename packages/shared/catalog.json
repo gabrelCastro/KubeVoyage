@@ -1,0 +1,11 @@
+{
+  "$comment": "Single source of truth for lesson and objective ids. Read by the web app (TypeScript) and the API (Java).",
+  "lessons": {
+    "self-healing": { "required": ["apply", "get", "delete", "heal"], "optional": ["chaos"] },
+    "scaling": { "required": ["drag", "command"], "optional": ["zero"] },
+    "services": { "required": ["expose", "endpoints", "reroute"], "optional": [] },
+    "labels": { "required": ["inspect", "join", "quarantine"], "optional": ["return"] },
+    "debugging": { "required": ["notice", "compare", "fix"], "optional": [] },
+    "failures": { "required": ["ship", "investigate", "rollback"], "optional": [] }
+  }
+}

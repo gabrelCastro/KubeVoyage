@@ -1,0 +1,19 @@
+{
+  "name": "kubelearn",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*", "apps/web"],
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c magenta,cyan \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "cd apps/api && ./mvnw -q spring-boot:run",
+    "dev:web": "npm run dev -w @kubelearn/web",
+    "test": "npm run test -w @kubelearn/shared && npm run test -w @kubelearn/web && npm run test:api",
+    "test:api": "cd apps/api && ./mvnw -q test",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "fixtures": "cd packages/shared && npx tsx scripts/make-fixtures.ts",
+    "build": "npm run build -w @kubelearn/web && cd apps/api && ./mvnw -q -DskipTests package"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
