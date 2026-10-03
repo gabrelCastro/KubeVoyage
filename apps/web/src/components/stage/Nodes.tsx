@@ -4,7 +4,7 @@ import { memo, useEffect, useRef, type ReactNode } from 'react'
 import { isBroken, short, tag } from '../../sim/engine'
 import type { ControllerPhase, Deployment, Pod, ReplicaSet, Service } from '../../sim/types'
 import { cn, LIFECYCLE, podLabel, podVisual, spring, VISUAL } from '../../lib/visual'
-import { useApp } from '../../store/useApp'
+import { designFor, useApp } from '../../store/useApp'
 import { useSim } from '../../store/useSim'
 import { KindBadge, LabelChip, Metric, Rolling, StatusGlyph } from '../primitives'
 
@@ -253,7 +253,7 @@ export interface Probe {
 
 export const PodNode = memo(function PodNode({ pod, geo, probe, ...e }: { pod: Pod; geo: Geo; probe: Probe | null } & Emphasis) {
   const select = useSim((s) => s.select)
-  const appEmoji = useApp((s) => s.design.emoji)
+  const appEmoji = useApp((s) => designFor(s, pod.image).emoji)
   const reduced = useSim((s) => s.reducedMotion)
   const v = podVisual(pod)
   const meta = VISUAL[v]

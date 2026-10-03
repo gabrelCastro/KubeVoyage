@@ -5,6 +5,7 @@ import type { Line, Seg, Tone } from '../sim/kubectl'
 import { shellHistory } from '../lib/shellHistory'
 import { cn } from '../lib/visual'
 import { useLesson } from '../lessons/useLesson'
+import { imageOf, useApp } from '../store/useApp'
 import { useSim, type TermEntry } from '../store/useSim'
 import { Kbd } from './primitives'
 
@@ -189,7 +190,7 @@ export function Terminal() {
       const before = value
       void import('../sim/kubectl').then(({ complete }) => {
         if (input.current?.value !== before) return
-        const result = complete(useSim.getState().sim, before)
+        const result = complete(useSim.getState().sim, before, useApp.getState().releases.map((r) => imageOf(r.tag)))
         setValue(result.value)
         setCandidates(result.candidates)
       })

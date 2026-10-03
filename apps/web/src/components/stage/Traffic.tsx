@@ -76,7 +76,8 @@ export const Traffic = memo(function Traffic({ layout, services }: { layout: Lay
         const pod = targets[i]
         fly(requestPath(sBox, layout.boxes[pod]), false, () => {
           setServed((s) => ({ ...s, [pod]: (s[pod] ?? 0) + 1 }))
-          if (svc === appSvc && current()) visit({ ok: true, podUid: pod, podName: useSim.getState().cluster.pods[pod]?.name })
+          const served = useSim.getState().cluster.pods[pod]
+          if (svc === appSvc && current()) visit({ ok: true, podUid: pod, podName: served?.name, image: served?.image })
         })
       }
     }

@@ -3,7 +3,7 @@ import { getLesson } from '../lessons'
 import { lastLesson } from '../progress/browser'
 import type { Lesson } from '../lessons/types'
 import { deploymentEditYaml } from '../lib/deploymentEditYaml'
-import { useApp } from './useApp'
+import { designFor, imageOf, useApp } from './useApp'
 import { Simulation } from '../sim/engine'
 import type { Line, WatchSpec } from '../sim/kubectl'
 import type { ClusterEvent, ClusterState, Effect, Narration, PendingTask } from '../sim/types'
@@ -197,8 +197,12 @@ export const useSim = create<SimStore>((set, get) => {
       watchRows = kubectl.watchRows
       const current = get()
       holdWatch = true
-      const app = useApp.getState().design
-      const result = kubectl.run(current.sim, trimmed, { app: { name: app.name, message: app.message } })
+      const app = useApp.getState()
+      const result = kubectl.run(current.sim, trimmed, {
+        app: { name: app.design.name, message: app.design.message },
+        appFor: (image) => designFor(app, image),
+        images: app.releases.map((r) => imageOf(r.tag)),
+      })
       holdWatch = false
       if (result.clear) {
         set({ term: [], history: [...current.history, trimmed] })

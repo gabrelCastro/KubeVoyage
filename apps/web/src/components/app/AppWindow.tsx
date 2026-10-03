@@ -2,8 +2,8 @@ import { AnimatePresence, motion } from 'motion/react'
 import { ChevronDown, Palette } from 'lucide-react'
 import { useState } from 'react'
 import { cn } from '../../lib/visual'
-import { short } from '../../sim/engine'
-import { APP_COLORS, useApp, type AppDesign } from '../../store/useApp'
+import { short, tag } from '../../sim/engine'
+import { APP_COLORS, designFor, useApp, type AppDesign } from '../../store/useApp'
 import { useSim } from '../../store/useSim'
 
 const CELLS = 32
@@ -18,7 +18,7 @@ function readCollapsed() {
 }
 
 /** The app's "home page", as a visitor would see it. */
-export function AppPage({ design, compact }: { design: AppDesign; compact?: boolean }) {
+export function AppPage({ design, compact, version }: { design: AppDesign; compact?: boolean; version?: string }) {
   const color = APP_COLORS[design.color]
   return (
     <div
@@ -34,6 +34,11 @@ export function AppPage({ design, compact }: { design: AppDesign; compact?: bool
         </div>
         <div className="truncate text-[12px] text-fg-muted">{design.message || ' '}</div>
       </div>
+      {version && (
+        <span className="ml-auto shrink-0 rounded-[4px] bg-panel-2 px-1.5 font-mono text-[10px] text-fg-muted ring-1 ring-line-strong" title="A versão que respondeu por último">
+          {version}
+        </span>
+      )}
     </div>
   )
 }
@@ -44,6 +49,7 @@ export function AppPage({ design, compact }: { design: AppDesign; compact?: bool
  */
 export function AppWindow() {
   const design = useApp((s) => s.design)
+  const releases = useApp((s) => s.releases)
   const customized = useApp((s) => s.customized)
   const visits = useApp((s) => s.visits)
   const served = useApp((s) => s.served)
@@ -58,7 +64,15 @@ export function AppWindow() {
   const running = Object.values(pods).filter((p) => p.ready && p.image.includes('kubelearn/backend')).length
   const last = visits.at(-1)
   const down = !!svc && !!last && !last.ok
-  const color = APP_COLORS[design.color]
+  const look = (image?: string) => (image ? designFor({ design, releases }, image) : design)
+  const lastOk = [...visits].reverse().find((v) => v.ok)
+  const showing = look(lastOk?.image)
+  // which versions are answering right now: the Ready endpoints, grouped by image tag
+  const live = new Map<string, number>()
+  for (const uid of svc?.endpoints ?? []) {
+    const image = pods[uid]?.image
+    if (image) live.set(image, (live.get(image) ?? 0) + 1)
+  }
 
   const toggle = () => {
     setCollapsed((c) => {
@@ -113,12 +127,13 @@ export function AppWindow() {
                       <div className="mt-0.5 text-[12px] text-fg-muted">O Service {svc.name} existe, mas não tem nenhum Pod Ready para atender.</div>
                     </div>
                   ) : (
-                    <AppPage design={design} compact />
+                    <AppPage design={showing} compact version={lastOk?.image ? tag(lastOk.image) : undefined} />
                   )}
                   <div className="mt-2.5 grid grid-cols-8 gap-1" role="list" aria-label="Últimos visitantes">
                     {Array.from({ length: CELLS }, (_, i) => {
                       const v = visits[visits.length - CELLS + i]
                       if (!v) return <span key={`e${i}`} className="h-8 rounded-md border border-dashed border-line" />
+                      const d = look(v.image)
                       return (
                         <motion.span
                           key={v.id}
@@ -127,14 +142,14 @@ export function AppWindow() {
                           animate={{ scale: 1, opacity: 1 }}
                           onMouseEnter={() => v.podUid && pods[v.podUid] && hover(v.podUid)}
                           onMouseLeave={() => hover(null)}
-                          title={v.ok ? `Atendido por ${v.podName}` : 'Recusado: o Service não tinha para quem mandar'}
+                          title={v.ok ? `Atendido por ${v.podName}${v.image ? ` (versão ${tag(v.image)})` : ''}` : 'Recusado: o Service não tinha para quem mandar'}
                           className={cn('flex h-8 flex-col items-center justify-center rounded-md leading-none', !v.ok && 'bg-crash/15 text-crash')}
-                          style={v.ok ? { background: `color-mix(in oklab, ${color} 16%, transparent)` } : undefined}
+                          style={v.ok ? { background: `color-mix(in oklab, ${APP_COLORS[d.color]} 18%, transparent)` } : undefined}
                         >
                           {v.ok ? (
                             <>
                               <span className="text-[13px]" aria-hidden>
-                                {design.emoji}
+                                {d.emoji}
                               </span>
                               <span className="mt-0.5 font-mono text-[8.5px] text-fg-faint">{v.podName ? short(v.podName).slice(0, 4) : ''}</span>
                             </>
@@ -145,6 +160,17 @@ export function AppWindow() {
                       )
                     })}
                   </div>
+                  {live.size > 1 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-fg-muted" aria-live="polite">
+                      <span className="text-fg-faint">no ar agora:</span>
+                      {[...live].map(([image, n]) => (
+                        <span key={image} className="flex items-center gap-1 rounded-full border border-line px-1.5 py-[1px] font-mono">
+                          <span aria-hidden>{look(image).emoji}</span>
+                          {tag(image)} ×{n}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   <div className="mt-2 flex items-center justify-between text-[11px] text-fg-faint">
                     <span>
                       <span className="text-ready tabular-nums">{served}</span> atendidos

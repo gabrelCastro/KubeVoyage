@@ -72,7 +72,13 @@ export interface Setup {
 }
 
 /** Images that crash on start. Version 1.5 "forgot" a required environment variable. */
-export const isBroken = (image: string) => /:1\.5$/.test(image)
+// Images published "with a bug" in the app studio — they crash like 1.5 does.
+const brokenImages = new Set<string>()
+export const setBrokenImages = (images: Iterable<string>) => {
+  brokenImages.clear()
+  for (const i of images) brokenImages.add(i)
+}
+export const isBroken = (image: string) => /:1\.5$/.test(image) || brokenImages.has(image)
 
 // Same alphabet Kubernetes uses for generated name suffixes (no vowels, no ambiguous chars).
 const ALPHABET = 'bcdfghjklmnpqrstvwxz2456789'

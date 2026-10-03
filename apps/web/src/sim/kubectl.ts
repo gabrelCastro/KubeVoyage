@@ -38,6 +38,10 @@ export interface CommandResult {
 
 export interface RunPresentation {
   app?: { name: string; message: string }
+  /** The app as a given image serves it — each published version answers with its own face. */
+  appFor?: (image: string) => { name: string; message: string }
+  /** Images published in the app studio (offered by Tab completion). */
+  images?: string[]
 }
 
 export type WatchKind = 'pods' | 'deployments' | 'replicasets' | 'services' | 'endpoints' | 'endpointslices' | 'events' | 'nodes'
@@ -1266,7 +1270,7 @@ function labelPairs(sim: Simulation): string[] {
 }
 
 /** What fits at the end of `input`, given everything typed before it. */
-function candidatesFor(sim: Simulation, words: string[], last: string): string[] {
+function candidatesFor(sim: Simulation, words: string[], last: string, images: string[] = []): string[] {
   const [cmd, verb] = words
   if (!words.length) return SHELL
   if (cmd === 'cat') return sim.files
@@ -1333,7 +1337,7 @@ function candidatesFor(sim: Simulation, words: string[], last: string): string[]
       if (positional.length === 0) return ['image', 'selector']
       if (positional[0] === 'image') {
         if (positional.length === 1) return namesOf(sim, 'deployments').map((n) => `deployment/${n}`)
-        return [...new Set(Object.values(sim.cluster.deployments).flatMap((d) => [...d.history.map((r) => r.image), IMAGE, 'ghcr.io/kubelearn/backend:1.5']))].map((img) => `backend=${img}`)
+        return [...new Set(Object.values(sim.cluster.deployments).flatMap((d) => [...d.history.map((r) => r.image), IMAGE, 'ghcr.io/kubelearn/backend:1.5', ...images]))].map((img) => `backend=${img}`)
       }
       if (positional.length === 1) return ['service', 'svc']
       if (positional.length === 2) return namesOf(sim, 'services')
@@ -1348,11 +1352,11 @@ function candidatesFor(sim: Simulation, words: string[], last: string): string[]
 }
 
 /** Bash-style completion on the last word. Returns the new input, plus candidates when ambiguous. */
-export function complete(sim: Simulation, input: string): { value: string; candidates: string[] } {
+export function complete(sim: Simulation, input: string, images: string[] = []): { value: string; candidates: string[] } {
   const parts = input.split(' ')
   const last = parts[parts.length - 1]
   const words = parts.slice(0, -1).filter(Boolean)
-  const pool = candidatesFor(sim, words, last)
+  const pool = candidatesFor(sim, words, last, images)
   const hits = [...new Set(pool)].filter((c) => c.startsWith(last) && (c !== last || pool.length === 1) && !words.includes(c))
   if (!hits.length) return { value: input, candidates: [] }
   if (hits.length === 1) return { value: [...parts.slice(0, -1), hits[0]].join(' ') + (hits[0].endsWith('=') || hits[0].endsWith('/') ? '' : ' '), candidates: [] }
@@ -1578,7 +1582,7 @@ function fromInside(sim: Simulation, command: string[], presentation: RunPresent
     const pod = sim.cluster.pods[svc.endpoints[Math.floor(Math.random() * svc.endpoints.length)]]
     const path = '/' + pathParts.join('/')
     return [
-      plain(JSON.stringify({ status: 'ok', app: presentation.app?.name, message: presentation.app?.message, path, servedBy: pod.name, version: tag(pod.image) }), 'success'),
+      plain(JSON.stringify({ status: 'ok', app: (presentation.appFor?.(pod.image) ?? presentation.app)?.name, message: (presentation.appFor?.(pod.image) ?? presentation.app)?.message, path, servedBy: pod.name, version: tag(pod.image) }), 'success'),
       [{ t: '# atendido por ', c: 'muted' }, { t: pod.name, c: 'muted', ref: pod.uid }, { t: ' — rode de novo e o kube-proxy pode escolher outro Pod', c: 'muted' }],
     ]
   }
