@@ -61,7 +61,7 @@ const ALIASES: Record<string, string> = {
 }
 
 /** Flags that take a value, so `--replicas 3` works like `--replicas=3`. */
-export const TAKES_VALUE = new Set(['o', 'l', 'n', 'f', 'L', 'c', 'replicas', 'port', 'target-port', 'name', 'image', 'to-revision', 'sort-by', 'field-selector', 'tail', 'type', 'labels', 'restart'])
+export const TAKES_VALUE = new Set(['o', 'l', 'n', 'f', 'L', 'c', 'replicas', 'port', 'target-port', 'name', 'image', 'to-revision', 'sort-by', 'field-selector', 'tail', 'type', 'labels', 'restart', 'from-literal', 'patch'])
 
 /** Short flags that are booleans (everything else short takes the next token). */
 const SHORT_BOOLEAN = new Set(['w', 'A', 'p', 'h', 'i', 't', 'it'])
@@ -93,6 +93,8 @@ export function parseArgs(tokens: string[], verb?: string): Parsed {
         key = key[0]
       }
       if (key === 'f' && verb === 'logs') key = 'follow'
+      // `patch -p` is the patch body; everywhere else -p is `logs --previous`
+      if (key === 'p' && verb === 'patch') key = 'patch'
       spelled[key] = `-${t.slice(1, 2)}`
       if (value !== undefined) flags[key] = value
       else if (!SHORT_BOOLEAN.has(key) && TAKES_VALUE.has(key) && tokens[i + 1] !== undefined) flags[key] = tokens[++i]

@@ -1,4 +1,5 @@
 import type {
+  ConfigMap,
   ClusterEvent,
   ClusterState,
   Deployment,
@@ -35,6 +36,7 @@ export const TIMING = {
   backoffBase: 1500,
   backoffMax: 8000,
   terminate: 900,
+  configRetry: 1600,
   scaleDownStagger: 220,
 } as const
 
@@ -53,6 +55,13 @@ export interface DeploymentManifest {
   replicas: number
   labels: Labels
   image: string
+  /** envFrom: configMapRef */
+  configMap?: string
+}
+
+export interface ConfigMapManifest {
+  name: string
+  data: Record<string, string>
 }
 
 export interface ServiceManifest {
@@ -62,13 +71,14 @@ export interface ServiceManifest {
   targetPort: number
 }
 
-export type Manifest = ({ kind: 'Deployment' } & DeploymentManifest) | ({ kind: 'Service' } & ServiceManifest)
+export type Manifest = ({ kind: 'Deployment' } & DeploymentManifest) | ({ kind: 'Service' } & ServiceManifest) | ({ kind: 'ConfigMap' } & ConfigMapManifest)
 
 /** A cluster that already exists when a lesson starts. */
 export interface Setup {
   deployments?: (DeploymentManifest & { age?: number })[]
   services?: ServiceManifest[]
   pods?: { name: string; labels: Labels; image: string }[]
+  configMaps?: ConfigMapManifest[]
 }
 
 /** Images that crash on start. Version 1.5 "forgot" a required environment variable. */
@@ -99,11 +109,12 @@ const sameLabels = (a: Labels, b: Labels) => {
   return ak.length === bk.length && ak.every((key, i) => key === bk[i] && a[key] === b[key])
 }
 
-const sameTemplateData = (a: Template, b: Template) => a.image === b.image && (a.restartedAt ?? 0) === (b.restartedAt ?? 0) && sameLabels(a.labels, b.labels)
+const sameTemplateData = (a: Template, b: Template) =>
+  a.image === b.image && (a.restartedAt ?? 0) === (b.restartedAt ?? 0) && (a.configMap ?? '') === (b.configMap ?? '') && sameLabels(a.labels, b.labels)
 
 /** Does this ReplicaSet run this template? */
-export const sameTemplate = (rs: { image: string; templateLabels: Labels; restartedAt?: number }, t: Template) =>
-  sameTemplateData({ image: rs.image, labels: rs.templateLabels, restartedAt: rs.restartedAt }, t)
+export const sameTemplate = (rs: { image: string; templateLabels: Labels; restartedAt?: number; configMap?: string }, t: Template) =>
+  sameTemplateData({ image: rs.image, labels: rs.templateLabels, restartedAt: rs.restartedAt, configMap: rs.configMap }, t)
 
 /** The selector a ReplicaSet really uses: the Deployment's, pinned to its own template hash. */
 export const rsSelector = (rs: ReplicaSet): Labels => ({ ...rs.selector, 'pod-template-hash': rs.hash })
@@ -119,6 +130,7 @@ export class Simulation {
     replicaSets: {},
     pods: {},
     services: {},
+    configMaps: {},
     nodes: [
       { kind: 'Node', name: 'node-1' },
       { kind: 'Node', name: 'node-2' },
@@ -281,6 +293,10 @@ export class Simulation {
     return Object.values(this.cluster.pods).find((p) => p.name === name)
   }
 
+  findConfigMap(name: string) {
+    return Object.values(this.cluster.configMaps).find((c) => c.name === name)
+  }
+
   findService(name: string) {
     return Object.values(this.cluster.services).find((s) => s.name === name)
   }
@@ -415,6 +431,10 @@ export class Simulation {
       this.putPod(pod)
       this.emit('cluster', 'success', 'Existing', `pod/${pod.name} already running`, this.ref(pod))
     }
+    for (const c of setup.configMaps ?? []) {
+      const cm: ConfigMap = { kind: 'ConfigMap', uid: `cm-${++this.seq}`, name: c.name, data: { ...c.data }, createdAt: -5 * 60_000 }
+      this.cluster = { ...this.cluster, configMaps: { ...this.cluster.configMaps, [cm.uid]: cm } }
+    }
     for (const s of setup.services ?? []) {
       const svc = this.newService(s)
       svc.createdAt = -3 * 60_000
@@ -459,6 +479,7 @@ export class Simulation {
   }
 
   apply(m: Manifest): 'created' | 'configured' | 'unchanged' {
+    if (m.kind === 'ConfigMap') return this.putConfigMap(m.name, m.data, 'apply')
     if (m.kind === 'Service') {
       const existing = this.findService(m.name)
       if (!existing) {
@@ -471,6 +492,11 @@ export class Simulation {
     }
     const existing = this.findDeployment(m.name)
     if (existing) {
+      if ((existing.template.configMap ?? '') !== (m.configMap ?? '')) {
+        this.applyTemplate(existing, { ...existing.template, image: m.image, configMap: m.configMap })
+        if (existing.replicas !== m.replicas) this.scale(m.name, m.replicas, 'apply')
+        return 'configured'
+      }
       if (existing.template.image !== m.image) {
         this.setImage(m.name, 'backend', m.image, 'apply')
         return 'configured'
@@ -486,10 +512,10 @@ export class Simulation {
         name: m.name,
         replicas: m.replicas,
         selector: { ...m.labels },
-        template: { labels: { ...m.labels }, image: m.image },
+        template: { labels: { ...m.labels }, image: m.image, ...(m.configMap && { configMap: m.configMap }) },
         createdAt: this.now,
         revision: 1,
-        history: [{ image: m.image, labels: { ...m.labels } }],
+        history: [{ image: m.image, labels: { ...m.labels }, ...(m.configMap && { configMap: m.configMap }) }],
         rollout: 'complete',
       }
       this.cluster = { ...this.cluster, deployments: { ...this.cluster.deployments, [dep.uid]: dep } }
@@ -567,7 +593,7 @@ export class Simulation {
     if (sameTemplateData(previous, dep.template)) return 'skipped' as const
     this.act(() => {
       this.patchDep(dep.uid, {
-        template: { image: previous.image, labels: { ...previous.labels }, restartedAt: previous.restartedAt },
+        template: { image: previous.image, labels: { ...previous.labels }, restartedAt: previous.restartedAt, configMap: previous.configMap },
         revision: dep.revision + 1,
         history: [...dep.history, previous],
         rollout: dep.paused ? dep.rollout : 'progressing',
@@ -737,6 +763,96 @@ export class Simulation {
       for (const rs of Object.values(this.cluster.replicaSets)) this.kick(rs.uid)
     })
     return 'created' as const
+  }
+
+  // ── ConfigMaps ───────────────────────────────────────────────────────────
+
+  /** Create or update a ConfigMap. Running containers keep the environment they started with. */
+  putConfigMap(name: string, data: Record<string, string>, via: 'apply' | 'create' | 'patch'): 'created' | 'configured' | 'unchanged' {
+    const existing = this.findConfigMap(name)
+    if (existing && JSON.stringify(existing.data) === JSON.stringify(data)) return 'unchanged'
+    return this.act(() => {
+      if (!existing) {
+        const cm: ConfigMap = { kind: 'ConfigMap', uid: `cm-${++this.seq}`, name, data: { ...data }, createdAt: this.now }
+        this.cluster = { ...this.cluster, configMaps: { ...this.cluster.configMaps, [cm.uid]: cm } }
+        this.emit('you', 'user', 'ConfigCreated', `kubectl ${via} — configmap/${name} created`, this.ref(cm))
+        const waiting = Object.values(this.cluster.pods).filter((p) => p.configMap === name && p.waiting)
+        this.narrate({
+          tone: 'info',
+          title: 'ConfigMap criado',
+          body: waiting.length
+            ? `${waiting.length === 1 ? 'Um Pod esperava' : `${waiting.length} Pods esperavam`} por ${name}. Na próxima tentativa, o kubelet encontra a configuração e cria o container.`
+            : `${name} guarda configuração fora da imagem. Os containers que o referenciam leem estes valores ao iniciar.`,
+        })
+        return 'created' as const
+      }
+      this.cluster = { ...this.cluster, configMaps: { ...this.cluster.configMaps, [existing.uid]: { ...existing, data: { ...data } } } }
+      this.emit('you', 'user', 'ConfigUpdated', `kubectl ${via} — configmap/${name} configured`, this.ref(existing))
+      const readers = Object.values(this.cluster.pods).filter((p) => p.configMap === name && p.env && p.deletedAt === null)
+      this.narrate({
+        tone: 'warn',
+        title: 'O ConfigMap mudou — os Pods, não',
+        body: readers.length
+          ? `${readers.length === 1 ? 'O Pod que lê' : `Os ${readers.length} Pods que leem`} ${name} continuam com o valor antigo: variáveis de ambiente são lidas uma vez, quando o container inicia. Para valer, os Pods precisam ser recriados.`
+          : `Nenhum Pod em execução lê ${name} ainda.`,
+        command: readers.length ? 'kubectl rollout restart deployment/backend' : undefined,
+      })
+      return 'configured' as const
+    })
+  }
+
+  deleteConfigMap(name: string) {
+    const cm = this.findConfigMap(name)
+    if (!cm) return false
+    this.act(() => {
+      const { [cm.uid]: _gone, ...rest } = this.cluster.configMaps
+      this.cluster = { ...this.cluster, configMaps: rest }
+      this.emit('you', 'user', 'Deleted', `kubectl delete configmap ${name}`, this.ref(cm))
+    })
+    return true
+  }
+
+  /** The kubelet can't build the container's environment: wait, report, try again. */
+  private missingConfig(pod: Pod) {
+    const first = pod.waiting !== 'CreateContainerConfigError'
+    this.patchPod(pod.uid, { waiting: 'CreateContainerConfigError' })
+    if (first) {
+      this.emit('kubelet', 'warning', 'Failed', `Error: configmap "${pod.configMap}" not found`, this.ref(pod))
+      this.fx({ kind: 'ping', uid: pod.uid, tone: 'error' })
+      const rs = pod.ownerUid ? this.cluster.replicaSets[pod.ownerUid] : undefined
+      const dep = rs && this.cluster.deployments[rs.ownerUid]
+      if (dep && rs && sameTemplate(rs, dep.template) && dep.rollout === 'progressing') {
+        this.patchDep(dep.uid, { rollout: 'stalled' })
+        this.narrateOnce(`config:${dep.uid}:${dep.revision}`, {
+          tone: 'error',
+          title: 'Rollout travado: falta configuração',
+          body: `O Pod novo pede o ConfigMap ${pod.configMap}, que não existe — o container nem chega a ser criado. Os Pods antigos continuam atendendo enquanto isso.`,
+          command: `kubectl describe pod ${pod.name}`,
+        })
+      }
+    }
+    this.schedule(TIMING.configRetry, `o kubelet tenta criar o container de ${short(pod.name)} de novo`, () => this.start(pod.uid))
+  }
+
+  /** A template change that isn't just the image (here: which ConfigMap the container reads). */
+  private applyTemplate(dep: Deployment, template: Template) {
+    this.act(() => {
+      this.patchDep(dep.uid, {
+        template: { ...template, labels: { ...dep.template.labels } },
+        revision: dep.revision + 1,
+        history: [...dep.history, { ...template, labels: { ...dep.template.labels } }],
+        rollout: dep.paused ? dep.rollout : 'progressing',
+      })
+      this.emit('you', 'user', 'TemplateChanged', `kubectl apply — envFrom configMapRef ${template.configMap ?? '(removed)'}`, this.ref(dep))
+      this.narrate({
+        tone: 'info',
+        title: 'Template novo',
+        body: template.configMap
+          ? `Os Pods de ${dep.name} agora leem o ConfigMap ${template.configMap}. Mudar o template é uma revisão nova: o Deployment troca os Pods aos poucos.`
+          : `Os Pods de ${dep.name} deixam de ler configuração externa. É uma revisão nova do template.`,
+      })
+      this.schedule(TIMING.scaleNotice, 'o Deployment controller inicia o rollout', () => this.syncDeployment(dep.uid))
+    })
   }
 
   /** `kubectl delete deployment`: gone at once; the garbage collector then removes what it owned. */
@@ -940,6 +1056,7 @@ export class Simulation {
       templateLabels: { ...dep.template.labels },
       revision: dep.revision,
       restartedAt: dep.template.restartedAt,
+      configMap: dep.template.configMap,
       desired,
       selector: { ...dep.selector },
       createdAt: this.now,
@@ -1110,6 +1227,7 @@ export class Simulation {
       createdAt: this.now,
       deletedAt: null,
       restarts: 0,
+      ...(rs.configMap && { configMap: rs.configMap }),
     }
     this.putPod(pod)
     this.dropVacancy(rsUid, slot)
@@ -1138,7 +1256,14 @@ export class Simulation {
   private start(podUid: string) {
     const pod = this.livePod(podUid)
     if (!pod) return
-    this.patchPod(podUid, { phase: 'Running', ip: pod.ip ?? this.nextIp(pod.nodeName) })
+    let env: Record<string, string> | undefined
+    if (pod.configMap) {
+      const cm = this.findConfigMap(pod.configMap)
+      if (!cm) return this.missingConfig(pod)
+      // read once, now: the container keeps this environment for as long as it runs
+      env = { ...cm.data }
+    }
+    this.patchPod(podUid, { phase: 'Running', ip: pod.ip ?? this.nextIp(pod.nodeName), waiting: undefined, ...(env && { env }) })
     this.emit('kubelet', 'progress', 'Started', 'Started container backend', this.ref(pod))
     if (isBroken(pod.image)) {
       this.schedule(TIMING.crash, `o container de ${short(pod.name)} encerra com erro`, () => this.crash(podUid))

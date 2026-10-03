@@ -31,6 +31,7 @@ npm run fixtures   # regenerate the cross-language merge fixtures after changing
 | 4 | Labels & selectors | Relabel Pods in and out of a Service — and out of their ReplicaSet (orphaning, adoption) |
 | 5 | Debugging: no endpoints | A Service selecting `app=api` while Pods say `app=backend` — find it, fix it |
 | 6 | Failures & rollbacks | A broken v1.5 crash-loops, the rollout stalls safely, `rollout undo` restores v1.4 |
+| 7 | ConfigMaps | A missing ConfigMap stalls the rollout (`CreateContainerConfigError`); a changed one reaches no running Pod until `rollout restart` |
 
 Lessons live in `src/lessons/` as data: a starting cluster (`setup`), manifests in the
 terminal's directory (`files`), objectives as predicates over the simulated state, and a

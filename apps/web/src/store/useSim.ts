@@ -200,7 +200,11 @@ export const useSim = create<SimStore>((set, get) => {
       const app = useApp.getState()
       const result = kubectl.run(current.sim, trimmed, {
         app: { name: app.design.name, message: app.design.message },
-        appFor: (image, podUid) => (podUid ? designForPod(app, podUid, image) : designFor(app, image)),
+        appFor: (image, podUid) => {
+          const d = podUid ? designForPod(app, podUid, image) : designFor(app, image)
+          const fromEnv = podUid ? current.sim.cluster.pods[podUid]?.env?.APP_MESSAGE : undefined
+          return fromEnv !== undefined && !(podUid && app.podEdits[podUid]) ? { ...d, message: fromEnv } : d
+        },
         images: app.releases.map((r) => imageOf(r.tag)),
       })
       holdWatch = false

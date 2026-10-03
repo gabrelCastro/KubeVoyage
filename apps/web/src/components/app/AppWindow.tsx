@@ -68,8 +68,9 @@ export function AppWindow() {
   const down = !!svc && !!last && !last.ok
   const look = (image?: string) => (image ? designFor({ design, releases }, image) : design)
   const lastOk = [...visits].reverse().find((v) => v.ok)
-  const lookOf = (v: { image?: string; edited?: { emoji: string; message: string } }) => {
-    const d = look(v.image)
+  // what a visitor saw: the version's design, then the message from the Pod's environment, then any hand edit
+  const lookOf = (v: { image?: string; edited?: { emoji: string; message: string }; configMessage?: string }) => {
+    const d = { ...look(v.image), ...(v.configMessage !== undefined && { message: v.configMessage }) }
     return v.edited ? { ...d, emoji: v.edited.emoji, message: v.edited.message } : d
   }
   const showing = lastOk ? lookOf(lastOk) : design

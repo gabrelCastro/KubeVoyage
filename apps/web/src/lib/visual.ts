@@ -9,7 +9,7 @@ export type PodVisual = 'pending' | 'creating' | 'running' | 'ready' | 'crash' |
 export const podVisual = (p: Pod): PodVisual =>
   p.phase === 'Terminating'
     ? 'terminating'
-    : p.phase === 'Error' || p.phase === 'CrashLoopBackOff'
+    : p.waiting || p.phase === 'Error' || p.phase === 'CrashLoopBackOff'
       ? 'crash'
       : p.phase === 'Pending'
         ? 'pending'
@@ -29,7 +29,7 @@ export const VISUAL: Record<PodVisual, { label: string; color: string; step: num
 }
 
 /** Text shown for a Pod's state: the real phase name for crashes (Error vs CrashLoopBackOff). */
-export const podLabel = (p: Pod) => (podVisual(p) === 'crash' ? p.phase : VISUAL[podVisual(p)].label)
+export const podLabel = (p: Pod) => (podVisual(p) === 'crash' ? (p.waiting ?? p.phase) : VISUAL[podVisual(p)].label)
 
 export const LIFECYCLE = ['Pending', 'Creating', 'Running', 'Ready'] as const
 

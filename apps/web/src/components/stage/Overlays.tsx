@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { CircleCheck, FileCode2, Lightbulb, Play, RefreshCw, Server, TriangleAlert } from 'lucide-react'
+import { CircleCheck, FileCode2, FileCog, Lightbulb, Play, RefreshCw, Server, TriangleAlert } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { MANIFEST_YAML } from '../../sim/manifests'
 import { labelString } from '../../sim/engine'
@@ -249,6 +249,47 @@ export function NodeLane({ cluster }: { cluster: ClusterState }) {
               {!pods.length && <span className="text-[10.5px] text-fg-faint">—</span>}
             </div>
           </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * ConfigMaps on stage: what each one holds now — and how many running Pods still carry an
+ * older value, because a container reads its environment only once, when it starts.
+ */
+export function ConfigMapLane({ cluster }: { cluster: ClusterState }) {
+  const exec = useSim((s) => s.exec)
+  const maps = Object.values(cluster.configMaps)
+  if (!maps.length) return null
+  return (
+    <div className={cn(panel, 'flex max-w-[420px] flex-col gap-1.5 px-3 py-2')}>
+      {maps.map((cm) => {
+        const readers = Object.values(cluster.pods).filter((p) => p.configMap === cm.name && p.env && p.deletedAt === null)
+        const stale = readers.filter((p) => Object.entries(cm.data).some(([k, v]) => p.env![k] !== v) || Object.keys(p.env!).some((k) => !(k in cm.data)))
+        return (
+          <button
+            key={cm.uid}
+            onClick={() => exec(`kubectl describe configmap ${cm.name}`, 'ui')}
+            className="flex min-w-0 items-center gap-2 text-left"
+            title="kubectl describe configmap"
+          >
+            <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-semibold tracking-[0.1em] text-fg-faint uppercase">
+              <FileCog size={11} /> ConfigMap
+            </span>
+            <span className="shrink-0 font-mono text-[11px] text-fg">{cm.name}</span>
+            <span className="min-w-0 truncate font-mono text-[10.5px] text-fg-muted">
+              {Object.entries(cm.data)
+                .map(([k, v]) => `${k}=${v}`)
+                .join(' ') || 'vazio'}
+            </span>
+            {stale.length > 0 && (
+              <span className="shrink-0 rounded-full border border-warn/40 bg-warn/10 px-1.5 text-[10px] whitespace-nowrap text-warn" title="Esses Pods iniciaram antes da mudança">
+                {stale.length} Pod{stale.length === 1 ? '' : 's'} com valor antigo
+              </span>
+            )}
+          </button>
         )
       })}
     </div>

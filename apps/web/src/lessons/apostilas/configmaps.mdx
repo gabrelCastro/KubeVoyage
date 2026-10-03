@@ -1,0 +1,183 @@
+import { Callout, QuickQuestion } from '../../components/apostila/ApostilaBlocks'
+
+# ConfigMaps: configuração fora da imagem
+
+Esta apostila acompanha a lição 7. Na atividade, a imagem do app foi a mesma do começo ao fim — só a configuração mudou. Você viu os Pods travarem quando ela faltava, e não mudarem quando ela mudou. Aqui está o porquê.
+
+<section id="o-que-voce-vai-entender">
+
+## O que você vai entender
+
+- O que é um **ConfigMap** e por que separar configuração da imagem.
+- Como um container recebe a configuração como **variáveis de ambiente**, e quando ele as lê.
+- Por que um Pod para em **CreateContainerConfigError**, e por que mudar um ConfigMap não muda os Pods que já estão rodando.
+
+</section>
+
+<section id="conceitos">
+
+## Conceitos
+
+<h3 id="configmap">ConfigMap</h3>
+
+Um **ConfigMap** é um objeto do Kubernetes que guarda pares chave-valor de configuração: um endereço, uma mensagem, um nível de log. A ideia é usar a **mesma imagem** em todos os ambientes (desenvolvimento, testes, produção) e mudar só a configuração.
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  APP_MESSAGE: "Olá, direto do ConfigMap!"
+```
+
+Um ConfigMap não é para dados grandes: o que ele guarda não pode passar de **1 MiB**. E ele não é para segredos — para isso existe o **Secret** (veja em [Para ir além](#para-ir-alem)).
+
+<h3 id="envfrom">Do ConfigMap para o container</h3>
+
+O Pod diz de onde vem a configuração. Com `envFrom`, **cada chave** do ConfigMap vira uma variável de ambiente do container:
+
+```yaml
+containers:
+  - name: backend
+    image: ghcr.io/kubelearn/backend:1.4
+    envFrom:
+      - configMapRef:
+          name: app-config
+```
+
+Isso fica no **template** de Pods do Deployment. Por isso aplicar o `backend-config.yaml` gerou uma revisão nova e um rolling update, mesmo com a imagem igual: o template mudou.
+
+Também dá para montar um ConfigMap como **volume**: cada chave vira um arquivo dentro do container.
+
+<h3 id="createcontainerconfigerror">CreateContainerConfigError</h3>
+
+Antes de criar o container, o kubelet monta o ambiente dele. Se o Pod referencia um ConfigMap que **não existe** (e a referência não está marcada como `optional`), o container **não é criado**: o Pod fica em `CreateContainerConfigError`, e o kubelet tenta de novo de tempos em tempos.
+
+Na atividade, isso aconteceu no meio de um rollout. Como os Pods novos nunca ficaram Ready, o Deployment não encerrou nenhum Pod antigo — o mesmo portão de readiness da lição 6. Quando você criou o ConfigMap, a próxima tentativa do kubelet deu certo e o rollout seguiu sozinho.
+
+<h3 id="lido-ao-iniciar">Lido uma vez, ao iniciar</h3>
+
+Variáveis de ambiente são entregues ao processo **quando o container inicia**. Depois disso, mudar o ConfigMap não alcança o container: ele continua com o ambiente que recebeu. A documentação diz isso com todas as letras — um ConfigMap consumido como variável de ambiente **não é atualizado automaticamente** e exige recriar o Pod.
+
+Foi o que você viu na janela do app: depois do `kubectl patch`, os visitantes continuaram recebendo a mensagem antiga. Só os Pods criados **depois** da mudança leem o valor novo.
+
+<h3 id="rollout-restart">Recriar sem derrubar: rollout restart</h3>
+
+Para os Pods lerem a configuração nova, eles precisam ser recriados. Apagar todos de uma vez derrubaria o app. O `kubectl rollout restart` faz isso do jeito seguro: ele marca o template com uma annotation (`kubectl.kubernetes.io/restartedAt`), o que conta como uma revisão nova, e o Deployment troca os Pods aos poucos, com as mesmas garantias de qualquer rolling update.
+
+</section>
+
+<section id="no-mundo-real">
+
+## No mundo real
+
+### Os comandos da atividade
+
+```bash
+kubectl apply -f backend-config.yaml       # o template passa a ler app-config
+kubectl get pods                           # STATUS: CreateContainerConfigError
+kubectl describe pod <pod>                 # Events: configmap "app-config" not found
+kubectl apply -f configmap.yaml            # cria a configuração que faltava
+kubectl patch configmap app-config -p '{"data":{"APP_MESSAGE":"Mensagem nova!"}}'
+kubectl rollout restart deployment/backend # recria os Pods, aos poucos
+```
+
+### Criando ConfigMaps sem escrever YAML
+
+```bash
+kubectl create configmap app-config --from-literal=APP_MESSAGE=Olá --from-literal=LOG_LEVEL=info
+kubectl create configmap nginx-conf --from-file=nginx.conf
+```
+
+Na prática, o mais comum é manter o ConfigMap em um arquivo YAML versionado junto com o Deployment, e mudar com `kubectl apply -f`.
+
+### Mudou a configuração? Mude o template junto
+
+Um truque comum em ferramentas como o Helm é colocar no template do Deployment uma annotation com um **hash do ConfigMap**. Quando a configuração muda, o hash muda, o template muda, e o rollout acontece sozinho — ninguém precisa lembrar do `rollout restart`.
+
+<Callout title="Volume se atualiza; variável de ambiente, não">
+  Montado como volume, um ConfigMap alterado é atualizado dentro do container **depois de algum tempo** — mas o app ainda precisa reler o arquivo para perceber. Montado com `subPath`, nunca é atualizado. Como variável de ambiente, nunca muda enquanto o container existir.
+</Callout>
+
+</section>
+
+<section id="o-que-simplificamos">
+
+## O que simplificamos
+
+- O app da atividade lê uma única chave, `APP_MESSAGE`. Apps reais costumam ler várias, e às vezes falham ao iniciar se uma delas estiver errada.
+- O kubelet tenta de novo em intervalos curtos e fixos. No cluster real, as tentativas também se repetem, mas os intervalos variam.
+- Aqui só existe `envFrom`. Não simulamos `env` com `configMapKeyRef` (uma chave por vez), ConfigMaps montados como volume nem referências `optional`.
+- O `kubectl patch` daqui só altera o campo `data` de ConfigMaps.
+
+</section>
+
+<section id="erros-comuns">
+
+## Erros comuns
+
+### Mudar o ConfigMap e esperar que o app mude
+
+É o erro da atividade. Se a configuração entra como variável de ambiente, o Pod precisa ser recriado. Verifique sempre com o app, não com o ConfigMap: o `describe` mostra o valor novo mesmo quando nenhum Pod o está usando.
+
+### Apagar todos os Pods para “recarregar”
+
+Funciona, mas derruba o app até os substitutos ficarem Ready. Use `kubectl rollout restart`: ele troca os Pods aos poucos.
+
+### Aplicar o Deployment antes do ConfigMap
+
+Os Pods novos param em `CreateContainerConfigError`. Com um Deployment, os antigos seguram o app; com Pods avulsos, nada segura. Aplique a configuração primeiro — ou os dois juntos, no mesmo `kubectl apply -f`.
+
+### Guardar senhas em ConfigMaps
+
+Qualquer um com permissão de ler ConfigMaps vê os valores em texto puro, no `describe`, no `-o yaml`. Use Secrets e controle quem pode lê-los.
+
+</section>
+
+<section id="teste-rapido">
+
+## Teste rápido
+
+<QuickQuestion
+  question="Você mudou APP_MESSAGE com kubectl patch. Os Pods leem a configuração com envFrom. O que os visitantes veem?"
+  options={[
+    { label: 'A mensagem nova, em poucos segundos.', explanation: 'Isso só aconteceria com o ConfigMap montado como volume, e com o app relendo o arquivo.' },
+    { label: 'A mensagem antiga, até os Pods serem recriados.', correct: true, explanation: 'Correto. Variáveis de ambiente são lidas quando o container inicia.' },
+    { label: 'Um erro, porque o ConfigMap mudou com os Pods rodando.', explanation: 'Mudar um ConfigMap em uso é permitido; os Pods só não percebem.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="Um Pod mostra STATUS CreateContainerConfigError. Qual é a causa mais provável?"
+  options={[
+    { label: 'A imagem não existe no registry.', explanation: 'Isso apareceria como ErrImagePull ou ImagePullBackOff.' },
+    { label: 'O container inicia e encerra com erro em seguida.', explanation: 'Isso é CrashLoopBackOff: o container chega a rodar.' },
+    { label: 'O Pod referencia um ConfigMap (ou uma chave) que não existe.', correct: true, explanation: 'Correto. Sem a configuração, o kubelet nem cria o container. O describe mostra qual.' },
+  ]}
+/>
+
+<QuickQuestion
+  question="Qual é o jeito seguro de fazer todos os Pods de um Deployment lerem o ConfigMap novo?"
+  options={[
+    { label: 'kubectl delete pods -l app=backend', explanation: 'Todos saem de uma vez: o app fica fora do ar até os novos ficarem Ready.' },
+    { label: 'kubectl rollout restart deployment/backend', correct: true, explanation: 'Correto. Uma revisão nova do template, trocada aos poucos pelo rolling update.' },
+    { label: 'kubectl apply -f configmap.yaml de novo', explanation: 'Isso só atualiza o ConfigMap; os Pods continuam com o ambiente antigo.' },
+  ]}
+/>
+
+</section>
+
+<section id="para-ir-alem">
+
+## Para ir além
+
+- **Secrets** funcionam como ConfigMaps, mas para dados sensíveis. Atenção: por padrão, o Kubernetes os guarda **sem criptografia** no etcd — o valor fica só codificado em base64. Criptografia em repouso e controle de acesso (RBAC) são configurações à parte.
+- **ConfigMaps imutáveis** (`immutable: true`) não podem ser alterados depois de criados. Isso evita mudanças acidentais e alivia o kubelet, que deixa de vigiá-los. Para mudar, cria-se outro, com outro nome.
+- [ConfigMaps — conceito](https://kubernetes.io/docs/concepts/configuration/configmap/)
+- [Configurar um Pod para usar um ConfigMap](https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/)
+- [Secrets](https://kubernetes.io/docs/concepts/configuration/secret/)
+- [kubectl create configmap — referência](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_create/kubectl_create_configmap/)
+- [kubectl rollout restart — referência](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_rollout/kubectl_rollout_restart/)
+
+</section>

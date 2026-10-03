@@ -82,6 +82,8 @@ export interface Visit {
   image?: string
   /** The hand edit that Pod carried when it answered, if any. */
   edited?: PodEdit
+  /** APP_MESSAGE from the environment the container started with (a ConfigMap), if any. */
+  configMessage?: string
 }
 
 const KEY = 'kubelearn.app.v1'

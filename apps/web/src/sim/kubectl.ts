@@ -1,6 +1,7 @@
 import { parseArgs, parseSelector, selects, suggest, TAKES_VALUE, tokenize, type Flags, type Parsed, type Requirement } from './cli/args'
 import {
   apiPhase,
+  configMapObject,
   deploymentObject,
   endpointSliceObject,
   endpointsObject,
@@ -18,7 +19,7 @@ import {
 import { pipe } from './cli/pipe'
 import { isBroken, labelString, rsSelector, short, tag, type Simulation } from './engine'
 import { FILES, IMAGE } from './manifests'
-import type { ClusterEvent, Deployment, Labels, Pod, ReplicaSet, Service, WorkerNode } from './types'
+import type { ClusterEvent, ConfigMap, Deployment, Labels, Pod, ReplicaSet, Service, WorkerNode } from './types'
 
 export { FILES, IMAGE, MANIFEST, MANIFEST_YAML } from './manifests'
 
@@ -44,7 +45,7 @@ export interface RunPresentation {
   images?: string[]
 }
 
-export type WatchKind = 'pods' | 'deployments' | 'replicasets' | 'services' | 'endpoints' | 'endpointslices' | 'events' | 'nodes'
+export type WatchKind = 'pods' | 'deployments' | 'replicasets' | 'services' | 'endpoints' | 'endpointslices' | 'events' | 'nodes' | 'configmaps'
 
 export interface WatchSpec {
   kind: WatchKind
@@ -82,7 +83,7 @@ function table(header: string[], rows: Seg[][]): Line[] {
 }
 
 const statusTone = (p: Pod): Tone =>
-  p.phase === 'Terminating' || p.phase === 'Error' || p.phase === 'CrashLoopBackOff'
+  p.waiting || p.phase === 'Terminating' || p.phase === 'Error' || p.phase === 'CrashLoopBackOff'
     ? 'error'
     : p.phase === 'Running'
       ? p.ready
@@ -94,7 +95,7 @@ export function podRow(sim: Simulation, p: Pod, wide = false, labels = false): S
   const row: Seg[] = [
     { t: p.name, c: 'strong', ref: p.uid },
     { t: p.ready ? '1/1' : '0/1' },
-    { t: p.phase, c: statusTone(p) },
+    { t: p.waiting ?? p.phase, c: statusTone(p) },
     { t: String(p.restarts), c: p.restarts ? 'warn' : undefined },
     { t: age(sim.now - p.createdAt) },
   ]
@@ -140,12 +141,13 @@ const KIND_ALIASES: Record<string, KindId | 'all'> = {
   ep: 'endpoints', endpoint: 'endpoints', endpoints: 'endpoints',
   endpointslice: 'endpointslices', endpointslices: 'endpointslices', 'endpointslice.discovery.k8s.io': 'endpointslices', 'endpointslices.discovery.k8s.io': 'endpointslices',
   ev: 'events', event: 'events', events: 'events',
+  cm: 'configmaps', configmap: 'configmaps', configmaps: 'configmaps',
   no: 'nodes', node: 'nodes', nodes: 'nodes',
   all: 'all',
 }
 
 /** Real kinds this cluster doesn't simulate: say so instead of "no such type". */
-const UNSIMULATED_KINDS = ['configmaps', 'cm', 'secrets', 'secret', 'namespaces', 'ns', 'ingress', 'ingresses', 'ing', 'statefulsets', 'sts', 'daemonsets', 'ds', 'jobs', 'job', 'cronjobs', 'cj', 'persistentvolumeclaims', 'pvc', 'persistentvolumes', 'pv', 'hpa', 'horizontalpodautoscalers', 'serviceaccounts', 'sa', 'configmap', 'namespace']
+const UNSIMULATED_KINDS = ['secrets', 'secret', 'namespaces', 'ns', 'ingress', 'ingresses', 'ing', 'statefulsets', 'sts', 'daemonsets', 'ds', 'jobs', 'job', 'cronjobs', 'cj', 'persistentvolumeclaims', 'pvc', 'persistentvolumes', 'pv', 'hpa', 'horizontalpodautoscalers', 'serviceaccounts', 'sa', 'namespace']
 
 type Item = { name: string; uid?: string }
 
@@ -303,6 +305,16 @@ const SPECS: { [K in KindId]: Spec<any> } = {
       { t: e.message, c: 'muted' },
     ],
   } satisfies Spec<ClusterEvent & { name: string }>,
+  configmaps: {
+    resource: 'configmaps',
+    prefix: 'configmap',
+    namespaced: true,
+    items: (sim) => Object.values(sim.cluster.configMaps).sort((a, b) => a.createdAt - b.createdAt),
+    labels: () => ({}),
+    object: (sim, c: ConfigMap) => configMapObject(sim, c),
+    header: () => ['NAME', 'DATA', 'AGE'],
+    row: (sim, c: ConfigMap) => [{ t: c.name, c: 'strong' }, { t: String(Object.keys(c.data).length) }, { t: age(sim.now - c.createdAt) }],
+  } satisfies Spec<ConfigMap>,
   nodes: {
     resource: 'nodes',
     prefix: 'node',
@@ -331,7 +343,7 @@ function resolveKind(raw: string): KindId[] | { error: Line[] } {
     if (k === 'all') out.push(...ALL)
     else if (k) out.push(k)
     else if (UNSIMULATED_KINDS.includes(part.toLowerCase()))
-      return { error: [plain(`"${part}" existe no Kubernetes real, mas este cluster de treino só simula Pods, Deployments, ReplicaSets, Services, EndpointSlices, Events e Nodes.`, 'warn')] }
+      return { error: [plain(`"${part}" existe no Kubernetes real, mas este cluster de treino só simula Pods, Deployments, ReplicaSets, Services, ConfigMaps, EndpointSlices, Events e Nodes.`, 'warn')] }
     else {
       const guess = suggest(part, Object.keys(KIND_ALIASES).filter((a) => !a.includes('.')))[0]
       return { error: [plain(`error: the server doesn't have a resource type "${part}"`, 'error'), ...(guess ? [note(`você quis dizer "${guess}"?`)] : [])] }
@@ -380,7 +392,8 @@ const VERB_FLAGS: Record<string, string[]> = {
   logs: ['p', 'follow', 'tail', 'c', 'l'],
   run: ['image', 'labels', 'restart', 'rm', 'i', 't', 'it', 'port'],
   edit: [],
-  create: ['image', 'replicas'],
+  create: ['image', 'replicas', 'from-literal'],
+  patch: ['patch', 'type'],
 }
 
 /** Real kubectl flags this playground doesn't simulate: refuse rather than half-do the command. */
@@ -410,7 +423,7 @@ function checkFlags(verb: string, p: Parsed): Line[] | null {
 
 // ── verbs ──────────────────────────────────────────────────────────────────
 
-const VERBS = ['apply', 'get', 'describe', 'delete', 'scale', 'expose', 'label', 'set', 'rollout', 'logs', 'run', 'edit', 'create']
+const VERBS = ['apply', 'get', 'describe', 'delete', 'scale', 'expose', 'label', 'set', 'rollout', 'logs', 'run', 'edit', 'create', 'patch']
 
 /** Real verbs that aren't simulated (yet): what they do, so the learner isn't told they don't exist. */
 const UNSIMULATED_VERBS: Record<string, string> = {
@@ -419,7 +432,6 @@ const UNSIMULATED_VERBS: Record<string, string> = {
   top: 'mostrar o consumo de CPU e memória (precisa do metrics-server)',
   explain: 'explicar os campos de cada tipo de recurso',
   annotate: 'mudar as annotations de um recurso',
-  patch: 'alterar campos específicos de um recurso',
   replace: 'substituir um recurso inteiro',
   autoscale: 'criar um HorizontalPodAutoscaler',
   cp: 'copiar arquivos de e para containers',
@@ -474,7 +486,16 @@ const USAGE: Record<string, { use: string[]; what: string; examples?: string[] }
   },
   logs: { use: ['kubectl logs <pod> [--previous] [--tail=N]', 'kubectl logs -l <selector>'], what: 'Mostra a saída do container. --previous mostra a execução anterior ao último restart.', examples: ['kubectl logs <pod> --previous'] },
   edit: { use: ['kubectl edit deployment/<nome>'], what: 'Abre um resumo YAML do Deployment e aplica as mudanças salvas.', examples: ['kubectl edit deployment/backend'] },
-  create: { use: ['kubectl create deployment <nome> --image=<imagem> [--replicas=N]'], what: 'Cria um Deployment a partir dos argumentos.', examples: ['kubectl create deployment web --image=nginx:1.27'] },
+  create: {
+    use: ['kubectl create deployment <nome> --image=<imagem> [--replicas=N]', 'kubectl create configmap <nome> --from-literal=CHAVE=valor ...'],
+    what: 'Cria um Deployment ou um ConfigMap a partir dos argumentos.',
+    examples: ['kubectl create deployment web --image=nginx:1.27', 'kubectl create configmap app-config --from-literal=APP_MESSAGE=Olá'],
+  },
+  patch: {
+    use: [`kubectl patch configmap <nome> -p '{"data":{"CHAVE":"valor"}}'`],
+    what: 'Altera só os campos que você passar (merge). Aqui, os dados de um ConfigMap.',
+    examples: [`kubectl patch configmap app-config -p '{"data":{"APP_MESSAGE":"Nova mensagem"}}'`],
+  },
 }
 
 function usage(verb: string): CommandResult {
@@ -572,8 +593,8 @@ function runOne(sim: Simulation, tokens: string[], presentation: RunPresentation
       if (!sim.files.includes(file)) return err(`error: the path "${file}" does not exist`)
       const m = FILES[file].manifest
       const result = sim.apply(m)
-      const kind = m.kind === 'Service' ? 'service' : 'deployment.apps'
-      const uid = m.kind === 'Service' ? sim.findService(m.name)?.uid : sim.findDeployment(m.name)?.uid
+      const kind = m.kind === 'Service' ? 'service' : m.kind === 'ConfigMap' ? 'configmap' : 'deployment.apps'
+      const uid = m.kind === 'Service' ? sim.findService(m.name)?.uid : m.kind === 'ConfigMap' ? sim.findConfigMap(m.name)?.uid : sim.findDeployment(m.name)?.uid
       return { lines: [plain(`${kind}/${m.name} ${result}`, result === 'unchanged' ? 'muted' : 'success')], focusUid: uid }
     }
     case 'get':
@@ -635,9 +656,12 @@ function runOne(sim: Simulation, tokens: string[], presentation: RunPresentation
       if (!dep) return err(`Error from server (NotFound): deployments.apps "${names[0]}" not found`)
       return { lines: [], edit: { kind: 'deployment', name: dep.name }, focusUid: dep.uid }
     }
+    case 'patch':
+      return patch(sim, args, flags)
     case 'create': {
       const [kind, names] = splitKind(args)
       const name = names[0]
+      if (kind && KIND_ALIASES[kind] === 'configmaps') return createConfigMap(sim, name, more)
       if (!kind || KIND_ALIASES[kind] !== 'deployments' || !name) return err('Usage: kubectl create deployment <name> --image=<image> [--replicas=N]')
       if (!/^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$/.test(name) || name.length > 253)
         return err(`error: failed to create deployment: Deployment.apps "${name}" is invalid: metadata.name: Invalid value`)
@@ -705,6 +729,11 @@ function remove(sim: Simulation, args: string[], flags: Flags): CommandResult {
   const [kind, names] = splitKind(args)
   const k = kind ? KIND_ALIASES[kind] : undefined
   const graceNote = flags.force || flags.now || flags['grace-period'] !== undefined ? [note('neste simulador todo Pod passa pelo encerramento gracioso')] : []
+  if (k === 'configmaps') {
+    if (!names[0]) return err('error: resource(s) were provided, but no name was specified')
+    if (sim.deleteConfigMap(names[0])) return { lines: [plain(`configmap "${names[0]}" deleted`, 'warn')] }
+    return flags['ignore-not-found'] ? { lines: [] } : err(`Error from server (NotFound): configmaps "${names[0]}" not found`)
+  }
   if (k === 'services') {
     if (!names[0]) return err('error: resource(s) were provided, but no name was specified')
     if (sim.deleteService(names[0])) return { lines: [plain(`service "${names[0]}" deleted`, 'warn')] }
@@ -871,7 +900,7 @@ const watchHeader = (watch: WatchSpec) => {
 const watchState = (sim: Simulation, kind: WatchKind, item: Item) => {
   if (kind === 'pods') {
     const p = item as Pod
-    return [p.phase, p.ready, p.restarts, p.nodeName, p.ip, p.image, p.labels, p.ownerUid, p.deletedAt]
+    return [p.phase, p.waiting, p.ready, p.restarts, p.nodeName, p.ip, p.image, p.labels, p.ownerUid, p.deletedAt]
   }
   if (kind === 'deployments') {
     const d = item as Deployment
@@ -892,6 +921,7 @@ const watchState = (sim: Simulation, kind: WatchKind, item: Item) => {
     return [service.selector, service.port, service.targetPort, sim.selectedBy(service).map((p) => [p.uid, p.ip, p.ready, p.deletedAt]), service.endpoints]
   }
   if (kind === 'events') return [(item as Item & ClusterEvent).id]
+  if (kind === 'configmaps') return [(item as ConfigMap).data]
   return [item.name]
 }
 
@@ -1064,7 +1094,7 @@ function describe(sim: Simulation, args: string[], flags: Flags): CommandResult 
   if ('error' in kinds) return { lines: kinds.error }
   if (kinds.length !== 1) return err('Usage: kubectl describe pod|deployment|rs|service|node <name>')
   const kind = kinds[0]
-  if (!['pods', 'deployments', 'replicasets', 'services', 'nodes'].includes(kind)) return { lines: [plain(`describe de ${rawKind} ainda não está disponível aqui — tente kubectl get ${rawKind} -o yaml`, 'warn')] }
+  if (!['pods', 'deployments', 'replicasets', 'services', 'nodes', 'configmaps'].includes(kind)) return { lines: [plain(`describe de ${rawKind} ainda não está disponível aqui — tente kubectl get ${rawKind} -o yaml`, 'warn')] }
   const spec = SPECS[kind] as Spec<Item>
   let names = rawNames
   const sel = selectorFlag(flags)
@@ -1194,6 +1224,23 @@ function describeOne(sim: Simulation, kind: KindId, name: string): CommandResult
     }
   }
 
+  if (kind === 'configmaps') {
+    const c = sim.findConfigMap(name)
+    if (!c) return err(`Error from server (NotFound): configmaps "${name}" not found`)
+    const readers = Object.values(sim.cluster.pods).filter((p) => p.configMap === c.name && p.deletedAt === null)
+    return {
+      focusUid: c.uid,
+      lines: [
+        kv('Name', c.name, 'strong'),
+        kv('Namespace', 'default'),
+        [],
+        plain('Data', 'muted'),
+        plain('====', 'muted'),
+        ...Object.entries(c.data).flatMap(([k, v]): Line[] => [plain(`${k}:`, 'accent'), plain('----', 'muted'), plain(v), []]),
+        ...(readers.length ? [note(`${readers.length} Pod${readers.length === 1 ? '' : 's'} lê${readers.length === 1 ? '' : 'em'} este ConfigMap — cada um com o valor de quando iniciou`)] : []),
+      ],
+    }
+  }
   const n = sim.cluster.nodes.find((x) => x.name === name)
   if (!n) return err(`Error from server (NotFound): nodes "${name}" not found`)
   const pods = Object.values(sim.cluster.pods).filter((p) => p.nodeName === n.name && p.deletedAt === null)
@@ -1246,7 +1293,7 @@ function help(): CommandResult {
 
 // ── completion ─────────────────────────────────────────────────────────────
 
-const KIND_WORDS = ['pods', 'deployments', 'replicasets', 'services', 'endpoints', 'endpointslices', 'events', 'nodes', 'all', 'po', 'deploy', 'rs', 'svc', 'ep', 'no']
+const KIND_WORDS = ['pods', 'deployments', 'replicasets', 'services', 'endpoints', 'endpointslices', 'events', 'nodes', 'configmaps', 'all', 'po', 'deploy', 'rs', 'svc', 'ep', 'no', 'cm']
 
 /** How each flag is offered: `=` means "a value follows, right here". */
 const FLAG_WORDS: Record<string, string> = {
@@ -1321,7 +1368,9 @@ function candidatesFor(sim: Simulation, words: string[], last: string, images: s
     case 'edit':
       return positional.length === 0 ? ['deployment', 'deploy'] : namesOf(sim, 'deployments')
     case 'create':
-      return positional.length === 0 ? ['deployment'] : []
+      return positional.length === 0 ? ['deployment', 'configmap'] : []
+    case 'patch':
+      return positional.length === 0 ? ['configmap'] : positional.length === 1 ? namesOf(sim, 'configmaps') : []
     case 'delete':
       return positional.length === 0 ? ['pod', 'pods', 'service', 'svc', 'deployment', 'deploy', 'replicaset', 'rs'] : namesOf(sim, kindOf(positional[0]), true)
     case 'logs':
@@ -1377,6 +1426,7 @@ const KIND_DOCS: Record<KindId | 'all', string> = {
   endpointslices: 'EndpointSlices — os IPs por trás de um Service',
   events: 'Events — o que os controllers relataram',
   nodes: 'Nodes — as máquinas do cluster',
+  configmaps: 'ConfigMaps — configuração guardada fora da imagem',
   all: 'os tipos principais: Pods, Services, Deployments e ReplicaSets',
 }
 
@@ -1394,6 +1444,7 @@ const VERB_DOCS: Record<string, string> = {
   run: 'cria um Pod avulso, sem dono',
   edit: 'abre o recurso em YAML para você alterar e salvar',
   create: 'cria um recurso novo a partir dos argumentos',
+  patch: 'altera só os campos indicados de um recurso',
 }
 
 function describeSelector(v: string): string {
@@ -1435,6 +1486,8 @@ const FLAG_DOCS: Record<string, (v: string) => string> = {
   now: () => 'encerra imediatamente',
   wait: () => 'espera a exclusão terminar',
   image: (v) => `a imagem do container: ${v}`,
+  'from-literal': (v) => `uma chave e seu valor: ${v}`,
+  patch: (v) => `o pedaço a mesclar no recurso: ${v}`,
   labels: (v) => `labels do Pod: ${v}`,
   restart: (v) => (v === 'Never' ? 'não reinicia o container quando ele termina' : `política de restart: ${v}`),
   rm: () => 'apaga o Pod quando o comando terminar',
@@ -1517,8 +1570,15 @@ function explain(sim: Simulation, tokens: string[]): CommandResult {
     }
     case 'create': {
       const [kind, name] = args
-      if (kind) rows.push([kind, kind === 'deployment' || kind === 'deploy' ? KIND_DOCS.deployments : 'tipo de recurso não simulado', kind === 'deployment' || kind === 'deploy' ? undefined : 'warn'])
-      if (name) rows.push([name, 'o nome do Deployment novo'])
+      const k = kind ? KIND_ALIASES[kind] : undefined
+      if (kind) rows.push([kind, k === 'deployments' || k === 'configmaps' ? KIND_DOCS[k] : 'tipo de recurso não simulado', k === 'deployments' || k === 'configmaps' ? undefined : 'warn'])
+      if (name) rows.push([name, k === 'configmaps' ? 'o nome do ConfigMap novo' : 'o nome do Deployment novo'])
+      break
+    }
+    case 'patch': {
+      const [kind, name] = args
+      if (kind) rows.push([kind, KIND_DOCS.configmaps])
+      if (name) nameRow('configmaps', name, `o ConfigMap chamado ${name}`)
       break
     }
     case 'run': {
@@ -1611,4 +1671,65 @@ function runPod(sim: Simulation, args: string[], flags: Flags, presentation: Run
   const r = sim.runPod(name, flags.image, labels)
   if (r === 'exists') return err(`Error from server (AlreadyExists): pods "${name}" already exists`)
   return ok(`pod/${name} created`, sim.findPod(name)?.uid)
+}
+
+// ── ConfigMaps ─────────────────────────────────────────────────────────────
+
+const ENV_KEY = /^[-._a-zA-Z0-9]+$/
+
+/** `--from-literal` can repeat, so it's read from the raw tokens rather than the flag map. */
+function literals(tokens: string[]): string[] {
+  const out: string[] = []
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i]
+    if (t.startsWith('--from-literal=')) out.push(t.slice('--from-literal='.length))
+    else if (t === '--from-literal' && tokens[i + 1] !== undefined) out.push(tokens[++i])
+  }
+  return out
+}
+
+function createConfigMap(sim: Simulation, name: string | undefined, tokens: string[]): CommandResult {
+  if (!name) return err('error: exactly one NAME is required, got 0')
+  if (!/^[a-z0-9]([-.a-z0-9]*[a-z0-9])?$/.test(name)) return err(`The ConfigMap "${name}" is invalid: metadata.name: Invalid value: "${name}"`)
+  const data: Record<string, string> = {}
+  for (const lit of literals(tokens)) {
+    const eq = lit.indexOf('=')
+    if (eq <= 0) return err(`error: invalid literal source ${lit}, expected key=value`)
+    const key = lit.slice(0, eq)
+    if (!ENV_KEY.test(key)) return err(`error: "${key}" is not a valid key name for a ConfigMap`)
+    if (key in data) return err(`error: cannot add key "${key}", another key by that name already exists in Data for ConfigMap "${name}"`)
+    data[key] = lit.slice(eq + 1)
+  }
+  if (sim.findConfigMap(name)) return err(`error: failed to create configmap: configmaps "${name}" already exists`)
+  sim.putConfigMap(name, data, 'create')
+  return ok(`configmap/${name} created`, sim.findConfigMap(name)?.uid)
+}
+
+function patch(sim: Simulation, args: string[], flags: Flags): CommandResult {
+  const [kind, names] = splitKind(args)
+  if (!kind || !names[0]) return err('error: You must provide one or more resources by argument or filename.')
+  if (KIND_ALIASES[kind] !== 'configmaps') return { lines: [plain('Neste playground, kubectl patch funciona com ConfigMaps. Para Deployments, use set image, scale ou edit.', 'warn')] }
+  if (typeof flags.patch !== 'string') return err('error: must specify -p to patch')
+  if (typeof flags.type === 'string' && !['merge', 'strategic'].includes(flags.type))
+    return { lines: [plain(`--type ${flags.type} existe no kubectl real, mas aqui só há merge.`, 'warn')] }
+  const cm = sim.findConfigMap(names[0])
+  if (!cm) return err(`Error from server (NotFound): configmaps "${names[0]}" not found`)
+  let body: unknown
+  try {
+    body = JSON.parse(flags.patch)
+  } catch {
+    return err(`error: unable to parse "${flags.patch}": yaml: did not find expected node content`)
+  }
+  const patchData = body && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>).data : undefined
+  if (!patchData || typeof patchData !== 'object' || Array.isArray(patchData)) return err('error: aqui o patch precisa mudar .data, ex.: {"data":{"CHAVE":"valor"}}')
+  const data = { ...cm.data }
+  for (const [k, v] of Object.entries(patchData as Record<string, unknown>)) {
+    if (!ENV_KEY.test(k)) return err(`The ConfigMap "${cm.name}" is invalid: data[${k}]: Invalid value`)
+    // merge patch: null removes the key
+    if (v === null) delete data[k]
+    else if (typeof v === 'string') data[k] = v
+    else return err(`error: data.${k} must be a string`)
+  }
+  const r = sim.putConfigMap(cm.name, data, 'patch')
+  return { lines: [plain(`configmap/${cm.name} ${r === 'unchanged' ? 'patched (no change)' : 'patched'}`, r === 'unchanged' ? 'muted' : 'success')], focusUid: cm.uid }
 }

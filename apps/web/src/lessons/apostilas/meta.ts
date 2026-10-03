@@ -8,4 +8,5 @@ export const READING_MINUTES: Record<ApostilaId, number> = {
   labels: 5,
   debugging: 5,
   failures: 6,
+  configmaps: 5,
 }

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type ApostilaId = 'self-healing' | 'scaling' | 'services' | 'labels' | 'debugging' | 'failures'
+export type ApostilaId = 'self-healing' | 'scaling' | 'services' | 'labels' | 'debugging' | 'failures' | 'configmaps'
 
 interface ApostilaState {
   lessonId: ApostilaId | null

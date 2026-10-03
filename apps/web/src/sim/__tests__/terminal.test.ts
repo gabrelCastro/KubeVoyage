@@ -208,7 +208,7 @@ describe('commands', () => {
 
   it('says real-but-unsimulated commands and kinds exist', () => {
     expect(out(sim, 'kubectl exec -it x -- sh')).toContain('existe no kubectl real')
-    expect(out(sim, 'kubectl get configmaps')).toContain('existe no Kubernetes real')
+    expect(out(sim, 'kubectl get secrets')).toContain('existe no Kubernetes real')
     expect(out(sim, 'kubectl set env deployment/backend A=b')).toContain('ainda não é simulado')
   })
 

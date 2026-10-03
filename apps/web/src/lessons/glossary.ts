@@ -164,6 +164,25 @@ export const GLOSSARY: GlossaryEntry[] = [
     lessonId: 'failures',
     anchor: 'crashloopbackoff',
   },
+  {
+    term: 'ConfigMap',
+    aliases: ['ConfigMaps'],
+    definition: 'Objeto que guarda configuração em pares chave-valor, fora da imagem do container.',
+    lessonId: 'configmaps',
+    anchor: 'configmap',
+  },
+  {
+    term: 'envFrom',
+    definition: 'Transforma cada chave de um ConfigMap em uma variável de ambiente do container.',
+    lessonId: 'configmaps',
+    anchor: 'envfrom',
+  },
+  {
+    term: 'CreateContainerConfigError',
+    definition: 'O kubelet não consegue montar a configuração do container — por exemplo, falta um ConfigMap — e nem chega a criá-lo.',
+    lessonId: 'configmaps',
+    anchor: 'createcontainerconfigerror',
+  },
 ]
 
 export const GLOSSARY_MATCHES = GLOSSARY.flatMap((entry) => [entry.term, ...(entry.aliases ?? [])].map((alias) => ({ alias, entry }))).sort(

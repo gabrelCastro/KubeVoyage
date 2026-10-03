@@ -2,7 +2,7 @@ export type Labels = Record<string, string>
 
 export type PodPhase = 'Pending' | 'ContainerCreating' | 'Running' | 'Terminating' | 'Error' | 'CrashLoopBackOff'
 
-export type ResourceKind = 'Deployment' | 'ReplicaSet' | 'Pod' | 'Service' | 'Node'
+export type ResourceKind = 'Deployment' | 'ReplicaSet' | 'Pod' | 'Service' | 'Node' | 'ConfigMap'
 
 export type RolloutState = 'complete' | 'progressing' | 'stalled'
 
@@ -12,6 +12,17 @@ export interface Template {
   labels: Labels
   /** `kubectl rollout restart` stamps the template: same image, new revision. */
   restartedAt?: number
+  /** `envFrom: configMapRef` — the ConfigMap whose keys become the container's environment. */
+  configMap?: string
+}
+
+/** Configuration kept outside the image. Containers read it as environment variables at start. */
+export interface ConfigMap {
+  kind: 'ConfigMap'
+  uid: string
+  name: string
+  data: Record<string, string>
+  createdAt: number
 }
 
 export interface Deployment {
@@ -42,6 +53,7 @@ export interface ReplicaSet {
   image: string
   /** Pod labels captured by this revision's template. */
   templateLabels: Labels
+  configMap?: string
   revision: number
   restartedAt?: number
   desired: number
@@ -69,6 +81,12 @@ export interface Pod {
   createdAt: number
   deletedAt: number | null
   restarts: number
+  /** The ConfigMap the container reads its environment from (copied from the template). */
+  configMap?: string
+  /** The environment the container started with — a snapshot: later ConfigMap edits don't reach it. */
+  env?: Record<string, string>
+  /** Why the container can't be created yet, e.g. CreateContainerConfigError. */
+  waiting?: string
 }
 
 export interface Service {
@@ -102,6 +120,7 @@ export interface ClusterState {
   replicaSets: Record<string, ReplicaSet>
   pods: Record<string, Pod>
   services: Record<string, Service>
+  configMaps: Record<string, ConfigMap>
   nodes: WorkerNode[]
   vacancies: Vacancy[]
 }

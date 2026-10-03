@@ -66,13 +66,21 @@ function phrase(e: ClusterEvent): { lead: string; obj?: string; tail?: string } 
     case 'Scaled':
       return { lead: 'Você mudou as réplicas', tail: e.message.split('replicas ')[1] }
     case 'Deleted':
-      return { lead: 'Você apagou', obj: e.involved.kind === 'Pod' ? n : `${({ Service: 'service', Deployment: 'deployment', ReplicaSet: 'rs' } as Record<string, string>)[e.involved.kind] ?? ''}/${n}` }
+      return { lead: 'Você apagou', obj: e.involved.kind === 'Pod' ? n : `${({ Service: 'service', Deployment: 'deployment', ReplicaSet: 'rs', ConfigMap: 'configmap' } as Record<string, string>)[e.involved.kind] ?? ''}/${n}` }
     case 'Restarted':
       return { lead: 'Você reiniciou', obj: `deployment/${n}`, tail: '— todos os Pods serão trocados' }
     case 'Paused':
       return { lead: 'Você pausou', obj: `deployment/${n}` }
     case 'Resumed':
       return { lead: 'Você retomou', obj: `deployment/${n}` }
+    case 'ConfigCreated':
+      return { lead: 'Você criou', obj: `configmap/${n}` }
+    case 'ConfigUpdated':
+      return { lead: 'Você mudou', obj: `configmap/${n}`, tail: '— os Pods rodando não percebem' }
+    case 'TemplateChanged':
+      return { lead: 'Template novo em', obj: `deployment/${n}`, tail: e.message.includes('configMapRef') ? '— agora lê um ConfigMap' : undefined }
+    case 'Failed':
+      return { lead: 'Pod', obj: n, tail: 'sem configuração — CreateContainerConfigError' }
     case 'GarbageCollecting':
       return { lead: 'Sem dono vivo:', obj: `rs/${n}`, tail: 'vai ser apagado, com os Pods' }
     case 'GarbageCollected':
