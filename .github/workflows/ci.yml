@@ -26,6 +26,27 @@ jobs:
       - run: npm run lint -w @kubelearn/web
       - run: npm run build -w @kubelearn/web
 
+  e2e:
+    name: End-to-end (browser)
+    needs: [web]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+      - run: npm run e2e -w @kubelearn/web
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: apps/web/test-results
+          retention-days: 7
+
   api:
     name: API
     runs-on: ubuntu-latest
@@ -42,7 +63,7 @@ jobs:
 
   images:
     name: Docker images
-    needs: [web, api]
+    needs: [web, api, e2e]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -18,6 +18,7 @@ The web app works fully without the API — progress just stays on the device.
 
 ```bash
 npm test           # shared (TS) + web (Vitest) + API (JUnit, Testcontainers)
+npm run e2e -w @kubelearn/web   # browser tests (Playwright) against the production build
 npm run fixtures   # regenerate the cross-language merge fixtures after changing merge rules
 ```
 
