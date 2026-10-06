@@ -47,6 +47,7 @@ function Palette({ close }: { close: () => void }) {
       { id: 'slow', group: 'Simulation', label: 'Velocidade: 0,5× (câmera lenta)', run: () => s.setSpeed(0.5) },
       { id: 'normal', group: 'Simulation', label: 'Velocidade: 1×', run: () => s.setSpeed(1) },
       { id: 'fast', group: 'Simulation', label: 'Velocidade: 2×', run: () => s.setSpeed(2) },
+      { id: 'docs', group: 'Simulation', label: 'Abrir a documentação', hint: '/doc', run: () => window.open('/doc', '_blank', 'noopener') },
       { id: 'motion', group: 'Simulation', label: `${reduced ? 'Desligar' : 'Ligar'} movimento reduzido`, run: () => s.setReducedMotion(!reduced) },
       ...(Object.keys(cluster.deployments).length ? [] : [{ id: 'apply', group: 'Lesson' as const, label: 'Aplicar backend.yaml', hint: 'kubectl apply -f backend.yaml', run: run('kubectl apply -f backend.yaml') }]),
       { id: 'get', group: 'Lesson', label: 'Listar Pods', hint: 'kubectl get pods -o wide', run: run('kubectl get pods -o wide') },

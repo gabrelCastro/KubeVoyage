@@ -1,9 +1,10 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { BookOpen, CircleHelp, Keyboard, PlayCircle, ShieldCheck } from 'lucide-react'
+import { BookOpen, BookText, CircleHelp, Keyboard, PlayCircle, ShieldCheck } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { create } from 'zustand'
-import { Kbd, MOD, Tooltip } from '../components/primitives'
+import { Kbd, Tooltip } from '../components/primitives'
 import { Modal } from '../components/ui/Modal'
+import { SHORTCUTS } from './shortcuts'
 import { hasApostila } from '../lessons/apostilas'
 import { useApostila } from '../lessons/apostilas/store'
 import { useSim } from '../store/useSim'
@@ -38,6 +39,7 @@ export function HelpMenu() {
     { icon: PlayCircle, label: 'Rever o tutorial', run: startTour },
     { icon: Keyboard, label: 'Atalhos de teclado', keys: '?', run: () => setShortcuts(true) },
     ...(hasApostila(lessonId) ? [{ icon: BookOpen, label: 'Abrir a apostila desta lição', run: () => openApostila(lessonId) }] : []),
+    { icon: BookText, label: 'Documentação', run: () => window.open('/doc', '_blank', 'noopener') },
     { icon: ShieldCheck, label: 'Privacidade', run: () => window.open('/privacidade', '_blank', 'noopener') },
   ]
 
@@ -87,40 +89,6 @@ export function HelpMenu() {
   )
 }
 
-const SHORTCUTS: { group: string; items: [string[], string][] }[] = [
-  {
-    group: 'Simulação',
-    items: [
-      [['Espaço'], 'pausar ou continuar'],
-      [['.'], 'avançar uma decisão (com a simulação pausada)'],
-      [['R'], 'reiniciar a lição'],
-    ],
-  },
-  {
-    group: 'Palco',
-    items: [
-      [['Delete'], 'apagar o Pod selecionado'],
-      [['Esc'], 'tirar a seleção'],
-    ],
-  },
-  {
-    group: 'Terminal',
-    items: [
-      [['/'], 'ir para o terminal'],
-      [['Tab'], 'completar comandos e nomes de Pods'],
-      [['↑', '↓'], 'navegar no histórico'],
-      [['Esc'], 'parar o kubectl get pods -w'],
-      [['Ctrl', 'L'], 'limpar a tela'],
-    ],
-  },
-  {
-    group: 'Geral',
-    items: [
-      [[MOD, 'K'], 'paleta de comandos'],
-      [['?'], 'esta lista de atalhos'],
-    ],
-  },
-]
 
 export function ShortcutsDialog() {
   const open = useHelp((s) => s.shortcutsOpen)

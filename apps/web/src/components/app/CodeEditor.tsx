@@ -4,73 +4,11 @@ import { cn } from '../../lib/visual'
 import { tryCode } from '../../runtime'
 import { LIMITS, PROBE_PATHS, type Profile } from '../../runtime/program'
 import { DEFAULT_CODE, nextTag, useApp } from '../../store/useApp'
+import { TEMPLATES } from './templates'
 import { useSim } from '../../store/useSim'
 import { MOD } from '../primitives'
 import { Modal } from '../ui/Modal'
 
-/** Starting points, each showing one thing a container can do to the cluster. */
-const TEMPLATES: { label: string; hint: string; code: string }[] = [
-  { label: 'Servidor', hint: 'responde e passa nas probes', code: DEFAULT_CODE },
-  {
-    label: 'Lê a config',
-    hint: 'precisa de DATABASE_URL',
-    code: `// Sem DATABASE_URL no ambiente, o processo morre ao iniciar.
-// No cluster, ela vem de um Secret ou ConfigMap (envFrom).
-if (!env.DATABASE_URL) throw new Error('DATABASE_URL não definida')
-console.log('conectando em', env.DATABASE_URL.replace(/:[^:@]*@/, ':***@'))
-
-function handle(req) {
-  if (req.path === '/healthz') return 'ok'
-  return 'Conectado ao banco!'
-}
-`,
-  },
-  {
-    label: 'Quebra ao iniciar',
-    hint: 'CrashLoopBackOff',
-    code: `console.log('iniciando…')
-const config = JSON.parse('{ isto não é json')
-
-function handle() {
-  return 'nunca chega aqui'
-}
-`,
-  },
-  {
-    label: 'Trava',
-    hint: 'readiness e liveness',
-    code: `console.log('servidor iniciando')
-
-function handle(req) {
-  // um laço que nunca termina: o processo segue vivo, mas não responde
-  if (req.path === '/healthz') while (true) {}
-  return 'oi'
-}
-`,
-  },
-  {
-    label: 'Não está pronto',
-    hint: '/healthz responde 503',
-    code: `function handle(req) {
-  if (req.path === '/healthz') {
-    return { status: 503, body: 'ainda aquecendo o cache' }
-  }
-  return 'oi'
-}
-`,
-  },
-  {
-    label: 'Tarefa (Job)',
-    hint: 'roda e termina',
-    code: `// Sem handle(): é uma tarefa. Terminar sem erro = exit code 0.
-const vendas = [120, 80, 310, 45]
-const total = vendas.reduce((a, b) => a + b, 0)
-console.log('vendas processadas:', vendas.length)
-console.log('total do dia:', total)
-if (env.FALHAR) throw new Error('arquivo de entrada não encontrado')
-`,
-  },
-]
 
 /** app.js — what the learner's images run. Saved as typed; nothing running changes until a build. */
 export function CodeEditor() {
@@ -135,7 +73,10 @@ function Editor({ onClose }: { onClose: () => void }) {
       <p className="mt-1 text-[12.5px] leading-relaxed text-fg-muted">
         O código que roda dentro do container. Com <code className="font-mono text-fg">handle(req, env)</code> ele é um servidor; sem, uma tarefa que termina.{' '}
         <code className="font-mono text-fg">console.log</code> vai para <code className="font-mono text-fg">kubectl logs</code>. Mudar este arquivo não muda nenhum Pod: gere
-        uma imagem e faça o rollout.
+        uma imagem e faça o rollout.{' '}
+        <a href="/doc#contrato" target="_blank" rel="noopener" className="text-accent hover:underline">
+          Como escrever o app.js →
+        </a>
       </p>
 
       <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Modelos">

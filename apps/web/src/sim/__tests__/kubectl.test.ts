@@ -40,3 +40,15 @@ describe('kubectl', () => {
     expect(r.value.trim()).toBe(`kubectl delete pod ${pod.name}`)
   })
 })
+
+describe('--help', () => {
+  it('every simulated command explains itself (and the /doc reference is built from the same data)', async () => {
+    const { USAGE, VERBS } = await import('../cli/usage')
+    for (const verb of VERBS) {
+      expect(USAGE[verb], verb).toBeDefined()
+      const out = run(new Simulation(), `kubectl ${verb} --help`).lines.map((l) => l.map((s) => s.t).join('')).join('\n')
+      expect(out).toContain(USAGE[verb].what)
+      expect(out).toContain('Uso:')
+    }
+  })
+})
