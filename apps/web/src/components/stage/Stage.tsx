@@ -8,7 +8,7 @@ import { useSim } from '../../store/useSim'
 import { Edges, type EdgeModel } from './Edges'
 import { Effects } from './Effects'
 import { DaemonSetNode, DeploymentNode, JobNode, PodNode, ReplicaSetNode, ServiceNode, SlotPlaceholder, type Probe } from './Nodes'
-import { BootSkeleton, ConfigMapLane, HpaLane, EdgeTooltip, EmptyState, Legend, Narration, NodeLane, ReconcileHud } from './Overlays'
+import { ConfigMapLane, HpaLane, EdgeTooltip, EmptyState, Legend, Narration, NodeLane, ReconcileHud } from './Overlays'
 import { Traffic } from './Traffic'
 
 const RESERVE = { top: 18, bottom: 100, x: 28 }
@@ -66,15 +66,10 @@ export function Stage() {
   const paused = useSim((s) => s.paused)
   const lessonId = useSim((s) => s.lessonId)
   const lesson = getLesson(lessonId)
-  const [booted, setBooted] = useState(false)
   const [hoverEdge, setHoverEdge] = useState<EdgeModel | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const size = useSize(ref)
 
-  useEffect(() => {
-    const t = setTimeout(() => setBooted(true), 850)
-    return () => clearTimeout(t)
-  }, [])
 
   // geometry and edges are rebuilt from the cluster, then share whatever didn't change with the
   // previous render, so only the nodes that actually moved re-render
@@ -289,8 +284,9 @@ export function Stage() {
 
       <AnimatePresence mode="wait">
         {empty && (
-          <div key={booted ? 'empty' : 'boot'} className="absolute inset-0 grid place-items-center" onClick={(e) => e.stopPropagation()}>
-            {booted ? <EmptyState /> : <BootSkeleton />}
+          // the cluster is local and ready at once: no loading state to stage (it held the first view back ~1 s)
+          <div key="empty" className="absolute inset-0 grid place-items-center" onClick={(e) => e.stopPropagation()}>
+            <EmptyState />
           </div>
         )}
       </AnimatePresence>

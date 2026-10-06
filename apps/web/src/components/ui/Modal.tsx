@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { X } from 'lucide-react'
 import { useEffect, useId, useRef, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { cn } from '../../lib/visual'
 
 /**
@@ -22,7 +23,12 @@ export function Modal({
   className?: string
   dismissible?: boolean
 }) {
-  return <AnimatePresence>{open && <ModalBody onClose={onClose} label={label} className={className} dismissible={dismissible}>{children}</ModalBody>}</AnimatePresence>
+  // portaled to <body>: fixed to the viewport whatever panel it was opened from (panels use CSS
+  // containment, which would otherwise make them the modal's containing block)
+  return createPortal(
+    <AnimatePresence>{open && <ModalBody onClose={onClose} label={label} className={className} dismissible={dismissible}>{children}</ModalBody>}</AnimatePresence>,
+    document.body,
+  )
 }
 
 function ModalBody({ onClose, children, label, className, dismissible }: { onClose: () => void; children: ReactNode; label: string; className?: string; dismissible: boolean }) {

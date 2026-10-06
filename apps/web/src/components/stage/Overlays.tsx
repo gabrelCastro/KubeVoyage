@@ -470,18 +470,3 @@ export function EmptyState() {
     </motion.div>
   )
 }
-
-export function BootSkeleton() {
-  return (
-    <motion.div exit={{ opacity: 0, transition: { duration: 0.25 } }} className="flex flex-col items-center gap-4">
-      <div className="flex gap-3">
-        {[0, 1, 2].map((i) => (
-          <div key={i} className="skeleton h-[54px] w-[78px] rounded-lg" />
-        ))}
-      </div>
-      <div className="skeleton h-3 w-56 rounded" />
-      <div className="skeleton h-3 w-40 rounded" />
-      <span className="mt-1 text-[11.5px] text-fg-faint">Preparando o cluster de treino…</span>
-    </motion.div>
-  )
-}

@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { CornerDownLeft, Eye, SquareTerminal } from 'lucide-react'
-import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { Line, Seg, Tone } from '../sim/kubectl'
 import { shellHistory } from '../lib/shellHistory'
 import { cn } from '../lib/visual'
@@ -113,10 +113,14 @@ export function Terminal() {
   const scroller = useRef<HTMLDivElement>(null)
   const input = useRef<HTMLInputElement>(null)
 
-  useLayoutEffect(() => {
-    const el = scroller.current
-    if (el) el.scrollTo({ top: el.scrollHeight })
-  }, [term, candidates])
+  // The scrollback scrolls from the bottom (column-reverse): at the end it stays there as output
+  // arrives, with no layout read on every change (that read forced a full-page layout mid-render).
+  // Running a command, or asking for completions, brings you back to the prompt.
+  const atEnd = useRef(true)
+  const lastInput = term.findLast((e) => e.input !== undefined)?.id
+  useEffect(() => {
+    if (!atEnd.current && scroller.current) scroller.current.scrollTop = 0
+  }, [lastInput, candidates])
 
   useEffect(() => {
     if (!draft) return
@@ -274,7 +278,12 @@ export function Terminal() {
         </div>
       </header>
 
-      <div ref={scroller} className="min-h-0 flex-1 overflow-auto px-3.5 pt-2.5 font-mono text-[12.5px] leading-[1.55]">
+      <div
+        ref={scroller}
+        onScroll={(e) => (atEnd.current = Math.abs(e.currentTarget.scrollTop) < 4)}
+        className="flex min-h-0 flex-1 flex-col-reverse overflow-auto px-3.5 pt-2.5 font-mono text-[12.5px] leading-[1.55]"
+      >
+        <div>
         {term.map((entry) => (
           <Entry key={entry.id} entry={entry} />
         ))}
@@ -349,6 +358,7 @@ export function Terminal() {
             {search ? 'Enter executa · Ctrl+R mais antigo · → edita · Esc cancela' : '→ aceita a sugestão do histórico'}
           </div>
         )}
+        </div>
       </div>
     </section>
   )
