@@ -13,7 +13,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-/** No API payload is legitimately bigger than a few KB; refuse anything large up front. */
+/** No API payload is legitimately bigger than ~50 KB (an app.js draft at its limit); refuse anything large up front. */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)
 class BodySizeLimitFilter extends OncePerRequestFilter {

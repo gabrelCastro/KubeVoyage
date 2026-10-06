@@ -169,6 +169,7 @@
 									<directory>${project.basedir}/../../packages/shared</directory>
 									<includes>
 										<include>catalog.json</include>
+										<include>workspace.json</include>
 									</includes>
 								</resource>
 							</resources>

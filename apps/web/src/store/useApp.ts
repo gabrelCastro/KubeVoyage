@@ -136,7 +136,8 @@ export function visitReply(reply: Reply | undefined): Visit['reply'] {
 export const replyText = (reply: { status: number; body: string }) =>
   reply.status >= 400 ? `HTTP ${reply.status} · ${reply.body.split('\n')[0] || 'erro'}` : reply.body.split('\n')[0] || `(resposta vazia · HTTP ${reply.status})`
 
-const KEY = 'kubelearn.app.v1'
+export const APP_STORAGE_KEY = 'kubelearn.app.v1'
+const KEY = APP_STORAGE_KEY
 const MAX_VISITS = 32
 const initialApp = (): Stored => ({ design: DEFAULT_DESIGN, customized: false, releases: [], code: null, designAt: 0, codeAt: 0 })
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
@@ -162,7 +163,8 @@ function parseDesign(value: unknown): AppDesign {
   }
 }
 
-const time = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0)
+// 8.64e15 is the largest time a Date can hold: anything beyond would throw when sent
+const time = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.min(v, 8.64e15) : 0)
 
 export function parseStoredApp(value: string | null): Stored {
   try {

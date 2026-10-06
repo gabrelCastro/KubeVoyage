@@ -2,6 +2,7 @@ import { completedCount } from '@kubelearn/shared'
 import { create } from 'zustand'
 import { api, ApiError } from '../api/http'
 import { progressSync, setUnauthorizedHandler } from '../progress/browser'
+import { claimApp, forgetApp, setWorkspaceUnauthorizedHandler, workspaceSync } from '../workspace/browser'
 import { getLesson } from '../lessons'
 import { useSim } from '../store/useSim'
 import { toast } from '../ui/toast'
@@ -47,6 +48,10 @@ const RETURN_KEY = 'kubelearn.auth.return'
 function signedIn(set: (s: Partial<AuthStore>) => void, user: User) {
   set({ status: 'signed-in', user, dialogOpen: false, pendingToken: null })
   void progressSync.setSignedIn(true).then(resumeIfIdle)
+  // "your app" comes along: what this device made while signed out is uploaded, the account's is merged in
+  // (an app another account left on this device is dropped, never uploaded into this one)
+  claimApp(user.id)
+  void workspaceSync.setSignedIn(true)
 }
 
 /**
@@ -64,6 +69,7 @@ function resumeIfIdle() {
 function becameAnonymous(set: (s: Partial<AuthStore>) => void) {
   set({ status: 'anonymous', user: null })
   progressSync.setSignedIn(false)
+  void workspaceSync.setSignedIn(false)
 }
 
 export const useAuth = create<AuthStore>((set, get) => ({
@@ -127,18 +133,29 @@ export const useAuth = create<AuthStore>((set, get) => ({
   },
 
   async signOut() {
+    // what was typed in the last moments goes up first (a few seconds at most)
+    await workspaceSync.settle()
+    const unsent = workspaceSync.hasPending()
     await api('/api/auth/logout', { method: 'POST' }).catch(() => {})
     becameAnonymous(set)
-    // the account keeps the progress; this (possibly shared) device forgets it
+    // the account keeps the progress and the app; this (possibly shared) device forgets them —
+    // unless some of the app never reached the account: then it stays here rather than vanish
     progressSync.clearLocal()
-    toast({ tone: 'info', title: 'Você saiu', body: 'Seu progresso está salvo na sua conta.' })
+    if (!unsent) forgetApp()
+    toast(
+      unsent
+        ? { tone: 'info', title: 'Você saiu', body: 'Algumas mudanças do seu app não chegaram à sua conta, então ficaram neste dispositivo. Entre de novo para enviá-las.' }
+        : { tone: 'info', title: 'Você saiu', body: 'Seu progresso e o seu app estão salvos na sua conta.' },
+      unsent ? 9000 : undefined,
+    )
   },
 
   async deleteAccount() {
     await api('/api/me', { method: 'DELETE' })
     becameAnonymous(set)
     progressSync.clearLocal()
-    toast({ tone: 'info', title: 'Conta apagada', body: 'Sua conta e todo o progresso foram apagados permanentemente.' })
+    forgetApp()
+    toast({ tone: 'info', title: 'Conta apagada', body: 'Sua conta, todo o progresso e o seu app foram apagados permanentemente.' })
   },
 
   async resetProgress() {
@@ -149,11 +166,16 @@ export const useAuth = create<AuthStore>((set, get) => ({
   },
 }))
 
-setUnauthorizedHandler(() => {
+const sessionEnded = () => {
   if (useAuth.getState().status !== 'signed-in') return
   useAuth.setState({ status: 'anonymous', user: null })
+  // whichever sync noticed first, both stop
+  progressSync.setSignedIn(false)
+  void workspaceSync.setSignedIn(false)
   toast({ tone: 'info', title: 'Sua sessão terminou', body: 'Seu progresso está seguro neste dispositivo. Entre novamente para continuar sincronizando.' }, 7000)
-})
+}
+setUnauthorizedHandler(sessionEnded)
+setWorkspaceUnauthorizedHandler(sessionEnded)
 
 function welcome(user: User, hadOnDevice: number) {
   toast({

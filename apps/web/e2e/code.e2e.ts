@@ -73,3 +73,24 @@ main()`)
   await expect(editor.getByRole('status')).toContainText('terminou com erro')
   await expect(editor.getByRole('status')).toContainText('Error: falhou depois')
 })
+
+test('your code: two tabs never overwrite each other — an open editor follows the newer edit', async ({ page, context, errors }) => {
+  void errors
+  await page.goto('/#/services')
+  await kubectl(page, 'edit app.js')
+  const editorA = page.getByRole('dialog').getByLabel('Código de app.js')
+  await editorA.fill('console.log("aba A")')
+
+  const other = await context.newPage()
+  await other.goto('/#/services')
+  await kubectl(other, 'edit app.js')
+  const editorB = other.getByRole('dialog').getByLabel('Código de app.js')
+  await expect(editorB).toHaveValue('console.log("aba A")')
+  await editorB.fill('console.log("aba B")')
+
+  // tab A's editor, still open, shows B's newer edit instead of keeping (and later saving) the old text
+  await expect(editorA).toHaveValue('console.log("aba B")')
+  await page.keyboard.press('Escape')
+  await kubectl(page, 'cat app.js')
+  await expect(terminal(page)).toContainText('console.log("aba B")')
+})

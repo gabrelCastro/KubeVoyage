@@ -53,8 +53,8 @@ apps/web/           React app — the simulation runs entirely here
   src/sim/          the simulated cluster (pure TS)
   src/progress/     local-first progress + sync engine
   src/auth/         session state, sign-in flows
-apps/api/           Spring Boot 4 (Java 21): accounts and progress, nothing else
-packages/shared/    catalog.json (lesson ids) + the progress model, shared by both
+apps/api/           Spring Boot 4 (Java 21): accounts, progress and "your app", nothing else
+packages/shared/    catalog.json (lesson ids), workspace.json + the progress and app models, shared by both
 ```
 
 ### Accounts & sync
@@ -77,6 +77,18 @@ packages/shared/    catalog.json (lesson ids) + the progress model, shared by bo
   generated fixtures, plus property tests on both sides.
 - Signing in uploads what you did while signed out. Signing out forgets the device's copy
   (it's in the account). After syncing, an untouched lesson resumes where you left off.
+- **"Your app" syncs too** (design, app.js, published images; `src/workspace/`), local-first
+  the same way but in small idempotent pieces, since code is bigger than progress:
+  `GET /api/workspace`, `PUT /api/workspace/draft`, `PUT /api/workspace/releases/{tag}`.
+  Design and code are last-writer-wins separately (a device whose clock runs ahead is
+  clamped to the server's time); published images are a union by tag, and a tag is
+  immutable — if two devices published the same one, the first is the image. At most 20.
+  The rules live in `packages/shared/workspace.json` and `src/workspace.ts`, and Java is
+  checked against the same generated fixtures. The server stores the code; it never runs it.
+  The device remembers whose app it holds: signing in as someone else drops the previous
+  account's app instead of uploading it (other tabs follow), and signing out first pushes what
+  was just typed — if something can't reach the account, it stays on the device. Known limit:
+  last-writer-wins trusts device clocks, so a clock running *behind* can lose a tie it should win.
 
 ### Deploying
 

@@ -89,6 +89,15 @@ function Editor({ onClose }: { onClose: () => void }) {
   const stored = useApp((s) => s.code)
   const releases = useApp((s) => s.releases)
   const [code, setCode] = useState(() => stored ?? DEFAULT_CODE)
+  // app.js changed outside this editor (another device, through sync): show that, or the next
+  // keystroke here would save the old text over it as the newest edit
+  const [seen, setSeen] = useState(stored)
+  if (stored !== seen) {
+    setSeen(stored)
+    // null: the app was cleared (signed out) — back to the template, not the old text
+    const next = stored ?? DEFAULT_CODE
+    if (next !== code) setCode(next)
+  }
   const [trial, setTrial] = useState<Trial | null>(null)
   const [saved, setSaved] = useState(false)
   const area = useRef<HTMLTextAreaElement>(null)

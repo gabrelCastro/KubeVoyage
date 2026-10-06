@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useAuth, type User } from '../../auth/auth'
 import { progressSync, useProgress } from '../../progress/browser'
 import type { SyncState } from '../../progress/sync'
+import { useWorkspaceSync, workspaceSync } from '../../workspace/browser'
 import { cn } from '../../lib/visual'
 import { Tooltip } from '../primitives'
 import { Modal } from '../ui/Modal'
@@ -13,7 +14,10 @@ export function AccountButton() {
   const status = useAuth((s) => s.status)
   const user = useAuth((s) => s.user)
   const openSignIn = useAuth((s) => s.openSignIn)
-  const sync = useProgress((s) => s.sync)
+  const progress = useProgress((s) => s.sync)
+  const app = useWorkspaceSync((s) => s.status)
+  // one indicator for both: whichever is worse (the app's problems get their own words)
+  const sync: SyncState & { app?: boolean } = RANK[app] > RANK[progress.status] ? { status: app, lastSyncedAt: progress.lastSyncedAt, app: true } : progress
   const [open, setOpen] = useState(false)
 
   if (status === 'unknown') return <span className="skeleton size-7 rounded-full" aria-hidden />
@@ -67,7 +71,11 @@ function SyncDot({ state }: { state: SyncState }) {
   )
 }
 
-function syncLabel(s: SyncState) {
+const RANK = { local: 0, synced: 1, syncing: 2, offline: 3, error: 4 } as const
+
+function syncLabel(s: SyncState & { app?: boolean }) {
+  if (s.app && s.status === 'error') return 'Seu app não foi sincronizado — tentando novamente'
+  if (s.app && s.status === 'offline') return 'Offline — seu app será sincronizado quando você voltar'
   switch (s.status) {
     case 'syncing':
       return 'Sincronizando…'
@@ -90,7 +98,7 @@ function ago(t: number) {
   return m < 60 ? `há ${m} min` : `há ${Math.round(m / 60)} h`
 }
 
-function AccountMenu({ user, sync, onClose }: { user: User; sync: SyncState; onClose: () => void }) {
+function AccountMenu({ user, sync, onClose }: { user: User; sync: SyncState & { app?: boolean }; onClose: () => void }) {
   const { signOut } = useAuth()
   const done = useProgress((s) => completedCount(s.progress))
   const ref = useRef<HTMLDivElement>(null)
@@ -143,7 +151,13 @@ function AccountMenu({ user, sync, onClose }: { user: User; sync: SyncState; onC
             <SyncIcon size={13} className={cn(sync.status === 'syncing' && 'anim-spin')} />
             <span>{syncLabel(sync)}</span>
             {(sync.status === 'error' || sync.status === 'offline') && (
-              <button onClick={() => void progressSync.syncNow()} className="ml-auto text-[11.5px] text-accent hover:underline">
+              <button
+                onClick={() => {
+                  void progressSync.syncNow()
+                  void workspaceSync.refresh()
+                }}
+                className="ml-auto text-[11.5px] text-accent hover:underline"
+              >
                 Tentar novamente
               </button>
             )}

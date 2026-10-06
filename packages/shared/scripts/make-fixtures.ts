@@ -9,6 +9,7 @@ import fc from 'fast-check'
 import { writeFileSync } from 'node:fs'
 import { LESSON_IDS, objectivesOf, type LessonId } from '../src/catalog.ts'
 import { mergeProgress, parseProgress } from '../src/progress.ts'
+import { APP_COLOR_NAMES, APP_EMOJIS, mergeWorkspace, parseWorkspace } from '../src/workspace.ts'
 
 const date = fc.date({ min: new Date('2024-01-01'), max: new Date('2030-01-01'), noInvalidDate: true }).map((d) => d.toISOString())
 const lesson = (id: LessonId) =>
@@ -59,4 +60,39 @@ const handmade = [
 ].map((c) => ({ ...c, merged: mergeProgress(parseProgress(c.a)!, parseProgress(c.b)!) }))
 
 writeFileSync(new URL('../fixtures/merge-cases.json', import.meta.url), JSON.stringify({ cases: [...handmade, ...cases] }, null, 1) + '\n')
-console.log(`wrote ${handmade.length + cases.length} cases`)
+console.log(`wrote ${handmade.length + cases.length} progress cases`)
+
+// ── workspace ("your app") ──────────────────────────────────────────────────
+// raw inputs on purpose: Java must sanitize exactly like TypeScript (reserved tags, unknown
+// emojis, control characters, offsets) before merging
+
+const wsDate = fc.oneof(
+  fc.constantFrom('2026-01-01T00:00:00.000Z', '2026-01-01T03:00:00+03:00', '2026-01-02T00:00:00.000Z', '2026-01-01T00:00:00.123456Z'),
+  fc.date({ min: new Date('2024-01-01'), max: new Date('2030-01-01'), noInvalidDate: true }).map((d) => d.toISOString()),
+)
+const design = fc.record({
+  name: fc.constantFrom('Meu app', 'Raposa', '  ', 'Ação ✓', 'a\u0001b', '\u00A0nbsp\u3000', 'x\uD800y'),
+  emoji: fc.constantFrom(...APP_EMOJIS.slice(0, 3), '👾'),
+  color: fc.constantFrom(...APP_COLOR_NAMES.slice(0, 2), 'preto'),
+  message: fc.constantFrom('', 'oi', ' com espaços ', 'linha\u0007'),
+})
+const code = fc.option(fc.constantFrom('console.log(1)\n', 'function handle() {\n\treturn "oi"\n}', '', 'nul\u0000aqui', 'é ✓ 🐳', 'meio\uDC00par', '\u2028sep\uFEFF'), { nil: null })
+const release = fc.record({
+  tag: fc.constantFrom('2.0', '2.1', 'beta', 'v_1.0-rc', '1.4', 'latest', '-x', 'abc\n', '1.4\n', ...Array.from({ length: 22 }, (_, i) => `t${i}`)),
+  design,
+  broken: fc.boolean(),
+  code,
+  createdAt: wsDate,
+})
+const workspace = fc.record({
+  draft: fc.record({ design, designAt: fc.option(wsDate, { nil: null }), code, codeAt: fc.option(wsDate, { nil: null }), customized: fc.boolean() }),
+  releases: fc.array(release, { maxLength: 24 }),
+})
+const wsCases = fc.sample(fc.tuple(workspace, workspace), { numRuns: 200, seed: 20261005 }).map(([a, b], i) => ({
+  name: `generated-${i}`,
+  a,
+  b,
+  merged: mergeWorkspace(parseWorkspace(a)!, parseWorkspace(b)!),
+}))
+writeFileSync(new URL('../fixtures/workspace-cases.json', import.meta.url), JSON.stringify({ cases: wsCases }, null, 1) + '\n')
+console.log(`wrote ${wsCases.length} workspace cases`)

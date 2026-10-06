@@ -1,4 +1,4 @@
-# Build context: the repository root (the API reads packages/shared/catalog.json at build time).
+# Build context: the repository root (the API reads packages/shared/catalog.json and workspace.json at build time).
 #   docker build -f apps/api/Dockerfile .
 
 FROM eclipse-temurin:21-jdk-alpine AS build
@@ -7,7 +7,7 @@ WORKDIR /src/apps/api
 COPY apps/api/.mvn .mvn
 COPY apps/api/mvnw apps/api/pom.xml ./
 RUN --mount=type=cache,target=/root/.m2 ./mvnw -q -B dependency:go-offline
-COPY packages/shared/catalog.json /src/packages/shared/catalog.json
+COPY packages/shared/catalog.json packages/shared/workspace.json /src/packages/shared/
 COPY apps/api/src src
 RUN --mount=type=cache,target=/root/.m2 ./mvnw -q -B -DskipTests package \
  && java -Djarmode=tools -jar target/kubelearn-api-*.jar extract --layers --launcher --destination /app

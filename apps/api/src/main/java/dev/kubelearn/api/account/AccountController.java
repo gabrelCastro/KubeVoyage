@@ -26,6 +26,8 @@ import dev.kubelearn.api.auth.SessionUser;
 import dev.kubelearn.api.common.ApiException;
 import dev.kubelearn.api.progress.Progress;
 import dev.kubelearn.api.progress.ProgressRepository;
+import dev.kubelearn.api.workspace.Workspace;
+import dev.kubelearn.api.workspace.WorkspaceRepository;
 
 @RestController
 @RequestMapping("/api/me")
@@ -35,18 +37,23 @@ public class AccountController {
 	}
 
 	/** Everything the service stores about one person (LGPD art. 18: access and portability). */
-	public record Export(Instant exportedAt, Me account, UserRepository.Activity activity, List<UserRepository.Identity> identities, Progress progress) {
+	public record Export(Instant exportedAt, Me account, UserRepository.Activity activity, List<UserRepository.Identity> identities, Progress progress,
+			Workspace workspace) {
 	}
 
 	private final UserRepository users;
 
 	private final ProgressRepository progress;
 
+	private final WorkspaceRepository workspace;
+
 	private final FindByIndexNameSessionRepository<? extends Session> sessions;
 
-	AccountController(UserRepository users, ProgressRepository progress, FindByIndexNameSessionRepository<? extends Session> sessions) {
+	AccountController(UserRepository users, ProgressRepository progress, WorkspaceRepository workspace,
+			FindByIndexNameSessionRepository<? extends Session> sessions) {
 		this.users = users;
 		this.progress = progress;
+		this.workspace = workspace;
 		this.sessions = sessions;
 	}
 
@@ -61,7 +68,8 @@ public class AccountController {
 	ResponseEntity<Export> export(@AuthenticationPrincipal SessionUser user) {
 		var me = me(user);
 		var activity = users.activity(user.id()).orElseThrow();
-		var body = new Export(Instant.now(), me, activity, users.identities(user.id()), progress.load(user.id()));
+		var body = new Export(Instant.now(), me, activity, users.identities(user.id()), progress.load(user.id()),
+				workspace.load(user.id()));
 		var file = ContentDisposition.attachment().filename("kubelearn-meus-dados.json").build();
 		return ResponseEntity.ok().header(HttpHeaders.CONTENT_DISPOSITION, file.toString()).body(body);
 	}

@@ -1,0 +1,12 @@
+{
+  "design": {
+    "emojis": ["🦊", "🐙", "🐳", "🦄", "🐢", "🦉", "🐝", "🌵", "🍕", "🍩", "☕", "🎸", "🚀", "🪐", "🎲", "🌈"],
+    "colors": ["violeta", "azul", "verde", "amarelo", "laranja", "rosa"],
+    "nameMax": 24,
+    "messageMax": 60
+  },
+  "codeMax": 16000,
+  "releasesMax": 20,
+  "tagPattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]{0,31}$",
+  "reservedTagPattern": "^(1\\.\\d+|latest)$"
+}

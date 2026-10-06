@@ -63,8 +63,8 @@ export function PrivacyPage() {
 
         <Section title="O código que você escreve">
           <p>
-            O código de app.js roda <strong>só no seu navegador</strong>, num Web Worker isolado: sem acesso à página, aos seus dados, aos cookies ou à rede. Ele nunca é
-            executado no nosso servidor.
+            O código de app.js roda <strong>só no seu navegador</strong>, num Web Worker isolado: sem acesso à página, aos seus dados, aos cookies ou à rede. Com
+            conta, ele é guardado no nosso servidor para sincronizar entre dispositivos — guardado como texto, <strong>nunca executado</strong> lá.
           </p>
         </Section>
 
@@ -82,6 +82,10 @@ export function PrivacyPage() {
               <strong>Seu progresso</strong> — objetivos concluídos, quando cada lição foi concluída, seu melhor tempo e a última lição aberta.
             </li>
             <li>
+              <strong>Seu app</strong> — o design (nome, ícone, cor, mensagem), o código de app.js e as versões que você publicou (cada uma com o seu código), com as
+              datas de edição e publicação.
+            </li>
+            <li>
               <strong>Datas</strong> de criação da conta e do último acesso.
             </li>
             <li>
@@ -97,7 +101,7 @@ export function PrivacyPage() {
         <Section title="Para que usamos e com qual base legal">
           <ul>
             <li>
-              <strong>Conta, acesso e sincronização do progresso</strong> — para prestar o serviço que você pediu ao criar a conta (art. 7º, V, da LGPD).
+              <strong>Conta, acesso e sincronização do progresso e do seu app</strong> — para prestar o serviço que você pediu ao criar a conta (art. 7º, V, da LGPD).
             </li>
             <li>
               <strong>Segurança e funcionamento</strong> — limitar abusos (como pedidos repetidos de links de acesso) e corrigir erros (legítimo interesse, art.
