@@ -2,8 +2,8 @@ import { AnimatePresence, motion } from 'motion/react'
 import { memo, useEffect, useRef, useState } from 'react'
 import type { Service } from '../../sim/types'
 import type { Box, Layout } from '../../lib/visual'
-import { BASE_TRAFFIC } from '../../sim/engine'
-import { useApp } from '../../store/useApp'
+import { BASE_TRAFFIC, codeProfile } from '../../sim/engine'
+import { useApp, visitReply } from '../../store/useApp'
 import { useSim } from '../../store/useSim'
 
 const INTERVAL = 460 // ms between simulated requests per Service, at 1×
@@ -78,7 +78,12 @@ export const Traffic = memo(function Traffic({ layout, services }: { layout: Lay
         fly(requestPath(sBox, layout.boxes[pod]), false, () => {
           setServed((s) => ({ ...s, [pod]: (s[pod] ?? 0) + 1 }))
           const served = useSim.getState().cluster.pods[pod]
-          if (svc === appSvc && current()) visit({ ok: true, podUid: pod, podName: served?.name, image: served?.image, edited: useApp.getState().podEdits[pod], configMessage: served?.env?.APP_MESSAGE })
+          if (svc === appSvc && current()) {
+            // a Pod running the learner's code answers with what the code returned for /
+            const code = served ? codeProfile(served.image, served.env) : null
+            const reply = code && code !== 'pending' ? visitReply(code.replies['/']) : undefined
+            visit({ ok: true, podUid: pod, podName: served?.name, image: served?.image, edited: useApp.getState().podEdits[pod], configMessage: served?.env?.APP_MESSAGE, ...(reply && { reply }) })
+          }
         })
       }
     }

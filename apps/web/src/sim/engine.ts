@@ -1,3 +1,4 @@
+import { okReply, type Profile, type Reply } from '../runtime/program'
 import type {
   WorkerNode,
   DaemonSet,
@@ -43,6 +44,7 @@ export const TIMING = {
   backoffMax: 8000,
   terminate: 900,
   configRetry: 1600,
+  codeRetry: 300,
   jobTask: 2600,
   jobTaskJitter: 1400,
   jobBackoff: 1500,
@@ -121,6 +123,26 @@ export const setBrokenImages = (images: Iterable<string>) => {
   brokenImages.clear()
   for (const i of images) brokenImages.add(i)
 }
+// ── the learner's own code ────────────────────────────────────────────────
+
+/**
+ * Images built from the learner's code don't follow scripts like 1.4/1.5/1.6: what they do
+ * comes from actually running the code (see src/runtime). The engine never runs it; it asks
+ * for the run's profile, which may still be 'pending' (the container waits, as for a pull).
+ */
+export interface CodeRuntime {
+  profile(image: string, env: Record<string, string>): Profile | 'pending' | null
+}
+let codeRuntime: CodeRuntime | null = null
+export const setCodeRuntime = (runtime: CodeRuntime | null) => {
+  codeRuntime = runtime
+}
+export const codeProfile = (image: string, env: Record<string, string> | undefined) => codeRuntime?.profile(image, env ?? {}) ?? null
+
+/** What a failed readiness check says, from what the code's /healthz did. */
+const probeFailure = (reply: Reply | undefined) =>
+  !reply || 'timedOut' in reply ? 'context deadline exceeded' : 'error' in reply ? 'HTTP probe failed with statuscode: 500' : `HTTP probe failed with statuscode: ${reply.status}`
+
 export const isBroken = (image: string) => /:1\.5$/.test(image) || brokenImages.has(image)
 
 /** CPU each node can hand out to requests, in millicores. */
@@ -1040,17 +1062,24 @@ export class Simulation {
   }
 
   /** The process stops answering. Readiness takes it out of traffic; only liveness brings it back. */
-  private hang(podUid: string) {
+  private hang(podUid: string, failure = 'context deadline exceeded') {
     const pod = this.livePod(podUid)
     if (!pod || pod.phase !== 'Running' || pod.hung) return
     this.patchPod(podUid, { ready: false, hung: true })
-    this.emit('kubelet', 'warning', 'Unhealthy', `Readiness probe failed: Get "http://${pod.ip}:8080/healthz": context deadline exceeded`, this.ref(pod), 'Warning')
+    this.emit('kubelet', 'warning', 'Unhealthy', `Readiness probe failed: Get "http://${pod.ip}:8080/healthz": ${failure}`, this.ref(pod), 'Warning')
     this.fx({ kind: 'ping', uid: pod.uid, tone: 'error' })
     if (!pod.liveness) {
       this.narrateOnce(`hang:${pod.ownerUid ?? pod.uid}`, {
         tone: 'error',
-        title: 'Vivo, mas sem responder',
-        body: `${short(pod.name)} travou: o processo continua lá, mas não responde. A readiness probe falhou e o tirou do Service — e é só isso. Sem uma liveness probe, ninguém vai reiniciá-lo.`,
+        ...(failure.startsWith('HTTP')
+          ? {
+              title: 'Rodando, mas não está pronto',
+              body: `${short(pod.name)} responde, mas /healthz diz que não está bem (${failure.replace('HTTP probe failed with ', '')}). A readiness probe o tirou do Service — e é só isso. Sem uma liveness probe, ninguém vai reiniciá-lo.`,
+            }
+          : {
+              title: 'Vivo, mas sem responder',
+              body: `${short(pod.name)} travou: o processo continua lá, mas não responde. A readiness probe falhou e o tirou do Service — e é só isso. Sem uma liveness probe, ninguém vai reiniciá-lo.`,
+            }),
         command: `kubectl describe pod ${pod.name}`,
       })
       return
@@ -1060,7 +1089,7 @@ export class Simulation {
       const p = this.livePod(podUid)
       if (!p || !p.hung) return
       const restarts = p.restarts + 1
-      this.emit('kubelet', 'warning', 'Unhealthy', `Liveness probe failed: Get "http://${p.ip}:8080/healthz": context deadline exceeded`, this.ref(p), 'Warning')
+      this.emit('kubelet', 'warning', 'Unhealthy', `Liveness probe failed: Get "http://${p.ip}:8080/healthz": ${failure}`, this.ref(p), 'Warning')
       this.emit('kubelet', 'delete', 'Killing', 'Container backend failed liveness probe, will be restarted', this.ref(p))
       this.patchPod(podUid, { restarts, hung: false })
       this.fx({ kind: 'ping', uid: p.uid, tone: 'warn' })
@@ -1232,7 +1261,9 @@ export class Simulation {
     const pod = this.livePod(podUid)
     if (!pod || pod.phase !== 'Running') return
     const job = pod.ownerUid ? this.cluster.jobs[pod.ownerUid] : undefined
-    const ok = !failingTask(pod.image)
+    const code = codeProfile(pod.image, pod.env)
+    // the learner's script succeeds when it runs to the end without an error
+    const ok = code && code !== 'pending' ? !code.error : !failingTask(pod.image)
     this.patchPod(podUid, { phase: ok ? 'Succeeded' : 'Error', ready: false })
     if (ok) this.emit('kubelet', 'success', 'TaskSucceeded', `Container exited with code 0 (Completed)`, this.ref(pod))
     else this.emit('kubelet', 'warning', 'TaskFailed', `Container exited with code 1 (Error)`, this.ref(pod), 'Warning')
@@ -1502,6 +1533,9 @@ export class Simulation {
     const pod = this.findPod(name)
     if (!pod) return null
     if (previous && pod.restarts === 0) return 'noprevious'
+    const code = codeProfile(pod.image, pod.env)
+    if (code === 'pending' || (code && (pod.phase === 'Pending' || pod.phase === 'ContainerCreating') && !previous)) return []
+    if (code) return [...code.logs, ...(code.error ? [code.error, 'exit status 1'] : code.timedOut ? [] : [])]
     if (isBroken(pod.image) && (!pod.env?.DATABASE_URL || (previous && pod.restarts > 0))) {
       if (!previous && (pod.phase === 'Pending' || pod.phase === 'ContainerCreating')) return []
       return [
@@ -1900,9 +1934,27 @@ export class Simulation {
       if (!secret) return this.missingConfig(pod, 'secret', pod.secret)
       env = { ...env, ...secret.data }
     }
+    const code = codeProfile(pod.image, env)
+    if (code === 'pending') {
+      // the image's code is still being run for the first time: the container waits
+      this.schedule(TIMING.codeRetry, `o kubelet prepara o container de ${short(pod.name)}`, () => this.start(podUid))
+      return
+    }
     if (pod.job) {
-      this.patchPod(podUid, { phase: 'Running', ready: true, ip: pod.ip ?? this.nextIp(pod.nodeName), waiting: undefined })
+      this.patchPod(podUid, { phase: 'Running', ready: true, ip: pod.ip ?? this.nextIp(pod.nodeName), waiting: undefined, ...(env && { env }) })
       this.emit('kubelet', 'progress', 'Started', `Started container ${pod.name.split('-')[0]}`, this.ref(pod))
+      if (code && !code.error && (code.kind === 'server' || code.timedOut)) {
+        // a server never exits, and neither does a script stuck in a loop: the task never ends
+        this.narrateOnce(`job-forever:${pod.ownerUid ?? pod.uid}`, {
+          tone: 'warn',
+          title: code.timedOut ? 'Uma tarefa que não termina' : 'Um servidor não termina',
+          body: code.timedOut
+            ? `O código desta imagem nunca chega ao fim (um laço sem saída?). Num Job, a tarefa nunca acaba — ${short(pod.name)} vai ficar Running até alguém apagar o Job.`
+            : `O código desta imagem define handle(): ele fica esperando requisições para sempre. Num Job, a tarefa nunca acaba — ${short(pod.name)} vai ficar Running até alguém apagar o Job.`,
+          command: `kubectl logs ${pod.name}`,
+        })
+        return
+      }
       this.schedule(TIMING.jobTask + Math.random() * TIMING.jobTaskJitter, `${short(pod.name)} termina a tarefa`, () => this.finishTask(podUid))
       return
     }
@@ -1912,6 +1964,7 @@ export class Simulation {
       this.schedule(TIMING.crash, `o container de ${short(pod.name)} encerra com erro`, () => this.crash(podUid))
       return
     }
+    if (code) return this.runCode(podUid, code)
     this.schedule(TIMING.ready, pod.daemon ? `o container de ${short(pod.name)} fica pronto` : `a readiness probe de ${short(pod.name)} passa`, () => {
       const p = this.livePod(podUid)
       if (!p) return
@@ -1923,6 +1976,62 @@ export class Simulation {
         this.touchDeployment(p.ownerUid)
       }
     })
+  }
+
+  /** A container running the learner's code: its profile decides crash, readiness or a freeze. */
+  private runCode(podUid: string, code: Profile) {
+    const pod = this.livePod(podUid)!
+    // a script stuck in a loop never exits: it's up but never answers, like a frozen server
+    if (code.error || (code.kind === 'script' && !code.timedOut)) {
+      if (!code.error)
+        this.narrateOnce(`script-in-deployment:${pod.ownerUid ?? pod.uid}`, {
+          tone: 'warn',
+          title: 'Uma tarefa num Deployment',
+          body: 'Este código não define handle(): ele roda e termina. Num Deployment, todo container que termina é reiniciado — e entra em CrashLoopBackOff. Tarefas que terminam são trabalho para um Job.',
+          command: `kubectl logs ${pod.name}`,
+        })
+      this.schedule(TIMING.crash, `o container de ${short(pod.name)} ${code.error ? 'encerra com erro' : 'termina'}`, () => this.crash(podUid))
+      return
+    }
+    const health = code.timedOut ? undefined : code.replies['/healthz']
+    if (!okReply(health)) {
+      // up, but the readiness probe never passes: out of the Service (and, with liveness, restarted)
+      this.schedule(TIMING.ready, `a readiness probe de ${short(pod.name)} falha`, () => {
+        this.hang(podUid, probeFailure(health))
+        // it will never become Ready: the rollout can't go on (with liveness, it keeps restarting)
+        const p = this.livePod(podUid)
+        if (p) this.stallRollout(p)
+      })
+      return
+    }
+    this.schedule(TIMING.ready, `a readiness probe de ${short(pod.name)} passa`, () => {
+      const p = this.livePod(podUid)
+      if (!p) return
+      this.patchPod(podUid, { ready: true, hung: false })
+      this.emit('kubelet', 'ready', 'Ready', 'Readiness probe succeeded — Pod is Ready', this.ref(p))
+      if (p.ownerUid) {
+        this.checkReconciled(p.ownerUid)
+        this.touchDeployment(p.ownerUid)
+      }
+    })
+  }
+
+  /** A new Pod of the current template that will never be Ready: the rollout stops, safely. */
+  private stallRollout(pod: Pod) {
+    const rs = pod.ownerUid ? this.cluster.replicaSets[pod.ownerUid] : undefined
+    const dep = rs && this.cluster.deployments[rs.ownerUid]
+    if (dep && rs && sameTemplate(rs, dep.template) && dep.rollout === 'progressing') {
+      this.patchDep(dep.uid, { rollout: 'stalled' })
+      const oldReady = this.replicaSetsOf(dep)
+        .filter((r) => r.uid !== rs.uid)
+        .reduce((n, r) => n + this.activePods(r.uid).filter((p) => p.ready).length, 0)
+      this.narrateOnce(`stall:${dep.uid}:${dep.revision}`, {
+        tone: 'error',
+        title: 'Rollout travado',
+        body: `O Pod novo nunca fica Ready, então o Deployment não derruba nenhum Pod antigo. ${oldReady} Pod${oldReady === 1 ? '' : 's'} na ${tag(dep.history[dep.history.length - 2]?.image ?? '')} ${oldReady === 1 ? 'continua' : 'continuam'} atendendo — ninguém ficou fora do ar.`,
+        command: `kubectl rollout status deployment/${dep.name}`,
+      })
+    }
   }
 
   private crash(podUid: string) {
@@ -1939,20 +2048,7 @@ export class Simulation {
       command: `kubectl logs ${pod.name}`,
     })
 
-    const rs = pod.ownerUid ? this.cluster.replicaSets[pod.ownerUid] : undefined
-    const dep = rs && this.cluster.deployments[rs.ownerUid]
-    if (dep && rs && sameTemplate(rs, dep.template) && dep.rollout === 'progressing') {
-      this.patchDep(dep.uid, { rollout: 'stalled' })
-      const oldReady = this.replicaSetsOf(dep)
-        .filter((r) => r.uid !== rs.uid)
-        .reduce((n, r) => n + this.activePods(r.uid).filter((p) => p.ready).length, 0)
-      this.narrateOnce(`stall:${dep.uid}:${dep.revision}`, {
-        tone: 'error',
-        title: 'Rollout travado',
-        body: `O Pod novo nunca fica Ready, então o Deployment não derruba nenhum Pod antigo. ${oldReady} Pod${oldReady === 1 ? '' : 's'} na ${tag(dep.history[dep.history.length - 2]?.image ?? '')} ${oldReady === 1 ? 'continua' : 'continuam'} atendendo — ninguém ficou fora do ar.`,
-        command: `kubectl rollout status deployment/${dep.name}`,
-      })
-    }
+    this.stallRollout(pod)
 
     this.schedule(TIMING.errorToBackoff, `o kubelet aguarda (back-off) antes de reiniciar ${short(pod.name)}`, () => {
       const p = this.livePod(podUid)

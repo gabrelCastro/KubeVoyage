@@ -144,6 +144,23 @@ in-memory, so they hold per instance.
 - Traffic is a picture, not real requests: particles routed round-robin to the endpoints
   the simulation computed.
 
+### Your code in the Pods
+
+`edit app.js` opens an editor; `docker build -t backend:<tag> .` turns the file into an
+immutable image. Pods running that image run the code for real (`src/runtime`):
+
+- With `function handle(req, env)` it's a server: the kubelet's probes call `/healthz`, visitors
+  and `wget` get `/`. Without it, it's a task — a Job's exit code is whether it threw.
+- `console.log` is `kubectl logs`; `env` / `process.env` come from ConfigMaps and Secrets, so the
+  same image behaves differently per environment. A throw on start is CrashLoopBackOff; a
+  `/healthz` that answers 5xx or never returns keeps the Pod out of the Service (and, with a
+  liveness probe, gets it restarted).
+- The code runs once per (code, environment) in a throwaway Web Worker with the network APIs
+  removed and a watchdog (800 ms to load, 300 ms per request); the engine only reads the
+  resulting profile, so the simulation stays deterministic. In production the Worker's script
+  gets its own CSP (`'unsafe-eval'`, `connect-src 'none'`; see `deploy/Caddyfile`). The code
+  never runs on the server.
+
 ## Shortcuts
 
 `Space` pause/resume · `.` step · `r` restart lesson · `/` focus terminal ·

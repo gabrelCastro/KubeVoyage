@@ -2,21 +2,23 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { Simulation, isBroken } from '../../sim/engine'
 import { run } from '../../sim/kubectl'
 import { settle } from '../../sim/__tests__/helpers'
-import { DEFAULT_DESIGN, designFor, designForPod, imageOf, parseStoredApp, useApp, type AppDesign } from '../useApp'
+import { imageCode } from '../../runtime'
+import { DEFAULT_CODE, DEFAULT_DESIGN, designFor, designForPod, imageOf, MAX_RELEASES, nextTag, parseStoredApp, useApp, type AppDesign } from '../useApp'
+
+const EMPTY = { design: DEFAULT_DESIGN, customized: false, releases: [], code: null, designAt: 0, codeAt: 0 }
 
 describe('useApp', () => {
   beforeEach(() => {
-    useApp.setState({ design: DEFAULT_DESIGN, customized: false, releases: [], studioOpen: false, visits: [], podEdits: {}, lostEdits: [], served: 0, failed: 0 })
+    useApp.setState({ ...EMPTY, studioOpen: false, visits: [], podEdits: {}, lostEdits: [], served: 0, failed: 0 })
   })
 
   it('falls back safely when stored data is missing, malformed or invalid', () => {
-    expect(parseStoredApp(null)).toEqual({ design: DEFAULT_DESIGN, customized: false, releases: [] })
-    expect(parseStoredApp('{')).toEqual({ design: DEFAULT_DESIGN, customized: false, releases: [] })
-    expect(parseStoredApp('[]')).toEqual({ design: DEFAULT_DESIGN, customized: false, releases: [] })
+    expect(parseStoredApp(null)).toEqual(EMPTY)
+    expect(parseStoredApp('{')).toEqual(EMPTY)
+    expect(parseStoredApp('[]')).toEqual(EMPTY)
     expect(parseStoredApp(JSON.stringify({ customized: true, design: { name: '', emoji: 'x', color: 'invisível', message: 4 } }))).toEqual({
-      design: DEFAULT_DESIGN,
+      ...EMPTY,
       customized: true,
-      releases: [],
     })
   })
 
@@ -55,12 +57,55 @@ describe('useApp', () => {
     expect(designFor(s, 'nginx:1.27')).toEqual(DEFAULT_DESIGN)
   })
 
-  it('restores stored releases with clean, renumbered tags', () => {
-    const stored = parseStoredApp(JSON.stringify({ releases: [{ tag: '9.9', design: fox, broken: true }, 'junk', { design: {} }] }))
+  it('restores stored releases keeping valid unique tags, giving the rest the next free one', () => {
+    const stored = parseStoredApp(
+      JSON.stringify({
+        code: 'console.log(1)',
+        codeAt: 42,
+        releases: [{ tag: 'beta', design: fox, broken: true, code: 'x', createdAt: 7 }, 'junk', { design: {} }, { tag: 'beta', design: fox }, { tag: '1.4', design: fox }],
+      }),
+    )
+    expect(stored.code).toBe('console.log(1)')
+    expect(stored.codeAt).toBe(42)
+    expect(stored.designAt).toBe(0)
     expect(stored.releases).toEqual([
-      { tag: '2.0', design: fox, broken: true },
-      { tag: '2.1', design: DEFAULT_DESIGN, broken: false },
+      { tag: 'beta', design: fox, broken: true, code: 'x', createdAt: 7 },
+      { tag: '2.0', design: DEFAULT_DESIGN, broken: false, createdAt: 0 },
+      // a duplicate and a lesson tag can't stay as they were
+      { tag: '2.1', design: fox, broken: false, createdAt: 0 },
+      { tag: '2.2', design: fox, broken: false, createdAt: 0 },
     ])
+  })
+
+  it('docker build makes an immutable image from app.js — the template until the learner writes any', () => {
+    expect(useApp.getState().build('2.0')).toEqual({ image: imageOf('2.0') })
+    expect(imageCode(imageOf('2.0'))).toBe(DEFAULT_CODE)
+    useApp.getState().setCode('console.log("v2")')
+    expect(useApp.getState().build('2.0')).toMatchObject({ error: expect.stringContaining('já existe') })
+    expect(useApp.getState().build('1.4')).toMatchObject({ error: expect.stringContaining('lições') })
+    expect(useApp.getState().build('-x')).toMatchObject({ error: expect.stringContaining('invalid tag') })
+    expect(useApp.getState().build('com-log')).toEqual({ image: imageOf('com-log') })
+    expect(imageCode(imageOf('com-log'))).toBe('console.log("v2")')
+    // editing the draft doesn't change what was built
+    useApp.getState().setCode('mudou')
+    expect(imageCode(imageOf('com-log'))).toBe('console.log("v2")')
+    // the studio skips taken tags, and publishes the design only
+    expect(nextTag(useApp.getState().releases)).toBe('2.1')
+    expect(useApp.getState().publish(fox, false)).toBe(imageOf('2.1'))
+    expect(imageCode(imageOf('2.1'))).toBeUndefined()
+  })
+
+  it('studio versions never carry code — a "buggy" one crashes like 1.5, whatever app.js says', () => {
+    useApp.getState().setCode('console.log("oi")')
+    useApp.getState().publish(fox, true)
+    expect(useApp.getState().releases[0].code).toBeUndefined()
+    expect(imageCode(imageOf('2.0'))).toBeUndefined()
+  })
+
+  it(`keeps at most ${MAX_RELEASES} images`, () => {
+    for (let i = 0; i < MAX_RELEASES; i++) expect(useApp.getState().build(`v${i}`)).toHaveProperty('image')
+    expect(useApp.getState().build('mais-uma')).toHaveProperty('error')
+    expect(useApp.getState().publish(fox, false)).toBeNull()
   })
 
   it('a version published with a bug really crash-loops in the cluster', () => {

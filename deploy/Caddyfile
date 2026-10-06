@@ -9,10 +9,17 @@
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
-		# everything is self-hosted: data: is for tiny font subsets Vite inlines; inline styles come from Motion
-		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
 		-Server
 	}
+
+	# The pages: everything is self-hosted; data: is for tiny font subsets Vite inlines; inline styles come from Motion.
+	@page not path /assets/codeWorker-*.js
+	header @page Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+	# The Web Worker that runs the learner's own code (src/runtime): a worker gets the CSP of its own
+	# script. It may eval (that's its job) and nothing else — no network, no other scripts. The file
+	# name comes from src/runtime/codeWorker.ts: rename one, rename the other (or eval fails in prod).
+	@codeWorker path /assets/codeWorker-*.js
+	header @codeWorker Content-Security-Policy "default-src 'none'; script-src 'self' 'unsafe-eval'; connect-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 
 	@api path /api/* /oauth2/* /login/oauth2/*
 	handle @api {

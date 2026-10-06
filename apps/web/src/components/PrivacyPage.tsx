@@ -56,8 +56,15 @@ export function PrivacyPage() {
 
         <Section title="Sem conta">
           <p>
-            Seu progresso, o estado do tutorial, o histórico de comandos do terminal e o seu app (o design e as versões publicadas) ficam no{' '}
+            Seu progresso, o estado do tutorial, o histórico de comandos do terminal e o seu app (o design, o código de app.js e as versões publicadas) ficam no{' '}
             <strong>armazenamento local do seu navegador</strong> (localStorage). Eles não são enviados ao servidor. Limpar os dados do site no navegador apaga tudo.
+          </p>
+        </Section>
+
+        <Section title="O código que você escreve">
+          <p>
+            O código de app.js roda <strong>só no seu navegador</strong>, num Web Worker isolado: sem acesso à página, aos seus dados, aos cookies ou à rede. Ele nunca é
+            executado no nosso servidor.
           </p>
         </Section>
 

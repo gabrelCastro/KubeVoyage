@@ -3,7 +3,7 @@ import { ChevronDown, Palette } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { cn } from '../../lib/visual'
 import { short, tag } from '../../sim/engine'
-import { APP_COLORS, designFor, useApp, type AppDesign } from '../../store/useApp'
+import { APP_COLORS, designFor, replyText, useApp, type AppDesign, type Visit } from '../../store/useApp'
 import { useSim } from '../../store/useSim'
 
 const CELLS = 32
@@ -68,9 +68,9 @@ export function AppWindow() {
   const down = !!svc && !!last && !last.ok
   const look = (image?: string) => (image ? designFor({ design, releases }, image) : design)
   const lastOk = [...visits].reverse().find((v) => v.ok)
-  // what a visitor saw: the version's design, then the message from the Pod's environment, then any hand edit
-  const lookOf = (v: { image?: string; edited?: { emoji: string; message: string }; configMessage?: string }) => {
-    const d = { ...look(v.image), ...(v.configMessage !== undefined && { message: v.configMessage }) }
+  // what a visitor saw: the version's design, then what its code answered (or the message from the Pod's environment), then any hand edit
+  const lookOf = (v: Pick<Visit, 'image' | 'edited' | 'configMessage' | 'reply'>) => {
+    const d = { ...look(v.image), ...(v.reply ? { message: replyText(v.reply) } : v.configMessage !== undefined && { message: v.configMessage }) }
     return v.edited ? { ...d, emoji: v.edited.emoji, message: v.edited.message } : d
   }
   const showing = lastOk ? lookOf(lastOk) : design
@@ -172,6 +172,7 @@ export function AppWindow() {
                       const v = visits[visits.length - CELLS + i]
                       if (!v) return <span key={`e${i}`} className="h-8 rounded-md border border-dashed border-line" />
                       const d = lookOf(v)
+                      const appError = v.ok && v.reply && v.reply.status >= 400
                       return (
                         <motion.span
                           key={v.id}
@@ -181,14 +182,25 @@ export function AppWindow() {
                           onMouseEnter={() => v.podUid && pods[v.podUid] && hover(v.podUid)}
                           onMouseLeave={() => hover(null)}
                           title={
-                            v.ok
-                              ? `Atendido por ${v.podName}${v.image ? ` (versão ${tag(v.image)})` : ''}${v.edited ? ' — editado à mão' : ''}`
-                              : 'Recusado: o Service não tinha para quem mandar'
+                            appError
+                              ? `${v.podName} respondeu HTTP ${v.reply!.status}${v.image ? ` (versão ${tag(v.image)})` : ''} — o seu código devolveu um erro`
+                              : v.ok
+                                ? `Atendido por ${v.podName}${v.image ? ` (versão ${tag(v.image)})` : ''}${v.edited ? ' — editado à mão' : ''}`
+                                : 'Recusado: o Service não tinha para quem mandar'
                           }
-                          className={cn('flex h-8 flex-col items-center justify-center rounded-md leading-none', !v.ok && 'bg-crash/15 text-crash', v.ok && v.edited && 'ring-1 ring-warn/70')}
-                          style={v.ok ? { background: `color-mix(in oklab, ${APP_COLORS[d.color]} 18%, transparent)` } : undefined}
+                          className={cn(
+                            'flex h-8 flex-col items-center justify-center rounded-md leading-none',
+                            (!v.ok || appError) && 'bg-crash/15 text-crash',
+                            v.ok && v.edited && 'ring-1 ring-warn/70',
+                          )}
+                          style={v.ok && !appError ? { background: `color-mix(in oklab, ${APP_COLORS[d.color]} 18%, transparent)` } : undefined}
                         >
-                          {v.ok ? (
+                          {appError ? (
+                            <>
+                              <span className="font-mono text-[11px] font-bold">{v.reply!.status}</span>
+                              <span className="mt-0.5 font-mono text-[8.5px] opacity-70">{v.podName ? short(v.podName).slice(0, 4) : ''}</span>
+                            </>
+                          ) : v.ok ? (
                             <>
                               <span className="text-[13px]" aria-hidden>
                                 {d.emoji}

@@ -3,7 +3,9 @@ import { ALL_KINDS, KIND_ALIASES, KIND_DOCS, KIND_SINGULAR, KIND_WORDS, UNSIMULA
 import { apiPhase, listObject, readPath, toJson, toYaml, type Json, type Obj } from './cli/objects'
 import { pipe } from './cli/pipe'
 import { age, podHeader, podRow, SPECS, statusTone, type Item, type Seg, type Spec, type Tone } from './cli/resourceSpecs'
-import { isBroken, labelString, NODE_CPU, rsSelector, short, tag, type Simulation } from './engine'
+import type { Profile } from '../runtime/program'
+import { DOCKERFILE, runWorkspace, WORKSPACE_COMMANDS, WORKSPACE_DOCS, WORKSPACE_FILES, WORKSPACE_HELP, type Workspace } from './cli/workspace'
+import { codeProfile, isBroken, labelString, NODE_CPU, rsSelector, short, tag, type Simulation } from './engine'
 import { FILES, IMAGE } from './manifests'
 import type { ClusterEvent, ConfigMap, DaemonSet, Deployment, HorizontalPodAutoscaler, Job, Labels, Pod, ReplicaSet, Service } from './types'
 
@@ -18,6 +20,8 @@ export interface CommandResult {
   clear?: boolean
   watch?: WatchSpec
   edit?: { kind: 'deployment'; name: string }
+  /** Open the code editor on app.js. */
+  editCode?: boolean
   /** Resource the command was "about" — lets the stage acknowledge terminal activity. */
   focusUid?: string
 }
@@ -28,6 +32,8 @@ export interface RunPresentation {
   appFor?: (image: string, podUid?: string) => { name: string; message: string }
   /** Images published in the app studio (offered by Tab completion). */
   images?: string[]
+  /** app.js, the Dockerfile and `docker build` (absent: the terminal has no workspace). */
+  workspace?: Workspace
 }
 
 export type WatchKind = KindId
@@ -269,25 +275,30 @@ export function run(sim: Simulation, input: string, presentation: RunPresentatio
   return { ...result, lines: [...lines, ...(result.watch ? [note('-w não acompanha a saída depois de um | neste terminal')] : [])], watch: undefined }
 }
 
-const SHELL = ['kubectl', 'k', 'clear', 'help', 'ls', 'cat', 'explicar', 'echo']
+const SHELL = ['kubectl', 'k', 'clear', 'help', 'ls', 'cat', 'explicar', 'echo', ...WORKSPACE_COMMANDS]
 
 function runOne(sim: Simulation, tokens: string[], presentation: RunPresentation): CommandResult {
   const [cmd, ...rest] = tokens
 
   if (cmd === 'clear') return { lines: [], clear: true }
-  if (cmd === 'help') return help()
+  if (cmd === 'help') return help(!!presentation.workspace)
   if (cmd === 'explicar') return explain(sim, rest)
   if (cmd === 'echo') return { lines: [plain(rest.filter((a) => a !== '-n').join(' '))] }
-  if (cmd === 'ls') return { lines: [sim.files.map((f) => ({ t: `${f}  `, c: 'accent' as Tone }))] }
+  const ws = presentation.workspace
+  if (cmd === 'ls') return { lines: [[...sim.files, ...(ws ? WORKSPACE_FILES : [])].map((f) => ({ t: `${f}  `, c: 'accent' as Tone }))] }
   if (cmd === 'cat') {
     if (!rest.length) return err('cat: informe um arquivo — por exemplo, cat backend.yaml')
     const lines: Line[] = []
     for (const f of rest) {
-      if (!sim.files.includes(f)) lines.push(plain(`cat: ${f}: No such file or directory`, 'error'))
+      if (ws && f === 'app.js') lines.push(...ws.code.replace(/\n$/, '').split('\n').map((l) => plain(l, 'muted')))
+      else if (ws && f === 'Dockerfile') lines.push(...DOCKERFILE.split('\n').map((l) => plain(l, 'muted')))
+      else if (!sim.files.includes(f)) lines.push(plain(`cat: ${f}: No such file or directory`, 'error'))
       else lines.push(...FILES[f].yaml.split('\n').map((l) => plain(l, 'muted')))
     }
     return { lines }
   }
+  const fromWorkspace = runWorkspace(cmd, rest, ws)
+  if (fromWorkspace) return fromWorkspace
   if (cmd !== 'kubectl' && cmd !== 'k') {
     const guess = suggest(cmd, SHELL)[0]
     return {
@@ -461,7 +472,7 @@ function logs(sim: Simulation, args: string[], flags: Flags): CommandResult {
   const previous = flags.p === true
   const follow = flags.follow ? [note('-f acompanharia as próximas linhas; aqui aparece só o que já foi escrito')] : []
   const cut = (ls: string[]) => (tail >= 0 ? ls.slice(Math.max(0, ls.length - tail)) : ls)
-  const paint = (l: string): Line => plain(l, /panic|exit status|level=error/.test(l) ? 'error' : l.startsWith('\t') || l.startsWith('goroutine') || l.startsWith('main.') ? 'muted' : undefined)
+  const paint = (l: string): Line => plain(l, /panic|exit status|level=error|^[A-Z]\w*Error\b|^Uncaught |^error: /.test(l) ? 'error' : l.startsWith('\t') || l.startsWith('goroutine') || l.startsWith('main.') ? 'muted' : undefined)
 
   const sel = selectorFlag(flags)
   if (sel) {
@@ -1156,7 +1167,7 @@ function describeOne(sim: Simulation, kind: KindId, name: string): CommandResult
   }
 }
 
-function help(): CommandResult {
+function help(workspace = false): CommandResult {
   const row = (c: string, d: string): Line => [{ t: `  ${c}`.padEnd(58), c: 'accent' }, { t: d, c: 'muted' }]
   return {
     lines: [
@@ -1187,6 +1198,7 @@ function help(): CommandResult {
       row('kubectl run t --rm -it --image=busybox -- wget -qO- http://backend', 'testar um Service de dentro do cluster'),
       row('… | grep · head · tail · wc -l · sort', 'filtrar a saída'),
       row('explicar <comando>', 'explica cada parte de um comando, sem executar'),
+      ...(workspace ? WORKSPACE_HELP.map(([c, d]) => row(c, d)) : []),
       [],
       plain('kubectl <comando> --help explica cada comando · Tab completa · ↑/↓ histórico · `k` = kubectl · clear limpa', 'muted'),
     ],
@@ -1221,7 +1233,9 @@ function labelPairs(sim: Simulation): string[] {
 function candidatesFor(sim: Simulation, words: string[], last: string, images: string[] = []): string[] {
   const [cmd, verb] = words
   if (!words.length) return SHELL
-  if (cmd === 'cat') return sim.files
+  if (cmd === 'cat') return [...sim.files, ...WORKSPACE_FILES]
+  if (cmd === 'edit') return words.length === 1 ? ['app.js'] : []
+  if (cmd === 'docker') return words.length === 1 ? ['build', 'images'] : words[1] === 'build' && !words.includes('-t') ? ['-t'] : []
   if (cmd !== 'kubectl' && cmd !== 'k') return []
   if (words.length === 1) return VERBS
 
@@ -1410,7 +1424,7 @@ function explain(sim: Simulation, tokens: string[]): CommandResult {
   const rows: [string, string, Tone?][] = []
   const [cmd, verb, ...more] = tokens
   if (cmd !== 'kubectl' && cmd !== 'k') {
-    const shell: Record<string, string> = { ls: 'lista os arquivos desta lição', cat: 'mostra o conteúdo de um arquivo', clear: 'limpa o terminal', help: 'mostra o que este terminal entende' }
+    const shell: Record<string, string> = { ls: 'lista os arquivos desta lição', cat: 'mostra o conteúdo de um arquivo', clear: 'limpa o terminal', help: 'mostra o que este terminal entende', ...WORKSPACE_DOCS }
     return { lines: [plain(shell[cmd] ? `${cmd}: ${shell[cmd]}` : `${cmd} não é um comando que este terminal entende`, shell[cmd] ? undefined : 'warn')] }
   }
   rows.push([cmd, cmd === 'k' ? 'atalho para kubectl — a ferramenta que conversa com a API do cluster' : 'a ferramenta que conversa com a API do cluster'])
@@ -1555,12 +1569,31 @@ function fromInside(sim: Simulation, command: string[], presentation: RunPresent
     // kube-proxy picks an endpoint at random, per connection
     const pod = sim.cluster.pods[svc.endpoints[Math.floor(Math.random() * svc.endpoints.length)]]
     const path = '/' + pathParts.join('/')
+    const code = codeProfile(pod.image, pod.env)
+    if (code && code !== 'pending') return codeReply(tool, code, path, pod)
     return [
       plain(JSON.stringify({ status: 'ok', app: (presentation.appFor?.(pod.image, pod.uid) ?? presentation.app)?.name, message: (presentation.appFor?.(pod.image, pod.uid) ?? presentation.app)?.message, path, servedBy: pod.name, version: tag(pod.image) }), 'success'),
       [{ t: '# atendido por ', c: 'muted' }, { t: pod.name, c: 'muted', ref: pod.uid }, { t: ' — rode de novo e o kube-proxy pode escolher outro Pod', c: 'muted' }],
     ]
   }
   return [plain(`${tool ?? 'sh'}: este terminal não abre shells interativos dentro de Pods.`, 'warn'), note('dá para rodar wget, curl ou nslookup — ex.: -- wget -qO- http://backend')]
+}
+
+const REASONS: Record<number, string> = { 200: 'OK', 201: 'Created', 204: 'No Content', 301: 'Moved Permanently', 302: 'Found', 400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not Found', 500: 'Internal Server Error', 502: 'Bad Gateway', 503: 'Service Unavailable' }
+
+/** What the learner's code answered, as wget/curl would show it. */
+function codeReply(tool: string, code: Profile, path: string, pod: Pod): Line[] {
+  const servedBy: Line = [{ t: '# atendido por ', c: 'muted' }, { t: pod.name, c: 'muted', ref: pod.uid }, { t: ' — o seu código respondeu', c: 'muted' }]
+  const reply = code.replies[path]
+  if (!reply) return [plain(`${tool}: este terminal só conhece o que o seu código respondeu para / e /healthz`, 'warn'), note('são os caminhos que os visitantes e as probes pedem — teste com http://<service>/'), servedBy]
+  if ('timedOut' in reply) return [plain(`${tool}: download timed out`, 'error'), note(`handle() não respondeu a ${path} a tempo`), servedBy]
+  if ('error' in reply)
+    return [plain(`${tool === 'wget' ? 'wget: server returned error: ' : ''}HTTP/1.1 500 Internal Server Error`, 'error'), note(`handle() lançou um erro em ${path}: ${reply.error}`), servedBy]
+  const ok = reply.status >= 200 && reply.status < 400
+  const body = reply.body.split('\n').map((l) => plain(l, ok ? 'success' : undefined))
+  // wget stops at an error status; curl prints whatever came back
+  if (!ok && tool === 'wget') return [plain(`wget: server returned error: HTTP/1.1 ${reply.status} ${REASONS[reply.status] ?? ''}`.trimEnd(), 'error'), servedBy]
+  return [...(reply.body ? body : [note(`resposta vazia (HTTP ${reply.status})`)]), servedBy]
 }
 
 function runPod(sim: Simulation, args: string[], flags: Flags, presentation: RunPresentation): CommandResult {

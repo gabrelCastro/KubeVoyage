@@ -3,10 +3,14 @@ import { getLesson } from '../lessons'
 import { lastLesson } from '../progress/browser'
 import type { Lesson } from '../lessons/types'
 import { deploymentEditYaml } from '../lib/deploymentEditYaml'
-import { designFor, designForPod, imageOf, useApp } from './useApp'
-import { Simulation } from '../sim/engine'
+import { DEFAULT_CODE, designFor, designForPod, imageOf, useApp } from './useApp'
+import { profileFor } from '../runtime'
+import { setCodeRuntime, Simulation } from '../sim/engine'
 import type { Line, WatchSpec } from '../sim/kubectl'
 import type { ClusterEvent, ClusterState, Effect, Narration, PendingTask } from '../sim/types'
+
+// images built from the learner's code run it for real (in a Worker); the engine asks here
+setCodeRuntime({ profile: profileFor })
 
 export interface TermEntry {
   id: number
@@ -206,7 +210,13 @@ export const useSim = create<SimStore>((set, get) => {
           return fromEnv !== undefined && !(podUid && app.podEdits[podUid]) ? { ...d, message: fromEnv } : d
         },
         images: app.releases.map((r) => imageOf(r.tag)),
+        workspace: {
+          code: app.code ?? DEFAULT_CODE,
+          build: (tag) => useApp.getState().build(tag),
+          images: app.releases.map((r) => imageOf(r.tag)),
+        },
       })
+      if (result.editCode) useApp.getState().openCode(true)
       holdWatch = false
       if (result.clear) {
         set({ term: [], history: [...current.history, trimmed] })

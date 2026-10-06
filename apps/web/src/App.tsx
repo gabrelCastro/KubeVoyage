@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import { CommandPalette } from './components/CommandPalette'
 import { Completion } from './components/Completion'
 import { AppStudio } from './components/app/AppStudio'
+import { CodeEditor } from './components/app/CodeEditor'
 import { AppWindow } from './components/app/AppWindow'
 import { Inspector } from './components/Inspector'
 import { LessonPanel } from './components/LessonPanel'
@@ -97,6 +98,7 @@ export default function App() {
       <ApostilaPanel />
       <DeploymentEditor />
       <AppStudio />
+      <CodeEditor />
       <Tour />
       <Tips />
       <ShortcutsDialog />
