@@ -23,6 +23,8 @@ export default defineConfig({
       },
     },
   },
+  // the account tests (playwright.account.config.ts) run the production build against the real API
+  ...(process.env.KUBELEARN_PREVIEW_API && { preview: { proxy: { '/api': api, '/oauth2': api, '/login/oauth2': api } } }),
   server: {
     port: 5180,
     strictPort: true,

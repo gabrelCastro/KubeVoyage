@@ -15,10 +15,14 @@ npm run dev        # API on :8080 (starts Postgres + Mailpit via Docker) and web
 
 Open http://localhost:5180. Sign-in emails land in **Mailpit** at http://localhost:8025.
 The web app works fully without the API — progress just stays on the device.
+How to use the tool — lessons, every terminal command, running your own code — is documented
+in the app itself, at http://localhost:5180/doc.
 
 ```bash
 npm test           # shared (TS) + web (Vitest) + API (JUnit, Testcontainers)
 npm run e2e -w @kubelearn/web   # browser tests (Playwright) against the production build
+npm run e2e:account -w @kubelearn/web   # accounts end to end: the build + the real API, Postgres, Mailpit (needs Docker)
+npm run check:build -w @kubelearn/web   # after a build: the code worker's file matches deploy/Caddyfile's CSP rule
 npm run fixtures   # regenerate the cross-language merge fixtures after changing merge rules
 ```
 
@@ -180,5 +184,9 @@ immutable image. Pods running that image run the code for real (`src/runtime`):
 
 ## Next
 
-ConfigMaps/Secrets (the fix for v1.5's missing `DATABASE_URL`), probes as an editable
-concept, Jobs, a better small-screen layout, a deploy recipe (container image + proxy).
+- A lesson built around your own code: edit → build → roll out → break → investigate → fix.
+- `kubectl exec` and `port-forward`, which pair naturally with the learner's code.
+- More kinds, each with its lesson: Ingress (traffic from outside, host/path rules), StatefulSets,
+  Namespaces and RBAC, CronJobs on an accelerated clock.
+- Known limits: last-writer-wins trusts device clocks (a clock running behind can lose a tie);
+  the code runtime bounds time, not memory; the worker's CSP hasn't been checked on Safari.
