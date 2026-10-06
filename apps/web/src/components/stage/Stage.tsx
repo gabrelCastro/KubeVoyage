@@ -2,7 +2,8 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getLesson } from '../../lessons'
 import { matches, NO_OWNER, sameTemplate } from '../../sim/engine'
-import { computeLayout, edgePath, relatedTo, spring, type Layout } from '../../lib/visual'
+import { shareList, sharer } from '../../lib/share'
+import { computeLayout, edgePath, relatedTo, shareLayout, spring, type Layout } from '../../lib/visual'
 import { useSim } from '../../store/useSim'
 import { Edges, type EdgeModel } from './Edges'
 import { Effects } from './Effects'
@@ -75,7 +76,11 @@ export function Stage() {
     return () => clearTimeout(t)
   }, [])
 
-  const layout = useMemo(() => computeLayout(cluster), [cluster])
+  // geometry and edges are rebuilt from the cluster, then share whatever didn't change with the
+  // previous render, so only the nodes that actually moved re-render
+  const [shareGeometry] = useState(() => sharer(shareLayout))
+  const [shareEdges] = useState(() => sharer((prev: EdgeModel[] | null, next: EdgeModel[]) => shareList(prev, next, (e) => e.id)))
+  const layout = useMemo(() => shareGeometry(computeLayout(cluster)), [cluster, shareGeometry])
   const related = useMemo(() => relatedTo(cluster, selected), [cluster, selected])
   const empty = Object.keys(cluster.deployments).length === 0 && Object.keys(cluster.jobs).length === 0 && Object.keys(cluster.daemonSets).length === 0 && Object.keys(cluster.pods).length === 0
   const services = useMemo(() => Object.values(cluster.services), [cluster.services])
@@ -109,8 +114,8 @@ export function Stage() {
     for (const svc of services)
       for (const p of Object.values(cluster.pods))
         if (p.deletedAt === null && matches(svc.selector, p.labels)) link(svc.uid, p.uid, 'svc-pod', svc.endpoints.includes(p.uid) ? 'stable' : 'forming')
-    return out
-  }, [cluster, layout, related, services])
+    return shareEdges(out)
+  }, [cluster, layout, related, services, shareEdges])
 
   // Selecting a Service turns every Pod into a little "does my label match?" readout.
   const probeSvc = selected ? cluster.services[selected] : undefined

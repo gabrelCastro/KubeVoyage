@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { ArrowDown, Check, History } from 'lucide-react'
-import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { short } from '../sim/engine'
 import type { ClusterEvent, EventTone } from '../sim/types'
 import { cn } from '../lib/visual'
@@ -157,16 +157,12 @@ const Row = memo(function Row({ e, time, exists, showTime, isLast }: { e: Cluste
   const p = phrase(e)
   const big = e.source === 'you' || e.reason === 'Reconciled' || e.reason === 'RolloutComplete'
   return (
-    <motion.li
-      layout="position"
-      initial={{ opacity: 0, x: 10 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ type: 'spring', stiffness: 380, damping: 32 }}
+    <li
       onMouseEnter={() => hover(e.involved.uid)}
       onMouseLeave={() => hover(null)}
       onClick={() => exists && select(e.involved.uid)}
       title={`${e.reason}: ${e.message}`}
-      className={cn('group relative grid cursor-default grid-cols-[52px_14px_1fr] items-start gap-x-2 rounded-md px-2 py-[5px] transition-colors hover:bg-raised', exists && 'cursor-pointer')}
+      className={cn('anim-row-in group relative grid cursor-default grid-cols-[52px_14px_1fr] items-start gap-x-2 rounded-md px-2 py-[5px] transition-colors hover:bg-raised', exists && 'cursor-pointer')}
     >
       <span className={cn('pt-[1px] font-mono text-[10.5px] tabular-nums text-fg-faint transition-opacity', !showTime && 'opacity-0 group-hover:opacity-100')}>{time}</span>
       <span className="relative flex h-full justify-center">
@@ -190,9 +186,12 @@ const Row = memo(function Row({ e, time, exists, showTime, isLast }: { e: Cluste
         </span>
         <span className="block text-[10px] text-fg-faint">{SOURCE[e.source]}</span>
       </span>
-    </motion.li>
+    </li>
   )
 })
+
+/** Events on screen at once; older ones load on request. */
+const WINDOW = 200
 
 export function Timeline() {
   const events = useSim((s) => s.events)
@@ -202,12 +201,18 @@ export function Timeline() {
   const [pinned, setPinned] = useState(true)
   const [unseen, setUnseen] = useState(0)
   const prevLen = useRef(events.length)
+  // how many of the latest events are on screen: a long session has thousands, and rendering them
+  // all made every update slower the longer you used the app
+  const [shown, setShown] = useState(WINDOW)
+  const visible = events.length > shown ? events.slice(-shown) : events
+  const hidden = events.length - visible.length
 
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    if (pinned) el.scrollTop = el.scrollHeight
-    else if (events.length > prevLen.current) setUnseen((n) => n + events.length - prevLen.current)
+  // the list scrolls from the bottom (column-reverse): at the bottom it stays there as events
+  // arrive, without reading the layout; scrolled up, it stays put and counts what's new
+  useEffect(() => {
+    // read the difference now: the updater runs later, after prevLen has moved on
+    const arrived = events.length - prevLen.current
+    if (!pinned && arrived > 0) setUnseen((n) => n + arrived)
     prevLen.current = events.length
   }, [events, pinned])
 
@@ -227,13 +232,22 @@ export function Timeline() {
       <div
         ref={ref}
         onScroll={(e) => {
-          const el = e.currentTarget
-          if (el.scrollHeight - el.scrollTop - el.clientHeight < 24) setPinned(true)
+          // column-reverse: 0 is the bottom, scrolling up goes negative
+          const atBottom = Math.abs(e.currentTarget.scrollTop) < 24
+          if (atBottom !== pinned) setPinned(atBottom)
         }}
-        onWheel={(e) => e.deltaY < 0 && setPinned(false)}
-        onTouchMove={() => setPinned(false)}
-        className="min-h-0 flex-1 overflow-auto px-2 pb-4"
+        className="flex min-h-0 flex-1 flex-col-reverse overflow-auto px-2 pb-4"
       >
+        <div>
+        {hidden > 0 && (
+          <button
+            type="button"
+            onClick={() => setShown((n) => n + WINDOW)}
+            className="mx-2 mb-1 rounded-md px-2 py-1 text-[11px] text-fg-muted transition hover:bg-raised hover:text-fg"
+          >
+            Mostrar {Math.min(hidden, WINDOW)} eventos anteriores ({hidden} ocultos)
+          </button>
+        )}
         {events.length === 0 ? (
           <div className="mx-2 mt-2 rounded-lg border border-dashed border-line px-4 py-6 text-center">
             <p className="text-[12px] text-fg-muted">Nenhum histórico ainda.</p>
@@ -241,13 +255,14 @@ export function Timeline() {
           </div>
         ) : (
           <ol>
-            {events.map((e, i) => {
+            {visible.map((e, i) => {
               const time = clockTime(wallStart, e.at)
-              const prevTime = i > 0 ? clockTime(wallStart, events[i - 1].at) : ''
-              return <Row key={e.id} e={e} time={time} showTime={time !== prevTime} exists={exists(e.involved.uid)} isLast={i === events.length - 1} />
+              const prevTime = i > 0 ? clockTime(wallStart, visible[i - 1].at) : ''
+              return <Row key={e.id} e={e} time={time} showTime={time !== prevTime} exists={exists(e.involved.uid)} isLast={i === visible.length - 1} />
             })}
           </ol>
         )}
+        </div>
       </div>
       <AnimatePresence>
         {!pinned && unseen > 0 && (
@@ -255,7 +270,11 @@ export function Timeline() {
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
-            onClick={() => ref.current?.scrollTo({ top: ref.current.scrollHeight, behavior: 'smooth' })}
+            onClick={() => {
+              // straight to the newest, pinned at once: a smooth scroll gets cut short while events keep arriving
+              setPinned(true)
+              if (ref.current) ref.current.scrollTop = 0
+            }}
             className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full border border-line-strong bg-raised px-2.5 py-1 text-[11px] text-fg shadow-lg shadow-black/40"
           >
             <ArrowDown size={12} /> {unseen} {unseen === 1 ? 'novo' : 'novos'}

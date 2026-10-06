@@ -71,7 +71,7 @@ function Palette({ close }: { close: () => void }) {
         group: 'Resources' as const,
         label: `Pod ${short(p.name)}`,
         hint: p.name,
-        icon: <StatusGlyph state={podVisual(p)} size={13} />,
+        icon: <StatusGlyph still state={podVisual(p)} size={13} />,
         run: () => s.select(p.uid),
       })),
     ]

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { pushTerm } from './scrollback'
 import { getLesson } from '../lessons'
 import { lastLesson } from '../progress/browser'
 import type { Lesson } from '../lessons/types'
@@ -79,6 +80,7 @@ interface SimStore {
 const lessonFromHash = () => (typeof location !== 'undefined' && location.hash.startsWith('#/') ? location.hash.slice(2) : '')
 
 let termSeq = 0
+
 let lastWatch = new Map<string, string>()
 let activeWatch: WatchSpec | null = null
 let watchRows: typeof import('../sim/kubectl')['watchRows'] | null = null
@@ -138,7 +140,7 @@ export const useSim = create<SimStore>((set, get) => {
     }
     for (const key of [...lastWatch.keys()]) if (!seen.has(key)) lastWatch.delete(key)
     if (!rows.length) return
-    set((s) => ({ term: [...s.term, { id: ++termSeq, lines: rows }] }))
+    set((s) => ({ term: pushTerm(s.term, { id: ++termSeq, lines: rows }) }))
   }
 
   // an explicit #/lesson wins; otherwise resume where this learner left off
@@ -194,7 +196,7 @@ export const useSim = create<SimStore>((set, get) => {
       // Typing in the terminal interrupts a watch (like Ctrl+C); acting on the stage doesn't, so you can watch rows stream in.
       if (state.watching && !origin) state.stopWatch()
       if (!trimmed) {
-        set((s) => ({ term: [...s.term, { id: ++termSeq, input: '', lines: [] }] }))
+        set((s) => ({ term: pushTerm(s.term, { id: ++termSeq, input: '', lines: [] }) }))
         return
       }
       const kubectl = await loadKubectl()
@@ -227,7 +229,7 @@ export const useSim = create<SimStore>((set, get) => {
         lastWatch = new Map(watchRows(current.sim, result.watch).map((row) => [row.key, row.signature]))
       }
       set((s) => ({
-        term: [...s.term, { id: ++termSeq, input: trimmed, lines: result.lines, origin }],
+        term: pushTerm(s.term, { id: ++termSeq, input: trimmed, lines: result.lines, origin }),
         history: [...s.history, trimmed],
         watching: result.watch?.kind ?? (s.watching && origin ? s.watching : null),
         attention: result.focusUid ? { uid: result.focusUid, n: (s.attention?.n ?? 0) + 1 } : s.attention,
@@ -244,7 +246,7 @@ export const useSim = create<SimStore>((set, get) => {
     stopWatch() {
       if (!get().watching) return
       activeWatch = null
-      set((s) => ({ watching: null, term: [...s.term, { id: ++termSeq, lines: [[{ t: '^C', c: 'muted' }]] }] }))
+      set((s) => ({ watching: null, term: pushTerm(s.term, { id: ++termSeq, lines: [[{ t: '^C', c: 'muted' }]] }) }))
     },
 
     select: (uid) => set((s) => ({ selected: uid, seen: uid && !s.seen.includes(uid) ? [...s.seen, uid] : s.seen })),
@@ -282,12 +284,12 @@ export const useSim = create<SimStore>((set, get) => {
       const line: Line = !scaleChanged && changed === 'unchanged'
         ? [{ t: 'Edit cancelled, no changes made.', c: 'muted' }]
         : [{ t: `deployment.apps/${dep.name} edited`, c: 'success' }]
-      set((s) => ({ editing: null, term: [...s.term, { id: ++termSeq, lines: [line] }] }))
+      set((s) => ({ editing: null, term: pushTerm(s.term, { id: ++termSeq, lines: [line] }) }))
       if (get().watching) appendWatchRows(get().sim)
     },
     cancelEdit() {
       if (!get().editing) return
-      set((s) => ({ editing: null, term: [...s.term, { id: ++termSeq, lines: [[{ t: 'Edit cancelled, no changes made.', c: 'muted' }]] }] }))
+      set((s) => ({ editing: null, term: pushTerm(s.term, { id: ++termSeq, lines: [[{ t: 'Edit cancelled, no changes made.', c: 'muted' }]] }) }))
     },
     markDone: (ids) => set((s) => ({ done: [...s.done, ...ids.filter((id) => !s.done.includes(id))] })),
     revealHint: (id) => set((s) => ({ hints: s.hints.includes(id) ? s.hints : [...s.hints, id] })),

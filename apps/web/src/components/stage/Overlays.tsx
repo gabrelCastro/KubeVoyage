@@ -44,7 +44,7 @@ export function ReconcileHud({ cluster, layout, replicaControl }: { cluster: Clu
               <AnimatePresence mode="popLayout" initial={false}>
                 {pod ? (
                   <motion.span key={pod.uid} initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0, opacity: 0 }} className="absolute inset-0 grid place-items-center">
-                    <StatusGlyph state={podVisual(pod)} size={15} />
+                    <StatusGlyph still state={podVisual(pod)} size={15} />
                   </motion.span>
                 ) : (
                   <motion.span key="empty" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} className="absolute inset-[2px] rounded-full border border-dashed border-fg-faint" />
@@ -243,7 +243,7 @@ export function NodeLane({ cluster }: { cluster: ClusterState }) {
                     className="grid place-items-center"
                     aria-label={p.name}
                   >
-                    <StatusGlyph state={podVisual(p)} size={13} />
+                    <StatusGlyph still state={podVisual(p)} size={13} />
                   </motion.button>
                 ))}
               </AnimatePresence>
@@ -339,7 +339,7 @@ export function Legend() {
     <div className="flex flex-col gap-1">
       {states.map((s) => (
         <span key={s} className="flex cursor-help items-center gap-1.5 text-[10.5px] text-fg-faint transition-colors hover:text-fg-muted" title={VISUAL[s].hint}>
-          <StatusGlyph state={s} size={11} />
+          <StatusGlyph still state={s} size={11} />
           {s === 'creating' ? 'Creating' : s === 'crash' ? 'Crash' : VISUAL[s].label}
         </span>
       ))}

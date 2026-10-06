@@ -1,3 +1,4 @@
+import { shareList, shareRecord } from './share'
 import clsx from 'clsx'
 import { matches, NO_OWNER } from '../sim/engine'
 import type { ClusterState, Pod } from '../sim/types'
@@ -90,6 +91,19 @@ export interface Layout {
   regions: Region[]
   width: number
   height: number
+}
+
+/**
+ * `next`, sharing every box, slot and region that didn't change with `prev` (and `prev` itself when
+ * nothing did) — so memoized nodes only re-render when their own geometry moves.
+ */
+export function shareLayout(prev: Layout | null, next: Layout): Layout {
+  if (!prev) return next
+  const boxes = shareRecord(prev.boxes, next.boxes)
+  const slots = shareList(prev.slots, next.slots, (s) => `${s.ownerUid}:${s.slot}`)
+  const regions = shareList(prev.regions, next.regions, (r) => r.key)
+  if (boxes === prev.boxes && slots === prev.slots && regions === prev.regions && next.width === prev.width && next.height === prev.height) return prev
+  return { boxes, slots, regions, width: next.width, height: next.height }
 }
 
 export function computeLayout(c: ClusterState): Layout {

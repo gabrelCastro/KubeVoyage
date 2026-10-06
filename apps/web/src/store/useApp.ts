@@ -232,6 +232,8 @@ interface AppState {
   openStudio: (open: boolean) => void
   openCode: (open: boolean) => void
   visit: (v: Omit<Visit, 'id'>) => void
+  /** Several visits in one update (traffic arrives in bursts; one render for all of them). */
+  visitMany: (vs: Omit<Visit, 'id'>[]) => void
   editPod: (uid: string, edit: PodEdit) => void
   /** Pods that no longer exist take their edits with them. */
   forgetGone: (liveUids: Set<string>) => void
@@ -340,12 +342,16 @@ export const useApp = create<AppState>((set, get) => ({
   },
   openStudio: (studioOpen) => set({ studioOpen }),
   openCode: (codeOpen) => set({ codeOpen }),
-  visit: (v) =>
+  visit: (v) => get().visitMany([v]),
+  visitMany: (vs) => {
+    if (!vs.length) return
+    const ok = vs.filter((v) => v.ok).length
     set((s) => ({
-      visits: [...s.visits, { ...v, id: ++seq }].slice(-MAX_VISITS),
-      served: s.served + (v.ok ? 1 : 0),
-      failed: s.failed + (v.ok ? 0 : 1),
-    })),
+      visits: [...s.visits, ...vs.slice(-MAX_VISITS).map((v) => ({ ...v, id: ++seq }))].slice(-MAX_VISITS),
+      served: s.served + ok,
+      failed: s.failed + vs.length - ok,
+    }))
+  },
   editPod: (uid, edit) => set((s) => ({ podEdits: { ...s.podEdits, [uid]: edit } })),
   forgetGone: (live) => {
     const { podEdits, lostEdits } = get()

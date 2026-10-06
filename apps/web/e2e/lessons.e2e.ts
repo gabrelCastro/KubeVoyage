@@ -121,3 +121,26 @@ test('Secrets: a Pod waiting for a missing Secret says which one', async ({ page
   await waiting.click()
   await expect(page.locator('[data-tour=inspetor]')).toContainText('o Secret db-credentials não existe')
 })
+
+test('cluster history: follows the newest event, holds still when you scroll back, and counts what arrived', async ({ page, errors }) => {
+  void errors
+  await page.goto('/#/services')
+  await fast(page)
+  await kubectl(page, 'kubectl scale deployment backend --replicas=6')
+  const history = page.locator('[data-tour=timeline]')
+  const rows = history.locator('li')
+  await expect(rows.last()).toBeInViewport()
+  // enough history to scroll through
+  const list = history.locator('div.overflow-auto')
+  await expect.poll(() => list.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(300)
+  // scrolled back, new events don't drag the view along — they're counted instead
+  await list.hover()
+  await page.mouse.wheel(0, -600)
+  await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBeLessThan(-100)
+  await kubectl(page, 'kubectl rollout restart deployment/backend')
+  const newer = history.getByRole('button', { name: /novos?$/ })
+  await expect(newer).toBeVisible()
+  await newer.click()
+  await expect(newer).toBeHidden()
+  await expect(rows.last()).toBeInViewport()
+})

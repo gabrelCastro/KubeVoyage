@@ -59,7 +59,8 @@ const Edge = memo(function Edge({ e, onHover }: { e: EdgeModel; onHover: (e: Edg
   )
 })
 
-export function Edges({ edges, width, height, onHover }: { edges: EdgeModel[]; width: number; height: number; onHover: (e: EdgeModel | null) => void }) {
+// memo: the edge list keeps its identity while nothing about the edges changes (see Stage)
+export const Edges = memo(function Edges({ edges, width, height, onHover }: { edges: EdgeModel[]; width: number; height: number; onHover: (e: EdgeModel | null) => void }) {
   return (
     <svg className="pointer-events-none absolute top-0 left-0 overflow-visible" width={width} height={height}>
       <AnimatePresence>
@@ -69,4 +70,4 @@ export function Edges({ edges, width, height, onHover }: { edges: EdgeModel[]; w
       </AnimatePresence>
     </svg>
   )
-}
+})

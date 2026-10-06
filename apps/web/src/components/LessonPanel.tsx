@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useEffect } from 'react'
+import { memo, useEffect } from 'react'
 import { BookOpen, Check, CornerDownLeft, Lightbulb } from 'lucide-react'
 import { cn } from '../lib/visual'
 import { isComplete, lessonFraction, type LessonId } from '@kubelearn/shared'
@@ -176,7 +176,8 @@ export function LessonPanel() {
 }
 
 /** Every lesson, with where you are and what you've finished. */
-function Curriculum() {
+// memo: the lesson list depends on progress and the current lesson, not on the cluster
+const Curriculum = memo(function Curriculum() {
   const lessonId = useSim((s) => s.lessonId)
   const progress = useProgress((s) => s.progress)
   const openLesson = useSim((s) => s.openLesson)
@@ -213,7 +214,7 @@ function Curriculum() {
       })}
     </nav>
   )
-}
+})
 
 /** Done: a filled check. Started: an arc showing how far. Untouched: just the number. */
 function ProgressRing({ fraction, done, current, number }: { fraction: number; done: boolean; current: boolean; number: number }) {

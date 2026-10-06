@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react'
 import { CornerDownLeft, Eye, SquareTerminal } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Line, Seg, Tone } from '../sim/kubectl'
 import { shellHistory } from '../lib/shellHistory'
 import { cn } from '../lib/visual'
@@ -78,7 +78,8 @@ function Output({ lines }: { lines: Line[] }) {
   )
 }
 
-function Entry({ entry }: { entry: TermEntry }) {
+// memo: the scrollback never changes once printed
+const Entry = memo(function Entry({ entry }: { entry: TermEntry }) {
   return (
     <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }} className="mb-1.5">
       {entry.input !== undefined && (
@@ -95,7 +96,7 @@ function Entry({ entry }: { entry: TermEntry }) {
       <Output lines={entry.lines} />
     </motion.div>
   )
-}
+})
 
 export function Terminal() {
   const term = useSim((s) => s.term)

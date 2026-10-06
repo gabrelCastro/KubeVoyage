@@ -89,6 +89,18 @@ body,
     opacity: 0;
   }
 }
+/* The status halo: a ring that grows and fades, drawn as a box-shadow. Painted in place (a few
+   pixels) instead of a transformed layer — dozens of those, each growing over its neighbours,
+   made the browser rebuild ~150 compositing layers every frame. */
+@keyframes halo {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, currentColor 45%, transparent);
+  }
+  50%,
+  100% {
+    box-shadow: 0 0 0 4.5px color-mix(in oklab, currentColor 0%, transparent);
+  }
+}
 @keyframes sweep {
   from {
     transform: translateX(-100%);
@@ -96,6 +108,36 @@ body,
   to {
     transform: translateX(250%);
   }
+}
+/* Entrances for a value that changed (Rolling numbers, StatusGlyph): CSS on a keyed element, so a
+   change costs neither a DOM measurement nor an extra React render. */
+@keyframes roll-in {
+  from {
+    transform: translateY(70%);
+    opacity: 0;
+  }
+}
+@keyframes glyph-in {
+  from {
+    transform: scale(0.4) rotate(-45deg);
+    opacity: 0;
+  }
+}
+.anim-roll-in {
+  animation: roll-in 0.32s var(--ease-out-soft);
+}
+.anim-glyph-in {
+  animation: glyph-in 0.36s var(--ease-out-soft);
+}
+@keyframes row-in {
+  from {
+    transform: translateX(10px);
+    opacity: 0;
+  }
+}
+/* a new line in the cluster history */
+.anim-row-in {
+  animation: row-in 0.3s var(--ease-out-soft);
 }
 @keyframes march {
   to {
@@ -125,6 +167,9 @@ body,
 .anim-breathe {
   animation: breathe 2.6s var(--ease-out-soft) infinite;
 }
+.anim-halo {
+  animation: halo 2.6s var(--ease-out-soft) infinite;
+}
 .anim-sweep {
   animation: sweep 1.4s var(--ease-out-soft) infinite;
 }
@@ -153,6 +198,10 @@ body,
   .anim-spin-slow,
   .anim-spin,
   .anim-breathe,
+  .anim-roll-in,
+  .anim-glyph-in,
+  .anim-row-in,
+  .anim-halo,
   .anim-sweep,
   .anim-march,
   .skeleton::after {
@@ -162,6 +211,10 @@ body,
 .reduce-motion .anim-spin-slow,
 .reduce-motion .anim-spin,
 .reduce-motion .anim-breathe,
+.reduce-motion .anim-roll-in,
+.reduce-motion .anim-glyph-in,
+.reduce-motion .anim-row-in,
+.reduce-motion .anim-halo,
 .reduce-motion .anim-sweep,
 .reduce-motion .anim-march,
 .reduce-motion .skeleton::after {

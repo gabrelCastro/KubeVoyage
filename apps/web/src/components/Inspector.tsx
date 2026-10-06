@@ -350,7 +350,7 @@ function ServiceView({ svc, cluster }: { svc: Service; cluster: ClusterState }) 
               return (
                 <li key={p.uid}>
                   <button onClick={() => select(p.uid)} className={cn('flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition hover:bg-raised', !isMatch && 'opacity-55')}>
-                    <StatusGlyph state={podVisual(p)} size={12} />
+                    <StatusGlyph still state={podVisual(p)} size={12} />
                     <span className="font-mono text-[11.5px] text-fg">{short(p.name)}</span>
                     <span className={cn('font-mono text-[10.5px]', isMatch ? 'text-svc' : 'text-fg-faint')}>
                       {key}={p.labels[key] ?? '∅'}
@@ -462,7 +462,7 @@ function RSView({ rs, cluster }: { rs: ReplicaSet; cluster: ClusterState }) {
           {pods.map((p) => (
             <li key={p.uid}>
               <button onClick={() => select(p.uid)} className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition hover:bg-raised">
-                <StatusGlyph state={podVisual(p)} size={12} />
+                <StatusGlyph still state={podVisual(p)} size={12} />
                 <span className="font-mono text-[11.5px] text-fg">{short(p.name)}</span>
                 <span className="ml-auto text-[11px] text-fg-faint">{VISUAL[podVisual(p)].label}</span>
               </button>
@@ -783,7 +783,7 @@ function DaemonSetView({ daemonSet, cluster }: { daemonSet: DaemonSet; cluster: 
             return (
               <li key={node.name}>
                 <button disabled={!pod} onClick={() => pod && select(pod.uid)} className="flex w-full items-center gap-2 rounded-md border border-line px-2 py-1.5 text-left disabled:cursor-default">
-                  {pod ? <StatusGlyph state={podVisual(pod)} size={12} /> : <span className="size-3 rounded-full border border-dashed border-warn" />}
+                  {pod ? <StatusGlyph still state={podVisual(pod)} size={12} /> : <span className="size-3 rounded-full border border-dashed border-warn" />}
                   <span className="font-mono text-[11.5px] text-fg">{node.name}</span>
                   <span className="ml-auto truncate font-mono text-[10.5px] text-fg-faint">{pod ? short(pod.name) : 'sem Pod'}</span>
                 </button>

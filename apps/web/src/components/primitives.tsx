@@ -1,28 +1,25 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { memo, useEffect, useRef, useState, type ReactNode } from 'react'
 import { cn, VISUAL, type PodVisual } from '../lib/visual'
 
 /**
  * One glyph per lifecycle state. Each state has its own *kind* of motion, so the
  * state is readable even without color: hollow+drifting → filling → solid → breathing.
+ * `still` drops the ambient motion: for repeated, secondary copies (lists, the nodes strip),
+ * where dozens of moving glyphs would add noise — and real cost — without adding meaning.
  */
-export function StatusGlyph({ state, size = 16 }: { state: PodVisual; size?: number }) {
+// memo: dozens on screen, each with its own animation — they only change with their state
+export const StatusGlyph = memo(function StatusGlyph({ state, size = 16, still = false }: { state: PodVisual; size?: number; still?: boolean }) {
   const color = VISUAL[state].color
+  const [first] = useState(state)
   return (
     <span className="relative inline-grid shrink-0 place-items-center" style={{ width: size, height: size }}>
-      <AnimatePresence mode="popLayout" initial={false}>
-        <motion.span
-          key={state}
-          className="absolute inset-0 grid place-items-center"
-          initial={{ scale: 0.4, opacity: 0, rotate: -45 }}
-          animate={{ scale: 1, opacity: 1, rotate: 0 }}
-          exit={{ scale: 0.4, opacity: 0 }}
-          transition={{ type: 'spring', stiffness: 420, damping: 26 }}
-        >
-          {state === 'ready' && (
-            <span className="absolute inset-[3px] rounded-full anim-breathe" style={{ background: color }} />
+      {/* keyed CSS entrance for a new state (the old glyph just goes) — see Rolling */}
+      <span key={state} className={cn('absolute inset-0 grid place-items-center', state !== first && 'anim-glyph-in')}>
+          {state === 'ready' && !still && (
+            <span className="absolute inset-[3px] rounded-full anim-halo" style={{ background: color, color }} />
           )}
-          <svg viewBox="0 0 16 16" width={size} height={size} className={cn(state === 'pending' && 'anim-spin-slow', state === 'creating' && 'anim-spin')}>
+          <svg viewBox="0 0 16 16" width={size} height={size} className={cn(!still && state === 'pending' && 'anim-spin-slow', !still && state === 'creating' && 'anim-spin')}>
             {state === 'pending' && <circle cx="8" cy="8" r="5.5" fill="none" stroke={color} strokeWidth="1.6" strokeDasharray="2.6 2.4" />}
             {state === 'creating' && (
               <>
@@ -52,31 +49,25 @@ export function StatusGlyph({ state, size = 16 }: { state: PodVisual; size?: num
               </>
             )}
           </svg>
-        </motion.span>
-      </AnimatePresence>
+      </span>
     </span>
   )
-}
+})
 
 /** Text that rolls vertically when it changes — a value changing is an event worth noticing. */
-export function Rolling({ value, className }: { value: string | number; className?: string }) {
+// memo: a re-render runs the animation machinery for every number on screen; they change rarely
+export const Rolling = memo(function Rolling({ value, className }: { value: string | number; className?: string }) {
+  // a CSS entrance on the new value (keyed, so it replays on change). The old value just goes:
+  // animating it out took a DOM measurement and an extra render per number, per change.
+  const [first] = useState(() => String(value))
   return (
     <span className={cn('relative inline-flex overflow-hidden align-bottom', className)}>
-      <AnimatePresence mode="popLayout" initial={false}>
-        <motion.span
-          key={String(value)}
-          initial={{ y: '70%', opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          exit={{ y: '-70%', opacity: 0 }}
-          transition={{ type: 'spring', stiffness: 380, damping: 30 }}
-          className="inline-block whitespace-nowrap"
-        >
-          {value}
-        </motion.span>
-      </AnimatePresence>
+      <span key={String(value)} className={cn('inline-block whitespace-nowrap', String(value) !== first && 'anim-roll-in')}>
+        {value}
+      </span>
     </span>
   )
-}
+})
 
 /** Briefly tints when the value changes; settles back to the resting color. */
 export function Metric({ label, value, tone }: { label: string; value: number; tone?: 'ok' | 'warn' | 'neutral' }) {

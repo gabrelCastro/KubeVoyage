@@ -1,13 +1,21 @@
 import { AnimatePresence, motion } from 'motion/react'
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { Service } from '../../sim/types'
 import type { Box, Layout } from '../../lib/visual'
 import { BASE_TRAFFIC, codeProfile } from '../../sim/engine'
-import { useApp, visitReply } from '../../store/useApp'
+import { useApp, visitReply, type Visit } from '../../store/useApp'
 import { useSim } from '../../store/useSim'
 
 const INTERVAL = 460 // ms between simulated requests per Service, at 1×
 const TRAVEL = 720
+/** How often counters and the app window catch up with arrivals. */
+const FLUSH_MS = 200
+
+const addCounts = (a: Record<string, number>, b: Record<string, number>) => {
+  const out = { ...a }
+  for (const [k, n] of Object.entries(b)) out[k] = (out[k] ?? 0) + n
+  return out
+}
 const STUB = 30 // the "incoming requests" lead-in under each Service
 
 /** Path a request takes: up through the Service, then along its edge into the Pod's bottom. */
@@ -40,7 +48,30 @@ export const Traffic = memo(function Traffic({ layout, services }: { layout: Lay
   const latest = useRef({ layout, services })
   latest.current = { layout, services }
 
+  // Arrivals are counted in bursts: under load, one React update per request (dozens a second, each
+  // remeasuring the stage) cost more than the whole simulation. The picture moves per request; the
+  // numbers catch up a few times a second.
+  const pending = useRef({ served: {} as Record<string, number>, failed: {} as Record<string, number>, visits: [] as Omit<Visit, 'id'>[], timer: 0 })
+  const flush = useCallback(() => {
+    const p = pending.current
+    p.timer = 0
+    const { served: sv, failed: fl, visits } = p
+    p.served = {}
+    p.failed = {}
+    p.visits = []
+    if (Object.keys(sv).length) setServed((s) => addCounts(s, sv))
+    if (Object.keys(fl).length) setFailed((f) => addCounts(f, fl))
+    useApp.getState().visitMany(visits)
+  }, [])
+  const later = useCallback(() => {
+    if (!pending.current.timer) pending.current.timer = window.setTimeout(flush, FLUSH_MS)
+  }, [flush])
+  useEffect(() => () => clearTimeout(pending.current.timer), [])
+
   useEffect(() => {
+    // a restarted lesson is a new cluster: whatever was still being counted belongs to the old one
+    clearTimeout(pending.current.timer)
+    pending.current = { served: {}, failed: {}, visits: [], timer: 0 }
     setServed({})
     setFailed({})
     useApp.getState().resetVisits()
@@ -61,24 +92,31 @@ export const Traffic = memo(function Traffic({ layout, services }: { layout: Lay
       // a request still in flight when the lesson restarts belongs to the old run: don't count it
       const run = useSim.getState().epoch
       const current = () => useSim.getState().epoch === run
-      const { visit } = useApp.getState()
+      const visit = (v: Omit<Visit, 'id'>) => {
+        pending.current.visits.push(v)
+        later()
+      }
       for (const svc of services) {
         const sBox = layout.boxes[svc.uid]
         if (!sBox) continue
         const targets = svc.endpoints.filter((uid) => layout.boxes[uid])
         if (!targets.length) {
           fly(failPath(sBox), true, () => {
-            setFailed((f) => ({ ...f, [svc.uid]: (f[svc.uid] ?? 0) + 1 }))
-            if (svc === appSvc && current()) visit({ ok: false })
+            if (!current()) return
+            pending.current.failed[svc.uid] = (pending.current.failed[svc.uid] ?? 0) + 1
+            later()
+            if (svc === appSvc) visit({ ok: false })
           })
           continue
         }
         const i = (rr.current[svc.uid] = ((rr.current[svc.uid] ?? -1) + 1) % targets.length)
         const pod = targets[i]
         fly(requestPath(sBox, layout.boxes[pod]), false, () => {
-          setServed((s) => ({ ...s, [pod]: (s[pod] ?? 0) + 1 }))
+          if (!current()) return
+          pending.current.served[pod] = (pending.current.served[pod] ?? 0) + 1
+          later()
           const served = useSim.getState().cluster.pods[pod]
-          if (svc === appSvc && current()) {
+          if (svc === appSvc) {
             // a Pod running the learner's code answers with what the code returned for /
             const code = served ? codeProfile(served.image, served.env) : null
             const reply = code && code !== 'pending' ? visitReply(code.replies['/']) : undefined
@@ -117,7 +155,7 @@ export const Traffic = memo(function Traffic({ layout, services }: { layout: Lay
     }
     t = window.setTimeout(tick, INTERVAL / speed)
     return () => clearTimeout(t)
-  }, [paused, speed, reduced, hasServices])
+  }, [paused, speed, reduced, hasServices, later])
 
   return (
     <div className="pointer-events-none absolute top-0 left-0" style={{ width: layout.width, height: layout.height }}>
