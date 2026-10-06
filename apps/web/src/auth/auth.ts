@@ -133,18 +133,20 @@ export const useAuth = create<AuthStore>((set, get) => ({
   },
 
   async signOut() {
-    // what was typed in the last moments goes up first (a few seconds at most)
-    await workspaceSync.settle()
-    const unsent = workspaceSync.hasPending()
+    // what changed in the last moments goes up first (a few seconds at most)
+    await Promise.all([workspaceSync.settle(), progressSync.settle()])
+    const unsentApp = workspaceSync.hasPending()
+    const unsentProgress = progressSync.hasPending()
     await api('/api/auth/logout', { method: 'POST' }).catch(() => {})
     becameAnonymous(set)
     // the account keeps the progress and the app; this (possibly shared) device forgets them —
-    // unless some of the app never reached the account: then it stays here rather than vanish
-    progressSync.clearLocal()
-    if (!unsent) forgetApp()
+    // except what never reached the account: that stays here rather than vanish
+    if (!unsentProgress) progressSync.clearLocal()
+    if (!unsentApp) forgetApp()
+    const unsent = [unsentProgress && 'o progresso', unsentApp && 'o seu app'].filter(Boolean).join(' e ')
     toast(
       unsent
-        ? { tone: 'info', title: 'Você saiu', body: 'Algumas mudanças do seu app não chegaram à sua conta, então ficaram neste dispositivo. Entre de novo para enviá-las.' }
+        ? { tone: 'info', title: 'Você saiu', body: `Mudanças recentes (${unsent}) não chegaram à sua conta, então ficaram neste dispositivo. Entre de novo para enviá-las.` }
         : { tone: 'info', title: 'Você saiu', body: 'Seu progresso e o seu app estão salvos na sua conta.' },
       unsent ? 9000 : undefined,
     )

@@ -13,7 +13,7 @@ export const SHORTCUTS: { group: string; items: [string[], string][] }[] = [
   {
     group: 'Palco',
     items: [
-      [['Delete'], 'apagar o Pod selecionado'],
+      [['Delete', '⌫'], 'apagar o Pod selecionado'],
       [['Esc'], 'tirar a seleção'],
     ],
   },

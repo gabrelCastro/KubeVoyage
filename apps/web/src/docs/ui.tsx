@@ -18,8 +18,8 @@ export function Anchor({ id, label }: { id: string; label: string }) {
           // the link still navigates
         }
       }}
-      aria-label={`Link para “${label}”`}
-      className="ml-2 inline-flex translate-y-[1px] items-center text-fg-faint opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100 hover:text-accent"
+      aria-label={copied ? `Link para “${label}” copiado` : `Copiar link para “${label}”`}
+      className="ml-2 inline-flex translate-y-[1px] items-center text-fg-muted opacity-0 transition group-hover:opacity-100 focus-visible:opacity-100 hover:text-accent"
     >
       {copied ? <Check size={14} /> : <Link2 size={14} />}
     </a>
@@ -27,11 +27,14 @@ export function Anchor({ id, label }: { id: string; label: string }) {
 }
 
 export function H3({ id, children }: { id: string; children: string }) {
+  // the link sits next to the heading, not inside it: the heading's name stays just its text
   return (
-    <h3 id={id} className="group mt-10 scroll-mt-32 lg:scroll-mt-24 text-[17px] font-semibold tracking-tight text-fg">
-      {children}
+    <div className="group mt-10 flex items-baseline">
+      <h3 id={id} className="scroll-mt-32 text-[17px] font-semibold tracking-tight text-fg lg:scroll-mt-24">
+        {children}
+      </h3>
       <Anchor id={id} label={children} />
-    </h3>
+    </div>
   )
 }
 
@@ -52,11 +55,11 @@ export function C({ children }: { children: ReactNode }) {
 }
 
 export function Ul({ children }: { children: ReactNode }) {
-  return <ul className="mt-3 space-y-2 pl-5 text-[14.5px] leading-[1.7] text-fg-muted marker:text-fg-faint [&>li]:list-disc [&>li]:pl-1">{children}</ul>
+  return <ul className="mt-3 space-y-2 pl-5 text-[14.5px] leading-[1.7] text-fg-muted marker:text-fg-muted [&>li]:list-disc [&>li]:pl-1">{children}</ul>
 }
 
 export function Ol({ children }: { children: ReactNode }) {
-  return <ol className="mt-3 space-y-2 pl-5 text-[14.5px] leading-[1.7] text-fg-muted marker:font-medium marker:text-fg-faint [&>li]:list-decimal [&>li]:pl-1">{children}</ol>
+  return <ol className="mt-3 space-y-2 pl-5 text-[14.5px] leading-[1.7] text-fg-muted marker:font-medium marker:text-fg-muted [&>li]:list-decimal [&>li]:pl-1">{children}</ol>
 }
 
 export function Kbd({ children }: { children: ReactNode }) {
@@ -75,7 +78,7 @@ export function Code({ children, lang = 'shell', caption }: { children: string; 
     <figure className="group/code mt-4">
       <div className="relative overflow-hidden rounded-xl border border-line bg-panel">
         <div className="flex items-center justify-between border-b border-line px-3.5 py-1.5">
-          <span className="font-mono text-[10.5px] tracking-wide text-fg-faint uppercase">{lang === 'shell' ? 'terminal' : lang === 'js' ? 'app.js' : lang}</span>
+          <span className="font-mono text-[10.5px] tracking-wide text-fg-muted uppercase">{lang === 'shell' ? 'terminal' : lang === 'js' ? 'app.js' : lang}</span>
           <button
             type="button"
             onClick={() => {
@@ -87,25 +90,28 @@ export function Code({ children, lang = 'shell', caption }: { children: string; 
                 // nothing to do: the text is selectable
               }
             }}
-            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-fg-faint transition hover:bg-raised hover:text-fg"
-            aria-label="Copiar"
+            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-fg-muted transition hover:bg-raised hover:text-fg"
+            aria-label={copied ? 'Copiado' : 'Copiar'}
           >
-            {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? 'Copiado' : 'Copiar'}
+            {copied ? <Check size={12} /> : <Copy size={12} />} <span aria-hidden>{copied ? 'Copiado' : 'Copiar'}</span>
           </button>
+          <span className="sr-only" role="status">
+            {copied ? 'Copiado para a área de transferência' : ''}
+          </span>
         </div>
         {/* no ligatures: what's shown is exactly what gets typed (=== stays three characters) */}
         <pre className="overflow-x-auto px-3.5 py-3 font-mono text-[12.5px] leading-[1.7] text-fg [font-variant-ligatures:none]">
           <code>{lang === 'shell' ? text.split('\n').map((l, i) => <ShellLine key={i} line={l} />) : text}</code>
         </pre>
       </div>
-      {caption && <figcaption className="mt-1.5 text-[12px] text-fg-faint">{caption}</figcaption>}
+      {caption && <figcaption className="mt-1.5 text-[12px] text-fg-muted">{caption}</figcaption>}
     </figure>
   )
 }
 
 /** Comments (#) dimmed, commands bright — just enough to read a sequence at a glance. */
 function ShellLine({ line }: { line: string }) {
-  if (line.trimStart().startsWith('#')) return <span className="block text-fg-faint">{line}</span>
+  if (line.trimStart().startsWith('#')) return <span className="block text-fg-muted">{line}</span>
   return <span className="block">{line || ' '}</span>
 }
 
@@ -141,7 +147,7 @@ export function Table({ head, rows, mono = [] }: { head: string[]; rows: ReactNo
                 </dt>
               ) : (
                 <dd key={j} className="mt-1.5 leading-relaxed text-fg-muted">
-                  {head.length > 2 && <span className="mr-1.5 text-[10.5px] font-semibold tracking-wide text-fg-faint uppercase">{head[j]}</span>}
+                  {head.length > 2 && <span className="mr-1.5 text-[10.5px] font-semibold tracking-wide text-fg-muted uppercase">{head[j]}</span>}
                   <span className={cn(mono.includes(j) && 'font-mono text-[12px] [overflow-wrap:anywhere]')}>{cell}</span>
                 </dd>
               ),
@@ -160,8 +166,9 @@ function TableWide({ head, rows, mono }: { head: string[]; rows: ReactNode[][]; 
       <table className="w-full border-collapse text-left text-[13px]">
         <thead>
           <tr className="border-b border-line bg-panel">
-            {head.map((h) => (
-              <th key={h} scope="col" className="px-3.5 py-2.5 text-[11px] font-semibold tracking-wide text-fg-faint uppercase">
+            {head.map((h, i) => (
+              // two-column tables share one rhythm, so a page of them lines up
+              <th key={h} scope="col" className={cn('px-3.5 py-2.5 text-[11px] font-semibold tracking-wide text-fg-muted uppercase', head.length === 2 && i === 0 && 'w-[36%]')}>
                 {h}
               </th>
             ))}

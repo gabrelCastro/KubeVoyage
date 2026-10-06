@@ -1421,8 +1421,13 @@ function explain(sim: Simulation, tokens: string[]): CommandResult {
     case 'create': {
       const [kind, name] = args
       const k = kind ? KIND_ALIASES[kind] : undefined
-      if (kind) rows.push([kind, k === 'deployments' || k === 'configmaps' ? KIND_DOCS[k] : 'tipo de recurso não simulado', k === 'deployments' || k === 'configmaps' ? undefined : 'warn'])
-      if (name) rows.push([name, k === 'configmaps' ? 'o nome do ConfigMap novo' : 'o nome do Deployment novo'])
+      // what `kubectl create` simulates: deployment, configmap, secret (generic) and job
+      const creatable = k === 'deployments' || k === 'configmaps' || k === 'secrets' || k === 'jobs'
+      if (kind) rows.push([kind, creatable ? KIND_DOCS[k] : 'tipo de recurso não simulado', creatable ? undefined : 'warn'])
+      if (k === 'secrets' && name === 'generic') {
+        rows.push([name, 'um Secret com pares chave=valor (o único tipo simulado aqui)'])
+        if (args[2]) rows.push([args[2], 'o nome do Secret novo'])
+      } else if (name) rows.push([name, `o nome do ${k === 'configmaps' ? 'ConfigMap' : k === 'secrets' ? 'Secret' : k === 'jobs' ? 'Job' : 'Deployment'} novo`])
       break
     }
     case 'autoscale':

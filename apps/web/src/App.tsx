@@ -46,7 +46,7 @@ function useGlobalKeys() {
       } else if (e.key === '/') {
         e.preventDefault()
         document.querySelector<HTMLInputElement>('[data-terminal-input]')?.focus()
-      } else if (e.key === 'r' && !e.metaKey && !e.ctrlKey) {
+      } else if (e.key.toLowerCase() === 'r' && !e.metaKey && !e.ctrlKey && !e.altKey) {
         s.restart()
       } else if (e.key === 'Escape') {
         s.select(null)

@@ -202,3 +202,25 @@ describe('ProgressSync', () => {
     }
   })
 })
+
+describe('settle (signing out)', () => {
+  const delta = (o: string): Progress => ({ lessons: { scaling: { objectives: [o], completedAt: null, bestMs: null } }, last: null })
+
+  it('pushes what the debounce was still holding, so signing out loses nothing', async () => {
+    const t = setup()
+    await t.sync.setSignedIn(true)
+    t.sync.record(delta('drag'))
+    expect(t.sync.hasPending()).toBe(true)
+    await t.sync.settle()
+    expect(t.server.lessons.scaling?.objectives).toEqual(['drag'])
+    expect(t.sync.hasPending()).toBe(false)
+  })
+
+  it('offline, it gives up at once and says something stayed behind', async () => {
+    const t = setup({ online: false })
+    await t.sync.setSignedIn(true)
+    t.sync.record(delta('drag'))
+    await t.sync.settle()
+    expect(t.sync.hasPending()).toBe(true)
+  })
+})

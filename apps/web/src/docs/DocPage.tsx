@@ -66,7 +66,7 @@ function useSearch(query: string) {
           // innerText: words in separate cells stay apart, and the hidden copy of a table (the one for the
           // other screen size) is left out
           const body = [...(el?.children ?? [])]
-            .filter((c): c is HTMLElement => c instanceof HTMLElement && c.tagName !== 'H3' && c.getClientRects().length > 0)
+            .filter((c): c is HTMLElement => c instanceof HTMLElement && !c.matches('h3, :has(> h3)') && c.getClientRects().length > 0)
             .map((c) => c.innerText)
           const text = body.join(' ').replace(/\s+/g, ' ').trim()
           return { id: sub.id, title: sub.title, section: s.title, text, folded: fold(`${s.title} ${sub.title} ${text}`) }
@@ -133,7 +133,7 @@ function SearchBox() {
 
   return (
     <div className="relative w-full max-w-[420px]">
-      <Search size={14} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-fg-faint" aria-hidden />
+      <Search size={14} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-fg-muted" aria-hidden />
       <input
         ref={input}
         type="search"
@@ -168,11 +168,12 @@ function SearchBox() {
         placeholder="Buscar na documentação"
         aria-label="Buscar na documentação"
         role="combobox"
-        aria-expanded={open && !!query}
+        aria-autocomplete="list"
+        aria-expanded={open && hits.length > 0}
         aria-controls={listId}
         aria-activedescendant={open && hits[cursor] ? `doc-hit-${hits[cursor].id}` : undefined}
         autoComplete="off"
-        className="h-9 w-full rounded-lg border border-line-strong bg-panel pr-10 pl-9 text-[13px] text-fg outline-none placeholder:text-fg-faint focus:border-accent/60 [&::-webkit-search-cancel-button]:hidden"
+        className="h-9 w-full rounded-lg border border-line-strong bg-panel pr-10 pl-9 text-[13px] text-fg outline-none placeholder:text-fg-muted focus:border-accent/60 [&::-webkit-search-cancel-button]:hidden"
       />
       {query ? (
         <button
@@ -182,38 +183,45 @@ function SearchBox() {
             input.current?.focus()
           }}
           aria-label="Limpar a busca"
-          className="absolute top-1/2 right-2 -translate-y-1/2 rounded p-1 text-fg-faint hover:text-fg"
+          className="absolute top-1/2 right-2 -translate-y-1/2 rounded p-1 text-fg-muted hover:text-fg"
         >
           <X size={13} />
         </button>
       ) : (
-        <kbd className="pointer-events-none absolute top-1/2 right-2.5 hidden -translate-y-1/2 rounded border border-line-strong px-1.5 font-sans text-[10.5px] text-fg-faint sm:block">
+        <kbd className="pointer-events-none absolute top-1/2 right-2.5 hidden -translate-y-1/2 rounded border border-line-strong px-1.5 font-sans text-[10.5px] text-fg-muted sm:block">
           /
         </kbd>
       )}
-      {open && query && (
-        <div
-          id={listId}
-          role="listbox"
-          aria-label="Resultados"
-          className="absolute top-full right-0 left-0 z-50 mt-2 max-h-[min(440px,70vh)] overflow-auto rounded-xl border border-line-strong bg-raised p-1.5 shadow-[0_20px_50px_-12px_rgb(0_0_0/0.85)]"
-        >
-          {hits.length === 0 ? (
-            <p className="px-3 py-3 text-[12.5px] text-fg-muted">Nada encontrado para “{query}”.</p>
-          ) : (
-            hits.map((h, i) => (
+      {/* how many results, said out loud as they change */}
+      <span className="sr-only" role="status" aria-live="polite">
+        {query ? (hits.length ? `${hits.length} ${hits.length === 1 ? 'resultado' : 'resultados'}` : `Nada encontrado para “${query}”`) : ''}
+      </span>
+      {open && query && hits.length === 0 && (
+        <p className="absolute top-full right-0 left-0 z-50 mt-2 rounded-xl border border-line-strong bg-raised px-4 py-3 text-[12.5px] text-fg-muted shadow-[0_20px_50px_-12px_rgb(0_0_0/0.85)]">
+          Nada encontrado para “{query}”.
+        </p>
+      )}
+      <div
+        id={listId}
+        role="listbox"
+        aria-label="Resultados"
+        hidden={!(open && query && hits.length > 0)}
+        className="absolute top-full right-0 left-0 z-50 mt-2 max-h-[min(440px,70vh)] overflow-auto rounded-xl border border-line-strong bg-raised p-1.5 shadow-[0_20px_50px_-12px_rgb(0_0_0/0.85)]"
+      >
+        {hits.map((h, i) => (
               <button
                 key={h.id}
                 id={`doc-hit-${h.id}`}
                 type="button"
                 role="option"
+                tabIndex={-1}
                 aria-selected={i === cursor}
                 onMouseDown={(e) => e.preventDefault()}
                 onMouseEnter={() => setCursor(i)}
                 onClick={() => choose(h)}
                 className={cn('block w-full rounded-lg px-3 py-2 text-left', i === cursor && 'bg-panel')}
               >
-                <span className="block text-[11px] text-fg-faint">{h.section}</span>
+                <span className="block text-[11px] text-fg-muted">{h.section}</span>
                 <span className="block text-[13px] font-medium text-fg">{h.title}</span>
                 {h.snippet && (
                   <span className="mt-0.5 line-clamp-2 block text-[12px] leading-relaxed text-fg-muted">
@@ -223,10 +231,8 @@ function SearchBox() {
                   </span>
                 )}
               </button>
-            ))
-          )}
-        </div>
-      )}
+        ))}
+      </div>
     </div>
   )
 }
@@ -267,7 +273,7 @@ function Index({ active, onPick }: { active: string; onPick?: () => void }) {
                     }}
                     className={cn(
                       '-ml-px block border-l py-1 pl-3 text-[12.5px] leading-snug transition',
-                      active === x.id ? 'border-accent text-accent' : 'border-transparent text-fg-faint hover:border-line-strong hover:text-fg-muted',
+                      active === x.id ? 'border-accent text-accent' : 'border-transparent text-fg-muted hover:border-line-strong hover:text-fg-muted',
                     )}
                   >
                     {x.title}
@@ -285,10 +291,12 @@ function Index({ active, onPick }: { active: string; onPick?: () => void }) {
 function Section({ section }: { section: DocSection }) {
   return (
     <section aria-labelledby={section.id} className="border-t border-line pt-12 first:border-0 first:pt-0">
-      <h2 id={section.id} className="group scroll-mt-32 text-[24px] lg:scroll-mt-24 font-semibold tracking-tight text-fg">
-        {section.title}
+      <div className="group flex items-baseline">
+        <h2 id={section.id} className="scroll-mt-32 text-[24px] font-semibold tracking-tight text-fg lg:scroll-mt-24">
+          {section.title}
+        </h2>
         <Anchor id={section.id} label={section.title} />
-      </h2>
+      </div>
       <p className="mt-2 text-[15px] leading-relaxed text-fg-muted">{section.lead}</p>
       {section.subs.map((sub) => (
         <div key={sub.id} data-doc-sub={sub.id}>
@@ -311,6 +319,7 @@ const START = [
 export function DocPage() {
   const active = useActive()
   const [menu, setMenu] = useState(false)
+  const indexButton = useRef<HTMLButtonElement>(null)
   const [top, setTop] = useState(false)
 
   // arriving with a link to a section: the content renders after the browser tried to scroll
@@ -356,18 +365,28 @@ export function DocPage() {
         {/* small screens: the index folds under the bar */}
         <div className="border-t border-line lg:hidden">
           <button
+            ref={indexButton}
             type="button"
             onClick={() => setMenu((m) => !m)}
             aria-expanded={menu}
             aria-controls="doc-mobile-index"
             className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-[12.5px] sm:px-6"
           >
-            <span className="text-fg-faint">Nesta página:</span>
+            <span className="text-fg-muted">Nesta página:</span>
             <span className="truncate text-fg">{current?.title}</span>
-            <ChevronDown size={14} className={cn('ml-auto shrink-0 text-fg-faint transition-transform', menu && 'rotate-180')} />
+            <ChevronDown size={14} className={cn('ml-auto shrink-0 text-fg-muted transition-transform', menu && 'rotate-180')} />
           </button>
           {menu && (
-            <div id="doc-mobile-index" className="max-h-[60vh] overflow-auto border-t border-line px-4 py-4 sm:px-6">
+            <div
+              id="doc-mobile-index"
+              ref={(el) => el?.querySelector<HTMLElement>('a')?.focus({ preventScroll: true })}
+              onKeyDown={(e) => {
+                if (e.key !== 'Escape') return
+                setMenu(false)
+                indexButton.current?.focus()
+              }}
+              className="max-h-[60vh] overflow-auto border-t border-line px-4 py-4 sm:px-6"
+            >
               <Index active={active} onPick={() => setMenu(false)} />
             </div>
           )}
@@ -384,7 +403,7 @@ export function DocPage() {
         <main id="conteudo" className="min-w-0 flex-1 pt-10 pb-24 lg:max-w-[760px]">
           <div className="mb-14">
             <p className="text-[12px] font-semibold tracking-[0.12em] text-accent uppercase">Documentação</p>
-            <h1 className="mt-2 text-[32px] leading-tight font-semibold tracking-tight sm:text-[38px]">Como usar o KubeLearn</h1>
+            <h1 id="doc-title" tabIndex={-1} className="mt-2 text-[32px] outline-none leading-tight font-semibold tracking-tight sm:text-[38px]">Como usar o KubeLearn</h1>
             <p className="mt-4 max-w-[620px] text-[16px] leading-relaxed text-fg-muted">
               Tudo o que a ferramenta faz: as lições, o palco, cada comando do terminal, o seu app e o código que você roda nos Pods — e onde a simulação difere
               de um cluster de verdade.
@@ -402,7 +421,7 @@ export function DocPage() {
                 >
                   <span className="flex items-center justify-between text-[14px] font-semibold text-fg">
                     {c.title}
-                    <ArrowRight size={14} className="text-fg-faint transition group-hover:translate-x-0.5 group-hover:text-accent" />
+                    <ArrowRight size={14} className="text-fg-muted transition group-hover:translate-x-0.5 group-hover:text-accent" />
                   </span>
                   <span className="mt-1 block text-[12.5px] leading-relaxed text-fg-muted">{c.text}</span>
                 </a>
@@ -416,7 +435,7 @@ export function DocPage() {
             ))}
           </div>
 
-          <footer className="mt-20 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-line pt-6 text-[12.5px] text-fg-faint">
+          <footer className="mt-20 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-line pt-6 text-[12.5px] text-fg-muted">
             <a href="/" className="hover:text-fg-muted">
               Abrir o KubeLearn
             </a>
@@ -439,8 +458,9 @@ export function DocPage() {
         <button
           type="button"
           onClick={() => {
-            window.scrollTo({ top: 0, behavior: 'smooth' })
+            window.scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
             history.replaceState(null, '', location.pathname)
+            document.getElementById('doc-title')?.focus({ preventScroll: true })
           }}
           aria-label="Voltar ao topo"
           className="fixed right-5 bottom-5 z-30 grid size-10 place-items-center rounded-full border border-line-strong bg-raised text-fg-muted shadow-lg transition hover:text-fg"

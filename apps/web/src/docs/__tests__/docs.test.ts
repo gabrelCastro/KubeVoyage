@@ -1,3 +1,15 @@
+import studioSrc from '../../components/app/AppStudio.tsx?raw'
+import editorSrc from '../../components/app/CodeEditor.tsx?raw'
+import accountSrc from '../../components/account/AccountButton.tsx?raw'
+import inspectorSrc from '../../components/Inspector.tsx?raw'
+import lessonPanelSrc from '../../components/LessonPanel.tsx?raw'
+import overlaysSrc from '../../components/stage/Overlays.tsx?raw'
+import terminalSrc from '../../components/Terminal.tsx?raw'
+import appWindowSrc from '../../components/app/AppWindow.tsx?raw'
+import helpSrc from '../../tour/HelpMenu.tsx?raw'
+import kubectlSrc from '../../sim/kubectl.ts?raw'
+import pipeSrc from '../../sim/cli/pipe.ts?raw'
+import { Simulation } from '../../sim/engine'
 import { WORKSPACE_RULES } from '@kubelearn/shared'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -71,5 +83,44 @@ describe('/doc', () => {
     const editor = SECTIONS.find((s) => s.id === 'seu-codigo')!.subs.find((x) => x.id === 'editor')!
     const rendered = renderToStaticMarkup(createElement('div', null, editor.body)).replace(/<[^>]+>/g, '')
     for (const t of TEMPLATES) expect(rendered).toContain(t.label)
+  })
+})
+
+// The prose quotes interface labels and numbers: each one must still exist where the app defines it.
+describe('/doc quotes the app faithfully', () => {
+  const quoted: [string, string][] = [
+    ['Publicar com um bug', studioSrc],
+    ['Implantar no cluster', studioSrc],
+    ['Nova versão', studioSrc],
+    ['Criar seu app', appWindowSrc],
+    ['no ar agora', appWindowSrc],
+    ['Testar', editorSrc],
+    ['Gerar imagem', editorSrc],
+    ['Restaurar modelo', editorSrc],
+    ['Baixar meus dados', accountSrc],
+    ['Reiniciar progresso…', accountSrc],
+    ['Apagar conta…', accountSrc],
+    ['apagar', accountSrc],
+    ['Editar direto no container…', inspectorSrc],
+    ['Travou? Mostrar uma dica', lessonPanelSrc],
+    ['Aplicar backend.yaml', overlaysSrc],
+    ['Rever o tutorial', helpSrc],
+    ['Documentação', helpSrc],
+    ['tente', terminalSrc],
+    ['? explicar', terminalSrc],
+  ]
+  it.each(quoted)('“%s” is still what the app says', (label, src) => {
+    expect(text).toContain(label)
+    expect(src).toContain(label)
+  })
+
+  it('the numbers it states are the simulation’s', () => {
+    expect(new Simulation().cluster.nodes).toHaveLength(3)
+    expect(text).toContain('3 nodes')
+    expect(kubectlSrc).toContain('use no máximo 8 réplicas')
+    expect(kubectlSrc).toContain('use --max de no máximo 8')
+    expect(text).toContain('até 8 réplicas')
+    // the pipe commands it lists are the ones the terminal accepts
+    expect(pipeSrc).toContain('só entende grep, head, tail, wc -l, sort e base64')
   })
 })

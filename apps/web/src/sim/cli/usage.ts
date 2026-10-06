@@ -17,7 +17,7 @@ export const UNSIMULATED_VERBS: Record<string, string> = {
   cp: 'copiar arquivos de e para containers',
   attach: 'conectar ao processo de um container',
   debug: 'criar containers de depuração',
-  taint: 'restringir quais Pods um nó aceita',
+  taint: 'restringir quais Pods um node aceita',
   wait: 'esperar uma condição de um recurso',
   diff: 'comparar um manifesto com o que está no cluster',
   'cluster-info': 'mostrar os endereços do control plane',
@@ -43,7 +43,7 @@ export const USAGE: Record<string, { use: string[]; what: string; examples?: str
   },
   describe: { use: ['kubectl describe <tipo> [nome] [-l selector]'], what: 'Mostra detalhes e os eventos recentes de um recurso.', examples: ['kubectl describe pod <nome>', 'kubectl describe svc backend'] },
   delete: {
-    use: ['kubectl delete pod <nome>... | -l selector', 'kubectl delete deployment|rs|service <nome>'],
+    use: ['kubectl delete pod <nome>... | -l selector', 'kubectl delete deployment|rs|service|job|daemonset|configmap|secret|hpa <nome>'],
     what: 'Apaga recursos. Apagar um dono apaga também o que ele possui (exclusão em cascata).',
     examples: ['kubectl delete pod <nome>', 'kubectl delete pods -l app=backend', 'kubectl delete rs <nome>'],
   },

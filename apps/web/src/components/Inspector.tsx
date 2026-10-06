@@ -189,7 +189,7 @@ function PodView({ pod, cluster }: { pod: Pod; cluster: ClusterState }) {
           </div>
           <p className="mt-0.5 text-[11.5px] leading-relaxed text-fg-muted">
             {pod.waiting
-              ? `O kubelet não consegue criar o container: o ConfigMap ${pod.configMap} não existe. Ele tenta de novo sozinho — crie o ConfigMap e o Pod segue.`
+              ? missingConfigText(pod, cluster)
               : pod.hung
                 ? pod.liveness
                   ? 'Travou: o processo está vivo, mas não responde. A liveness probe vai falhar e o kubelet vai reiniciar o container.'
@@ -487,7 +487,7 @@ function DeploymentView({ dep, cluster }: { dep: Deployment; cluster: ClusterSta
           <button disabled={dep.replicas <= 0} onClick={() => set(dep.replicas - 1)} className="grid size-7 place-items-center rounded-md border border-line-strong text-fg-muted transition hover:text-fg disabled:opacity-30" aria-label="Menos réplicas">
             <Minus size={13} />
           </button>
-          <div className="flex flex-1 items-center gap-1" role="meter" aria-valuenow={dep.replicas} aria-valuemin={1} aria-valuemax={8}>
+          <div className="flex flex-1 items-center gap-1" role="meter" aria-valuenow={dep.replicas} aria-valuemin={0} aria-valuemax={8}>
             {Array.from({ length: 8 }, (_, i) => (
               <button key={i} onClick={() => set(i + 1)} className="group flex h-7 flex-1 items-center" aria-label={`${i + 1} réplicas`}>
                 <motion.span
@@ -851,4 +851,12 @@ function JobView({ job }: { job: Job }) {
       </div>
     </>
   )
+}
+
+/** Which piece of configuration a Pod is waiting for: a ConfigMap or a Secret it reads that doesn't exist. */
+function missingConfigText(pod: Pod, cluster: ClusterState) {
+  const hasCm = (name: string) => Object.values(cluster.configMaps).some((c) => c.name === name)
+  const hasSecret = (name: string) => Object.values(cluster.secrets).some((c) => c.name === name)
+  const [what, name] = pod.configMap && !hasCm(pod.configMap) ? ['ConfigMap', pod.configMap] : pod.secret && !hasSecret(pod.secret) ? ['Secret', pod.secret] : ['ConfigMap', pod.configMap ?? '']
+  return `O kubelet não consegue criar o container: o ${what} ${name} não existe. Ele tenta de novo sozinho — crie o ${what} e o Pod segue.`
 }

@@ -52,3 +52,14 @@ describe('--help', () => {
     }
   })
 })
+
+describe('explicar create', () => {
+  const text = (r: ReturnType<typeof run>) => r.lines.map((l) => l.map((s) => s.t).join('')).join('\n')
+  it('knows every kind `create` simulates — Secrets and Jobs included', () => {
+    const sim = new Simulation()
+    expect(text(run(sim, 'explicar kubectl create secret generic db --from-literal=A=1'))).not.toContain('não simulado')
+    expect(text(run(sim, 'explicar kubectl create secret generic db --from-literal=A=1'))).toContain('o nome do Secret novo')
+    expect(text(run(sim, 'explicar kubectl create job tarefa --image=busybox'))).toContain('o nome do Job novo')
+    expect(text(run(sim, 'explicar kubectl create ingress web'))).toContain('não simulado')
+  })
+})

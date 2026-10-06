@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { LESSONS } from '../lessons'
 import { VISUAL } from '../lib/visual'
 import { LIMITS } from '../runtime/program'
-import { KIND_ALIASES, KIND_IDS, UNSIMULATED_KINDS, type KindId } from '../sim/cli/resourceKinds'
+import { KIND_ALIASES, KIND_IDS, type KindId } from '../sim/cli/resourceKinds'
 import { UNSIMULATED_VERBS, USAGE, VERBS } from '../sim/cli/usage'
 import { SHORTCUTS } from '../tour/shortcuts'
 import { B, C, Code, H4, Kbd, Note, Ol, P, See, Table, TryIt, Ul } from './ui'
@@ -29,6 +29,9 @@ export interface DocSection {
   subs: DocSub[]
 }
 
+/** Keys that start a combination (Ctrl + K); any other list of keys means alternatives (↑ / ↓). */
+const COMBO = new Set(['Ctrl', '⌘', 'Shift', 'Alt'])
+
 const lessonById = (id: string) => LESSONS.find((l) => l.id === id)!
 const seconds = (ms: number) => `${(ms / 1000).toLocaleString('pt-BR')} s`
 
@@ -47,7 +50,7 @@ const KIND_LABEL: Record<KindId, string> = {
   services: 'Services — um endereço estável na frente dos Pods',
   endpoints: 'Endpoints — os IPs de Pods Ready por trás de um Service',
   endpointslices: 'EndpointSlices — a forma atual dos Endpoints',
-  events: 'Events — o que cada controlador fez, e quando',
+  events: 'Events — o que cada controller fez, e quando',
   nodes: 'Nodes — as máquinas do cluster',
   configmaps: 'ConfigMaps — configuração fora da imagem',
   horizontalpodautoscalers: 'HorizontalPodAutoscalers — réplicas pela CPU',
@@ -70,7 +73,7 @@ export const SECTIONS: DocSection[] = [
           <>
             <P>
               O KubeLearn é um lugar para aprender Kubernetes <B>vendo o cluster reagir</B>. Não há um cluster de verdade por trás: é uma simulação educacional do
-              comportamento <i>observável</i> do Kubernetes — os mesmos objetos, os mesmos controladores, os mesmos eventos e as mesmas mensagens de erro do{' '}
+              comportamento <i>observável</i> do Kubernetes — os mesmos objetos, os mesmos controllers, os mesmos eventos e as mesmas mensagens de erro do{' '}
               <C>kubectl</C> — desenhada no palco enquanto acontece.
             </P>
             <P>
@@ -114,7 +117,10 @@ kubectl get pods`}</Code>
                 Veja o palco: o Deployment cria um ReplicaSet, que cria os Pods, que passam por <i>Pending</i>, <i>ContainerCreating</i>, <i>Running</i> e{' '}
                 <i>Ready</i>. Clique em qualquer coisa para inspecionar.
               </li>
-              <li>Cada objetivo cumprido é marcado sozinho. Quando os obrigatórios acabam, a lição mostra o que aconteceu, contado pelos eventos do cluster.</li>
+              <li>
+                Cada objetivo cumprido é marcado automaticamente. Quando você cumpre todos os obrigatórios, a lição mostra o que aconteceu, contado pelos eventos
+                do cluster.
+              </li>
             </Ol>
             <TryIt lesson="self-healing">Começar pela lição 1</TryIt>
           </>
@@ -138,14 +144,19 @@ kubectl get pods`}</Code>
                 <B>Dicas.</B> Nos exercícios em que descobrir é o ponto, a resposta fica escondida atrás de <i>Travou? Mostrar uma dica</i>.
               </li>
               <li>
-                <B>Apostila.</B> Cada lição tem um texto de estudo com o porquê de tudo, aberto pelo painel da lição ou pelo menu Ajuda. Termos sublinhados no
-                texto (como <i>ReplicaSet</i> ou <i>selector</i>) mostram uma definição curta e levam ao trecho da apostila que os explica.
+                <B>Apostila.</B> Cada lição tem um texto de estudo com o porquê de tudo — e perguntas rápidas para conferir o que ficou —, aberto pelo painel da
+                lição ou pelo menu Ajuda. Termos sublinhados no painel da lição, nas narrações e no inspetor (como <i>ReplicaSet</i> ou <i>selector</i>) mostram
+                uma definição curta e levam ao trecho da apostila que os explica.
               </li>
               <li>
-                <B>Conclusão.</B> Ao terminar, você vê a história da sua execução, o tempo que levou e o seu melhor tempo, e segue para a próxima lição.
+                <B>Conclusão.</B> Ao terminar, você vê a história do que aconteceu no cluster, o tempo que levou e o seu melhor tempo, e segue para a próxima
+                lição. A lista de lições, à esquerda, mostra o que já foi feito em cada uma e o seu melhor tempo.
               </li>
               <li>
                 <B>Endereço próprio.</B> Cada lição tem uma URL (por exemplo, <C>/#/services</C>). Para recomeçar uma lição do zero, use <Kbd>R</Kbd>.
+              </li>
+              <li>
+                <B>Na primeira vez</B> que algo novo aparece (a pausa, a paleta, a janela do app…), uma dica curta explica para que serve — uma vez só.
               </li>
             </Ul>
           </>
@@ -158,7 +169,7 @@ kubectl get pods`}</Code>
   {
     id: 'interface',
     title: 'A interface',
-    lead: 'Cinco superfícies, um único cluster.',
+    lead: 'Várias visões, um único cluster.',
     subs: [
       {
         id: 'palco',
@@ -166,12 +177,13 @@ kubectl get pods`}</Code>
         body: (
           <>
             <P>
-              O centro da tela é o cluster desenhado: Deployments e Jobs no alto, os ReplicaSets de cada versão, os Pods agrupados pelo node em que rodam, e os
-              Services com o tráfego chegando aos Pods. As linhas mostram quem é dono de quem; quando um controlador age, um pulso percorre essa ligação.
+              O centro da tela é o cluster desenhado: os Deployments no alto; abaixo, os ReplicaSets de cada versão (e os Jobs e DaemonSets); embaixo de cada um,
+              os Pods dele; e, na base, os Services, com o tráfego chegando aos Pods. Uma faixa mostra os 3 nodes e quais Pods rodam em cada um. As linhas
+              mostram quem é dono de quem — passe o mouse sobre uma para ver a relação —, e quando um controller age, um pulso percorre essa ligação.
             </P>
             <Ul>
               <li>
-                <B>Clique</B> em qualquer objeto para abri-lo no inspetor. Com um Pod selecionado, <Kbd>Delete</Kbd> o apaga (o mesmo que{' '}
+                <B>Clique</B> em qualquer objeto para abri-lo no inspetor. Com um Pod selecionado, <Kbd>Delete</Kbd> (ou <Kbd>⌫</Kbd>) o apaga (o mesmo que{' '}
                 <C>kubectl delete pod</C>); <Kbd>Esc</Kbd> tira a seleção.
               </li>
               <li>
@@ -182,8 +194,14 @@ kubectl get pods`}</Code>
                 Service.
               </li>
               <li>
-                <B>Réplicas.</B> Na lição de Scaling, um controle no palco muda as réplicas arrastando; em qualquer lição, o inspetor de um Deployment tem o mesmo
-                ajuste.
+                <B>Desired × Actual.</B> Um painel compara as réplicas pedidas com as que existem — é a conta que o ReplicaSet faz o tempo todo. Na lição de
+                Scaling, dá para arrastar as réplicas ali mesmo; em qualquer lição, o inspetor de um Deployment tem o mesmo ajuste.
+              </li>
+              <li>
+                <B>Faixas extras</B> aparecem quando fazem sentido: os ConfigMaps (e os Pods que ainda leem um valor antigo) e o HPA, com a CPU medida e a meta.
+              </li>
+              <li>
+                <B>Palco vazio.</B> Antes do primeiro <C>kubectl apply</C>, um botão <B>Aplicar backend.yaml</B> faz o primeiro passo por você.
               </li>
             </Ul>
           </>
@@ -206,8 +224,9 @@ kubectl get pods`}</Code>
               ])}
             />
             <P>
-              Um Pod que está rodando mas parou de responder às probes aparece como <B>Não responde</B>: para a API ele está <i>Running</i>, mas não recebe
-              tráfego.
+              Um Pod que está rodando, mas parou de responder às probes, aparece como <B>Não responde</B>: para a API ele está <i>Running</i>, mas não recebe
+              tráfego. No vermelho, além de <i>CrashLoopBackOff</i>, você pode ver <i>Error</i> (o container acabou de encerrar) e{' '}
+              <i>CreateContainerConfigError</i> (falta o ConfigMap ou o Secret que ele lê). Uma legenda no canto do palco lembra as cores.
             </P>
           </>
         ),
@@ -219,29 +238,35 @@ kubectl get pods`}</Code>
           <>
             <P>
               Clique em qualquer objeto no palco: a cadeia de ownership dele acende, o resto fica em segundo plano, e a coluna da direita mostra o que importa
-              para ele. A aba <B>YAML</B> mostra o objeto como <C>kubectl get … -o yaml</C> mostraria.
+              para ele. A aba <B>YAML</B> mostra um resumo do objeto, com os campos que importam agora destacados enquanto mudam; um botão coloca no terminal o{' '}
+              <C>kubectl get … -o yaml</C> com o objeto completo.
             </P>
             <Ul>
               <li>
-                <B>Pod:</B> o ciclo de vida, node, IP, imagem, reinícios e labels — que você pode editar ali mesmo, como faria com <C>kubectl label</C>.
+                <B>Pod:</B> o ciclo de vida, node, IP, imagem, reinícios e labels. Clique no valor de uma label para trocá-lo (o mesmo que{' '}
+                <C>kubectl label … --overwrite</C>). Botões apagam o Pod e põem no terminal o <C>describe</C> e os <C>logs</C> dele.
               </li>
               <li>
-                <B>Deployment:</B> réplicas desejadas (com botões para mudar), selector e os Pods dele.
+                <B>Deployment:</B> réplicas desejadas (com botões para mudar), imagem, revisão, estado do rollout e selector.
               </li>
               <li>
-                <B>ReplicaSet, Service, DaemonSet, Job:</B> selector, Pods selecionados, cobertura dos nodes, progresso das tarefas.
+                <B>Service:</B> o selector — editável, como <C>kubectl set selector</C> — e os Pods que ele seleciona.
+              </li>
+              <li>
+                <B>ReplicaSet, DaemonSet, Job:</B> selector, os Pods de cada um, a cobertura dos nodes e o progresso das tarefas.
               </li>
             </Ul>
           </>
         ),
       },
       {
-        id: 'linha-do-tempo',
-        title: 'A linha do tempo',
+        id: 'historico',
+        title: 'O histórico do cluster',
         body: (
           <P>
-            Embaixo à direita fica o <B>histórico do cluster</B>: cada evento, de quem veio (você, o scheduler, o kubelet, um controlador) e o que fez, na ordem
-            em que aconteceu. Clique num evento para selecionar o objeto envolvido. É a mesma informação de <C>kubectl get events</C>, contada como uma história.
+            Embaixo à direita fica o <B>histórico do cluster</B>: cada evento, de quem veio (você, o scheduler, o kubelet, um controller) e o que fez, na ordem
+            em que aconteceu. Clique num evento para selecionar o objeto envolvido (se ele ainda existir). Além dos eventos que o <C>kubectl get events</C>{' '}
+            mostra, aqui aparecem também as suas ações.
           </P>
         ),
       },
@@ -261,16 +286,16 @@ kubectl get pods`}</Code>
         body: (
           <>
             <P>
-              Todo passo de um controlador é uma tarefa agendada com nome. Por isso dá para parar o tempo e olhar com calma. Os controles ficam no alto da tela:
+              Todo passo de um controller é uma tarefa agendada com nome. Por isso dá para parar o tempo e olhar com calma. Os controles ficam no alto da tela:
             </P>
             <Table
               head={['Controle', 'O que faz']}
               rows={[
                 [<Kbd key="k">Espaço</Kbd>, 'Pausa ou continua a simulação. Pausado, o topo mostra qual é a próxima decisão do cluster.'],
-                [<Kbd key="k">.</Kbd>, 'Avança uma única decisão (pausa, se estiver rodando). Ótimo para ver um rollout passo a passo.'],
-                ['0,5× · 1× · 2×', 'A velocidade da simulação.'],
-                [<Kbd key="k">R</Kbd>, 'Reinicia a lição: cluster e objetivos voltam ao início desta execução.'],
-                ['Movimento reduzido', 'Tira as animações (também segue a preferência do sistema).'],
+                [<Kbd key="k">.</Kbd>, 'Avança uma única decisão (e pausa, se estiver rodando). Ótimo para ver um rollout passo a passo.'],
+                ['0,5× · 1× · 2×', 'A velocidade da simulação (em telas pequenas, pela paleta de comandos).'],
+                [<Kbd key="k">R</Kbd>, 'Reinicia a lição: cluster, terminal e objetivos voltam ao começo (o progresso salvo não é apagado).'],
+                ['Movimento reduzido', 'O botão de ondas no alto: tira as animações (também segue a preferência do sistema).'],
               ]}
             />
             <Note kind="info" title="O tempo aqui é mais lento de propósito">
@@ -285,11 +310,12 @@ kubectl get pods`}</Code>
         body: (
           <>
             <P>
-              <Kbd>Ctrl</Kbd> <Kbd>K</Kbd> (<Kbd>⌘</Kbd> <Kbd>K</Kbd> no Mac) abre a paleta: busque e execute ações da simulação, comandos frequentes, outras
-              lições ou qualquer objeto do cluster. Qualquer texto que não for uma ação pode ser executado direto no terminal.
+              <Kbd>Ctrl</Kbd> + <Kbd>K</Kbd> (<Kbd>⌘</Kbd> + <Kbd>K</Kbd> no Mac) abre a paleta: busque e execute ações da simulação, comandos frequentes, outras
+              lições, ou vá até um Pod, Deployment, ReplicaSet, DaemonSet ou Service. Um comando que comece com <C>kubectl</C> (ou <C>k</C>), <C>ls</C>,{' '}
+              <C>cat</C>, <C>help</C> ou <C>clear</C> pode ser executado direto da paleta.
             </P>
             <P>
-              O menu <B>Ajuda</B> (o <C>?</C> no alto) tem o tutorial, os atalhos de teclado, a apostila da lição atual, esta documentação e a página de
+              O menu <B>Ajuda</B> (o ícone de interrogação no alto) tem o tutorial, os atalhos de teclado, a apostila da lição atual, esta documentação e a página de
               privacidade.
             </P>
           </>
@@ -310,16 +336,13 @@ kubectl get pods`}</Code>
         body: (
           <>
             <Table
-              head={['#', 'Lição', 'O que você faz']}
+              head={['Lição', 'O que você faz']}
               rows={LESSONS.map((l) => [
-                <span key="n" className="font-mono text-fg-faint">
-                  {l.number}
-                </span>,
                 <span key="t">
                   <a href={`/#/${l.id}`} className="font-medium text-fg hover:text-accent">
-                    {l.title}
+                    {l.number}. {l.title}
                   </a>
-                  <span className="mt-0.5 block text-[11.5px] text-fg-faint">{l.track}</span>
+                  <span className="mt-0.5 block text-[11.5px] font-normal text-fg-muted">{l.track}</span>
                 </span>,
                 l.tagline,
               ])}
@@ -370,13 +393,24 @@ kubectl get pods`}</Code>
                 <Kbd>Tab</Kbd> completa comandos, tipos, nomes de objetos, flags e valores (inclusive nomes de Pods, que mudam a cada recriação).
               </li>
               <li>
-                <Kbd>↑</Kbd> <Kbd>↓</Kbd> percorrem o histórico; <Kbd>Ctrl</Kbd> <Kbd>R</Kbd> busca nele; <Kbd>→</Kbd> aceita a sugestão do histórico.
+                <Kbd>↑</Kbd> / <Kbd>↓</Kbd> percorrem o histórico; <Kbd>Ctrl</Kbd> + <Kbd>R</Kbd> busca nele; <Kbd>→</Kbd> aceita a sugestão do histórico.
               </li>
               <li>
-                <C>clear</C> ou <Kbd>Ctrl</Kbd> <Kbd>L</Kbd> limpam a tela. <C>help</C> lista o que o terminal entende.
+                <C>clear</C> ou <Kbd>Ctrl</Kbd> + <Kbd>L</Kbd> limpam a tela. <C>help</C> lista o que o terminal entende.
               </li>
               <li>
-                Nomes de objetos na saída são clicáveis: selecionam o objeto no palco.
+                Nomes de Pods, ReplicaSets, Deployments e Services na saída são clicáveis: passar o mouse acende o objeto no palco; clicar o seleciona.
+              </li>
+              <li>
+                O chip <B>tente</B> coloca no prompt o comando do objetivo atual, e o botão <B>? explicar</B> explica o que estiver digitado. Comandos disparados
+                pelo palco ou pela paleta aparecem no terminal marcados como tal.
+              </li>
+              <li>
+                <Kbd>Ctrl</Kbd> + <Kbd>C</Kbd> para um <C>-w</C> e limpa a linha; <Kbd>End</Kbd> ou <Kbd>Ctrl</Kbd> + <Kbd>E</Kbd> também aceitam a sugestão.
+              </li>
+              <li>
+                O histórico de comandos (os últimos 200) fica neste dispositivo: sobrevive a <Kbd>R</Kbd> e a recarregar a página, não é sincronizado com a conta
+                e não é apagado ao sair dela.
               </li>
             </Ul>
             <H4>Entender um comando antes de rodar</H4>
@@ -434,7 +468,7 @@ kubectl rollout --help`}</Code>
                     {u.examples && (
                       <div className="mt-2 border-t border-line pt-2">
                         {u.examples.map((line) => (
-                          <code key={line} className="block font-mono text-[12px] text-fg-faint [overflow-wrap:anywhere]">
+                          <code key={line} className="block font-mono text-[12px] text-fg-muted [overflow-wrap:anywhere]">
                             {line}
                           </code>
                         ))}
@@ -474,14 +508,14 @@ kubectl rollout --help`}</Code>
               mono={[0, 2]}
               rows={[
                 ['-o wide', 'Colunas extras (IP, node, imagem…).', 'kubectl get pods -o wide'],
-                ['-o yaml | json', 'O objeto inteiro, como a API o guarda.', 'kubectl get deploy backend -o yaml'],
+                ['-o yaml · -o json', 'O objeto inteiro, como a API o guarda.', 'kubectl get deploy backend -o yaml'],
                 ['-o name', 'Só tipo/nome.', 'kubectl get pods -o name'],
                 ['-o jsonpath=…', 'Um campo específico.', "kubectl get secret db-credentials -o jsonpath='{.data.DATABASE_URL}'"],
                 ['-l', 'Filtra por labels: =, ==, !=, in (…), notin (…), chave, !chave.', "kubectl get pods -l 'app in (backend,frontend)'"],
                 ['--show-labels · -L', 'Mostra todas as labels, ou uma coluna por label.', 'kubectl get pods -L app'],
-                ['--field-selector', 'Filtra por campo (status.phase, spec.nodeName, metadata.name).', 'kubectl get pods --field-selector status.phase!=Running'],
+                ['--field-selector', 'Filtra por campo (em Pods: status.phase, spec.nodeName; em qualquer tipo: metadata.name).', 'kubectl get pods --field-selector status.phase!=Running'],
                 ['--sort-by', 'Ordena por um campo.', 'kubectl get pods --sort-by=.metadata.creationTimestamp'],
-                ['-w', 'Continua acompanhando: cada mudança vira uma linha. Esc ou outro comando param.', 'kubectl get pods -w'],
+                ['-w', 'Continua acompanhando: cada mudança vira uma linha. Esc, Ctrl C ou outro comando param.', 'kubectl get pods -w'],
                 ['-A · -n default', 'Todos os namespaces / o namespace default (aqui só existe ele).', 'kubectl get pods -A'],
                 ['--no-headers', 'Sem a linha de cabeçalho (bom com wc -l).', 'kubectl get pods --no-headers | wc -l'],
               ]}
@@ -502,10 +536,10 @@ kubectl rollout --help`}</Code>
               mono={[0]}
               rows={[
                 ['grep [-i] [-v] [-c] [-E] [-w] PADRÃO', 'Filtra linhas (sem diferenciar maiúsculas, invertido, contando, regex estendida, palavra inteira).'],
-                ['head -n N · tail -n N', 'As primeiras ou últimas N linhas.'],
+                ['head -n N · tail -n N', 'As primeiras ou últimas N linhas (também -N; sem número, 10).'],
                 ['wc -l', 'Conta as linhas.'],
-                ['sort', 'Ordena as linhas.'],
-                ['base64 -d', 'Decodifica base64 — veja como um Secret não esconde nada.'],
+                ['sort [-r]', 'Ordena as linhas (-r: ao contrário).'],
+                ['base64 [-d]', 'Codifica em base64; com -d, decodifica — veja como um Secret não esconde nada.'],
               ]}
             />
             <Code>{`kubectl get pods | grep -c Running
@@ -538,7 +572,7 @@ kubectl run dns --rm -it --image=busybox --restart=Never -- nslookup backend`}</
         body: (
           <>
             <P>
-              Comandos reais que ainda não existem aqui são reconhecidos — o terminal diz para que servem, em vez de fingir que não existem:
+              Comandos reais que ainda não foram simulados são reconhecidos: o terminal diz para que servem, em vez de responder que não existem.
             </P>
             <Table
               head={['Comando', 'Para que serve no kubectl real']}
@@ -546,10 +580,24 @@ kubectl run dns --rm -it --image=busybox --restart=Never -- nslookup backend`}</
               rows={Object.entries(UNSIMULATED_VERBS).map(([verb, what]) => [`kubectl ${verb}`, what])}
             />
             <P>
-              Tipos fora da simulação (como {[...new Set(UNSIMULATED_KINDS.filter((k) => k.length > 3))].slice(0, 6).join(', ')}) também são reconhecidos e
-              avisados. Flags que mudariam o resultado e não são simuladas (<C>--dry-run</C>, <C>--context</C>, <C>--all-containers</C>…) são recusadas com
-              uma explicação, para que nada seja feito pela metade.
+              Tipos fora da simulação (como Namespace, Ingress, StatefulSet, CronJob e PersistentVolumeClaim) também são reconhecidos: o terminal avisa que
+              não são simulados. Flags que mudariam o resultado e não são simuladas (<C>--dry-run</C>, <C>--context</C>, <C>--all-containers</C>…) são
+              recusadas com uma explicação, para que nada seja feito pela metade.
             </P>
+            <H4>Simulados em parte</H4>
+            <Ul>
+              <li>
+                <C>expose</C> cria só Services do tipo ClusterIP; <C>patch</C> altera só ConfigMaps (merge); <C>create secret</C> só do tipo{' '}
+                <C>generic</C>.
+              </li>
+              <li>
+                <C>label</C> vale para Pods; <C>edit</C>, para Deployments (réplicas, imagem e labels); <C>set</C>, para imagem e selector (não{' '}
+                <C>set env</C> nem <C>set resources</C>).
+              </li>
+              <li>
+                <C>logs -f</C> mostra o que já foi escrito, sem continuar acompanhando.
+              </li>
+            </Ul>
             <Note kind="info" title="Um cluster de treino">
               O cluster tem 3 nodes. Para caber no palco, Deployments vão até 8 réplicas, e um HPA até <C>--max=8</C>.
             </Note>
@@ -571,13 +619,18 @@ kubectl run dns --rm -it --image=busybox --restart=Never -- nslookup backend`}</
         body: (
           <>
             <P>
-              Na coluna da direita, <B>Seu app</B> mostra o app como quem está do lado de fora: os visitantes chegam pelo Service (o endereço{' '}
+              Na coluna da direita, <B>Seu app</B> mostra o app como um visitante de fora o vê: os visitantes chegam pelo Service (o endereço{' '}
               <C>http://backend</C>) e cada um é atendido pelo Pod que o Service escolheu — as mesmas requisições desenhadas no palco.
             </P>
             <Ul>
-              <li>Cada quadrado é um visitante: a cor e o ícone dizem qual versão o atendeu; passe o mouse para ver o Pod.</li>
+              <li>Cada quadrado é um visitante: a cor e o ícone dizem qual versão o atendeu; passe o mouse por cima para ver qual Pod respondeu.</li>
               <li>Sem nenhum Pod Ready, os visitantes são recusados e aparecem em vermelho.</li>
               <li>Durante um rollout, <i>no ar agora</i> mostra quantos Pods de cada versão estão respondendo.</li>
+              <li>
+                Se o container recebeu <C>APP_MESSAGE</C> de um ConfigMap, a mensagem que o visitante vê é essa — é assim que a lição de ConfigMaps mostra uma
+                configuração mudando sem imagem nova.
+              </li>
+              <li>A janela pode ser recolhida pela seta ao lado do título.</li>
             </Ul>
           </>
         ),
@@ -588,8 +641,8 @@ kubectl run dns --rm -it --image=busybox --restart=Never -- nslookup backend`}</
         body: (
           <>
             <P>
-              <B>Criar seu app</B> (ou <B>Editar</B>) abre o estúdio: nome, ícone, cor e mensagem. A versão inicial é a imagem das lições (
-              <C>ghcr.io/kubelearn/backend:1.4</C>).
+              <B>Criar seu app</B> (ou <B>Editar</B>) abre o estúdio: nome, ícone, cor e mensagem. Editar a versão inicial (<B>1.4 · inicial</B>) muda o que
+              todos os Pods da imagem das lições, <C>ghcr.io/kubelearn/backend:1.4</C>, mostram.
             </P>
             <Ol>
               <li>
@@ -605,6 +658,11 @@ kubectl run dns --rm -it --image=busybox --restart=Never -- nslookup backend`}</
               Marque <B>Publicar com um bug</B> para gerar uma versão que esquece a variável <C>DATABASE_URL</C>: o container quebra ao iniciar, como a 1.5 da
               lição de falhas — e você pratica investigar e voltar atrás com segurança.
             </P>
+            <Note kind="info" title="Versões do estúdio × o seu código">
+              As versões do estúdio mudam só a aparência (nome, ícone, cor e mensagem) e se comportam como a 1.4. Para rodar o seu próprio código, gere a
+              imagem com <C>docker build</C> (veja <See id="seu-codigo">Seu código nos Pods</See>). Os dois dividem as mesmas tags e o mesmo limite de
+              imagens.
+            </Note>
           </>
         ),
       },
@@ -614,8 +672,9 @@ kubectl run dns --rm -it --image=busybox --restart=Never -- nslookup backend`}</
         body: (
           <>
             <P>
-              No inspetor de um Pod, <B>Editar direto no container…</B> faz o que seria entrar com <C>kubectl exec</C> e trocar um arquivo do app lá dentro. Só
-              aquele Pod responde diferente — e nada no Deployment, no ReplicaSet ou no <C>-o yaml</C> do Pod registra a mudança.
+              No inspetor de um Pod do app que esteja rodando, <B>Editar direto no container…</B> faz o que seria entrar com <C>kubectl exec</C> e trocar um
+              arquivo do app lá dentro: você muda o ícone e a mensagem só daquele Pod. Só ele responde diferente — e nada no Deployment, no ReplicaSet ou no{' '}
+              <C>-o yaml</C> do Pod registra a mudança.
             </P>
             <Note kind="warn" title="Ela some com o Pod">
               Apague o Pod e o substituto nasce do template do Deployment, que nunca soube da mudança. É a razão de toda mudança de verdade virar uma imagem
@@ -647,10 +706,12 @@ kubectl run dns --rm -it --image=busybox --restart=Never -- nslookup backend`}</
                 <C>/healthz</C>.
               </li>
               <li>
-                <B>Gere a imagem.</B> <B>Gerar imagem</B> roda no terminal o <C>docker build</C> com a próxima tag livre — ou digite com a tag que quiser.
+                <B>Gere a imagem.</B> <B>Gerar imagem</B> roda no terminal o <C>docker build</C> com a próxima tag livre — ou digite o comando com a tag que
+                quiser.
               </li>
               <li>
-                <B>Faça o rollout.</B> Troque a imagem do Deployment, ou rode a imagem num Job.
+                <B>Faça o rollout.</B> Troque a imagem do Deployment, ou rode a imagem num Job. Use o nome completo,{' '}
+                <C>ghcr.io/kubelearn/backend:TAG</C> — o mesmo que o build mostra no fim.
               </li>
             </Ol>
             <Code>{`edit app.js
@@ -687,7 +748,7 @@ function handle(req, env) {
                 ['Responder', <>Uma string vira <C>200</C> com esse texto. <C>{'{ status, body }'}</C> escolhe o status (100–599). Outro objeto vira JSON. Sem retorno, <C>204</C>.</>],
                 ['async', <><C>handle</C> pode ser <C>async</C> e usar <C>await</C>.</>],
                 ['Logs', <><C>console.log</C>, <C>info</C> e <C>debug</C> vão para <C>kubectl logs</C>; <C>warn</C> e <C>error</C> também, com o prefixo <C>warn:</C> / <C>error:</C>.</>],
-                ['Erros', <>Uma exceção ao iniciar derruba o container. Uma exceção dentro de <C>handle</C> vira <C>500</C> só naquela requisição. Uma exceção que escapa depois (uma Promise rejeitada, um erro num timer) encerra o processo, como no Node.</>],
+                ['Erros', <>Uma exceção ao iniciar derruba o container. Uma exceção dentro de <C>handle</C> vira <C>500</C> só naquela requisição. Uma exceção que escapa durante a execução (uma Promise rejeitada, um erro num timer) encerra o processo, como no Node.</>],
                 ['Sair', <><C>process.exit(0)</C> termina com sucesso; <C>process.exit(1)</C> (ou qualquer código ≠ 0), com erro.</>],
                 ['Módulos', <><C>module.exports = handle</C> (ou <C>{'{ handle }'}</C>) também define o servidor. <C>require</C> existe, mas não há pacotes: nem do npm, nem do Node.</>],
               ]}
@@ -709,8 +770,8 @@ function handle(req, env) {
                 ['define handle e /healthz responde 2xx/3xx', 'Ready: entra no Service e atende os visitantes.', 'Nunca termina: um servidor fica esperando para sempre.'],
                 ['lança um erro ao iniciar', 'CrashLoopBackOff; o rollout para com segurança e os Pods antigos continuam atendendo.', 'Falha (exit code 1) e é tentado de novo até o backoffLimit.'],
                 ['não define handle e termina bem', 'Termina e é reiniciado sem parar: CrashLoopBackOff. Tarefas são trabalho para Jobs.', 'Completed (exit code 0).'],
-                [<>/healthz responde 4xx/5xx ou lança erro</>, 'Running, mas nunca Ready: fora do Service (evento Unhealthy com o status).', '—'],
-                [<>trava (/healthz nunca responde)</>, 'A readiness probe falha; com uma liveness probe, o kubelet reinicia o container.', 'Uma tarefa travada nunca termina.'],
+                [<>/healthz responde 4xx/5xx ou lança erro</>, 'Running, mas nunca Ready: fora do Service (evento Unhealthy com o status); o rollout para e os Pods antigos continuam atendendo.', 'Nunca termina: é um servidor.'],
+                [<>trava (/healthz nunca responde)</>, 'A readiness probe falha; com uma liveness probe, o kubelet reinicia o container. O rollout para e os Pods antigos continuam atendendo.', 'Uma tarefa travada nunca termina.'],
               ]}
             />
             <P>
@@ -731,11 +792,12 @@ function handle(req, env) {
               Tarefa (Job). Cada um mostra uma reação diferente do cluster.
             </li>
             <li>
-              <B>Testar</B> roda o código sem as variáveis de ambiente do cluster; o resultado fica apagado quando você muda o código depois do teste.
+              <B>Testar</B> roda o código sem as variáveis de ambiente do cluster; se você mudar o código depois, o resultado fica esmaecido, com o aviso de
+              que é de uma versão anterior.
             </li>
             <li>
-              <Kbd>Tab</Kbd> indenta, <Kbd>Ctrl</Kbd> <Kbd>S</Kbd> confirma que está salvo, <Kbd>Esc</Kbd> fecha. <B>Restaurar modelo</B> volta ao código
-              inicial.
+              <Kbd>Tab</Kbd> indenta, <Kbd>Ctrl</Kbd> + <Kbd>S</Kbd> (<Kbd>⌘</Kbd> + <Kbd>S</Kbd> no Mac) confirma que está salvo, <Kbd>Esc</Kbd> fecha.{' '}
+              <B>Restaurar modelo</B> volta ao modelo Servidor (o código inicial).
             </li>
           </Ul>
         ),
@@ -750,15 +812,16 @@ docker build -t ghcr.io/kubelearn/backend:com-cache .
 docker images`}</Code>
             <Ul>
               <li>
-                O nome é sempre o repositório <C>backend</C> (curto ou completo), e a tag é obrigatória: sem ela o docker usaria <C>latest</C>, que muda a cada
-                build.
+                O nome da imagem é sempre o repositório <C>backend</C> (<C>backend:TAG</C> ou <C>ghcr.io/kubelearn/backend:TAG</C>), e a tag é obrigatória:
+                sem ela o docker usaria <C>latest</C>, que muda a cada build.
               </li>
               <li>
                 Tags: letras, números, <C>_</C>, <C>.</C> e <C>-</C>, até 32 caracteres, sem começar com <C>.</C> ou <C>-</C>. As tags <C>1.x</C> são das
                 lições e <C>latest</C> não é aceita.
               </li>
               <li>
-                Uma tag usada nunca é sobrescrita: para mudar, use outra. Cabem até {WORKSPACE_RULES.releasesMax} imagens suas.
+                Uma tag usada nunca é sobrescrita: para mudar, use outra. Cabem até {WORKSPACE_RULES.releasesMax} imagens suas (contando as versões do
+                estúdio).
               </li>
               <li>
                 O build já publica no registry do curso. <C>docker run</C> não existe aqui: quem roda containers é o cluster.
@@ -776,12 +839,19 @@ docker images`}</Code>
               head={['Limite', 'Valor', 'O que acontece']}
               rows={[
                 ['Tempo para iniciar', seconds(LIMITS.loadMs), 'Passou disso, o processo conta como travado.'],
-                ['Tempo por requisição', seconds(LIMITS.requestMs), 'Passou disso, aquela requisição fica sem resposta.'],
+                [
+                  'Tempo por requisição',
+                  seconds(LIMITS.requestMs),
+                  <>
+                    Passou disso, a execução é encerrada: aquela requisição e as que faltavam ficam sem resposta (se for <C>/</C>, o <C>/healthz</C> também — e
+                    o Pod não fica Ready).
+                  </>,
+                ],
                 ['Tamanho do app.js', `${LIMITS.codeChars.toLocaleString('pt-BR')} caracteres`, 'O editor não deixa passar.'],
                 ['Linhas de log', `${LIMITS.logLines}`, 'O resto é cortado, com um aviso.'],
                 ['Tamanho de uma linha de log', `${LIMITS.logChars} caracteres`, 'Cortada com …'],
                 ['Tamanho de uma resposta', `${LIMITS.bodyChars.toLocaleString('pt-BR')} caracteres`, 'Cortada com …'],
-                ['Imagens suas', `${WORKSPACE_RULES.releasesMax}`, 'O build seguinte é recusado.'],
+                ['Imagens suas', `${WORKSPACE_RULES.releasesMax}`, 'O build (ou a versão do estúdio) seguinte é recusado.'],
               ]}
             />
             <P>
@@ -848,7 +918,7 @@ docker images`}</Code>
               rows={[
                 ['Objetivos cumpridos', 'Somam: cumprido em um, cumprido em todos.'],
                 ['Lições concluídas e melhor tempo', 'Vale a primeira conclusão e o menor tempo.'],
-                ['Onde parou', 'A lição aberta por último.'],
+                ['Onde parou', 'A última lição em que você fez alguma coisa (ao entrar, se você ainda não começou nada aqui, o KubeLearn leva você até ela).'],
                 ['Design e código do seu app', 'A edição mais recente de cada um (separadamente).'],
                 ['Imagens publicadas', 'Somam. Se dois dispositivos publicaram a mesma tag, fica a primeira.'],
               ]}
@@ -866,11 +936,13 @@ docker images`}</Code>
         body: (
           <>
             <P>
-              Ao sair, o que acabou de mudar é enviado antes, e o dispositivo esquece o progresso e o app (eles estão na conta). Se alguma mudança do app não
-              conseguir chegar à conta, ela fica no dispositivo e você é avisado.
+              Ao sair, o que acabou de mudar (progresso e app) é enviado antes, e o dispositivo esquece os dois — eles estão na conta. Se alguma mudança não
+              conseguir chegar à conta (offline, por exemplo), ela fica no dispositivo e você é avisado. O histórico de comandos do terminal não sai do
+              dispositivo.
             </P>
             <P>
-              No menu da conta, <B>Baixar meus dados</B> entrega tudo o que está guardado sobre você, e <B>Apagar conta</B> apaga tudo, de vez. Os detalhes estão
+              No menu da conta, <B>Baixar meus dados</B> entrega tudo o que está guardado sobre você, e <B>Apagar conta…</B> apaga tudo, de vez (você confirma
+              digitando “apagar”). Os detalhes estão
               na{' '}
               <a href="/privacidade" className="text-accent underline decoration-accent/30 underline-offset-[3px] hover:decoration-accent">
                 página de privacidade
@@ -887,7 +959,7 @@ docker images`}</Code>
   {
     id: 'atalhos',
     title: 'Atalhos de teclado',
-    lead: 'Fora do terminal e de campos de texto, salvo indicação. Pressione ? no app para vê-los a qualquer hora.',
+    lead: 'Os do grupo Terminal valem dentro do terminal; os demais, fora de campos de texto. Pressione ? (fora do terminal) para vê-los no app.',
     subs: SHORTCUTS.map((g) => ({
       id: `atalhos-${g.group.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')}`,
       title: g.group,
@@ -895,9 +967,12 @@ docker images`}</Code>
         <Table
           head={['Teclas', 'O que faz']}
           rows={g.items.map(([keys, what]) => [
-            <span key="k" className="inline-flex flex-wrap gap-1">
-              {keys.map((k) => (
-                <Kbd key={k}>{k}</Kbd>
+            <span key="k" className="inline-flex flex-wrap items-center gap-1 text-fg-muted">
+              {keys.map((k, i) => (
+                <span key={k} className="inline-flex items-center gap-1">
+                  {i > 0 && <span aria-hidden>{COMBO.has(keys[0]) ? '+' : '/'}</span>}
+                  <Kbd>{k}</Kbd>
+                </span>
               ))}
             </span>,
             what.charAt(0).toUpperCase() + what.slice(1),
@@ -919,7 +994,7 @@ docker images`}</Code>
         body: (
           <Ul>
             <li>
-              Os controladores e suas decisões: Deployment → ReplicaSet → Pods, garbage collector, rollouts com <i>maxSurge</i>/<i>maxUnavailable</i>,
+              Os controllers e suas decisões: Deployment → ReplicaSet → Pods, garbage collector, rollouts com <i>maxSurge</i>/<i>maxUnavailable</i>,
               scheduler, kubelet, probes, HPA, Jobs com backoff, DaemonSets, cordon e drain.
             </li>
             <li>A saída do kubectl: colunas, nomes gerados, mensagens de erro, eventos e o YAML dos objetos.</li>
@@ -942,7 +1017,7 @@ docker images`}</Code>
               <B>O cluster</B> é pequeno (3 nodes, um namespace) e só tem os tipos que as lições usam.
             </li>
             <li>
-              <B>As imagens das lições</B> têm comportamentos combinados: a <C>backend:1.4</C> funciona, a <C>1.5</C> quebra sem <C>DATABASE_URL</C>, a{' '}
+              <B>As imagens das lições</B> têm comportamentos pré-definidos: a <C>backend:1.4</C> funciona, a <C>1.5</C> quebra sem <C>DATABASE_URL</C>, a{' '}
               <C>1.6</C> trava depois de um tempo, a <C>relatorio:1.1</C> falha. Só as imagens geradas do seu app.js rodam código de verdade.
             </li>
           </Ul>
@@ -962,8 +1037,8 @@ docker images`}</Code>
         title: 'Fiz o que o objetivo pede, mas ele não foi marcado',
         body: (
           <P>
-            Os objetivos olham o estado do cluster, que leva um tempo para chegar lá — espere os Pods ficarem Ready (ou continue a simulação, se estiver
-            pausada). Se ainda assim não marcar, compare com o comando sugerido ou abra a dica.
+            A maioria dos objetivos olha o estado do cluster, e o cluster leva alguns segundos para chegar lá — espere os Pods ficarem Ready (ou continue a
+            simulação, se estiver pausada). Alguns objetivos pedem um comando específico: use o sugerido. Se ainda assim não marcar, abra a dica.
           </P>
         ),
       },
@@ -983,7 +1058,8 @@ docker images`}</Code>
         body: (
           <P>
             Uma imagem é imutável: os Pods rodam o código de quando a imagem foi gerada. Gere uma imagem nova com outra tag (<C>docker build -t backend:2.1 .</C>)
-            e faça o rollout com <C>kubectl set image</C>.
+            e faça o rollout com <C>kubectl set image deployment/backend backend=ghcr.io/kubelearn/backend:2.1</C> — com o nome completo; um nome curto como{' '}
+            <C>backend:2.1</C> seria outra imagem para o cluster.
           </P>
         ),
       },
@@ -997,7 +1073,8 @@ docker images`}</Code>
 kubectl logs <nome> --previous  # a saída da execução que quebrou
 kubectl get endpointslices -l kubernetes.io/service-name=backend`}</Code>
             <P>
-              Com o seu código, os motivos comuns são uma exceção ao iniciar, um <C>/healthz</C> que não responde 2xx ou uma variável de ambiente que falta.
+              Com o seu código, os motivos comuns são uma exceção ao iniciar, um <C>/healthz</C> que não responde 2xx ou 3xx, ou uma variável de ambiente que
+              falta.
             </P>
           </>
         ),

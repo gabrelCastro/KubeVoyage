@@ -153,6 +153,27 @@ export class ProgressSync {
   }
 
   /** Signing out forgets this device's copy (it's safe in the account). */
+  /** Whether this device has progress the account may not have yet. */
+  hasPending(): boolean {
+    return this.dirty || this.inflight
+  }
+
+  /**
+   * Before signing out: push what's pending (the debounce hasn't fired yet, say), for up to `ms`.
+   * Resolves either way; hasPending() says whether anything stayed behind.
+   */
+  async settle(ms = 4000): Promise<void> {
+    const deadline = this.deps.now() + ms
+    while (this.signedIn && this.hasPending() && this.deps.now() < deadline) {
+      if (this.inflight) await new Promise<void>((resolve) => this.deps.schedule(resolve, 50))
+      else {
+        await this.syncNow()
+        // offline or failing: waiting longer won't help
+        if (this.state.status === 'offline' || this.state.status === 'error') return
+      }
+    }
+  }
+
   clearLocal() {
     this.cancel()
     this.signedIn = false

@@ -110,3 +110,14 @@ test('privacy page renders on its own URL', async ({ page, errors }) => {
   await page.goto('/privacidade')
   await expect(page.getByRole('heading', { level: 1, name: 'Privacidade' })).toBeVisible()
 })
+
+test('Secrets: a Pod waiting for a missing Secret says which one', async ({ page, errors }) => {
+  void errors
+  await page.goto('/#/secrets')
+  await fast(page)
+  await kubectl(page, 'kubectl apply -f backend-secret.yaml')
+  const waiting = page.locator('[data-tour=pod][aria-label$=", CreateContainerConfigError"]').first()
+  await expect(waiting).toBeVisible({ timeout: 30_000 })
+  await waiting.click()
+  await expect(page.locator('[data-tour=inspetor]')).toContainText('o Secret db-credentials não existe')
+})
